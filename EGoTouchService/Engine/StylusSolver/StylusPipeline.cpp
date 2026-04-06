@@ -158,9 +158,9 @@ bool StylusPipeline::Process(
 
     // ── 7b. LOCAL → GLOBAL coordinate conversion ──
     // rawCoor.dim1/dim2 are local to the 9×9 window (range [0, 9*1024)).
-    // TSACore's IIR operates on ABSOLUTE coordinates. We must convert
-    // to global sensor coordinates BEFORE the IIR filter, otherwise
-    // anchor shifts cause a ±1024 discontinuity in the IIR input.
+    m_lastResult.point.tx1X = static_cast<float>(rawCoor.dim1) / Asa::kCoorUnit;
+    m_lastResult.point.tx1Y = static_cast<float>(rawCoor.dim2) / Asa::kCoorUnit;
+
     const int32_t centerOff =
         m_anchorCenterOffset * Asa::kCoorUnit;
     rawCoor.dim1 += static_cast<int32_t>(m_gridData.tx1.anchorCol) *
@@ -198,6 +198,9 @@ bool StylusPipeline::Process(
                 m_gridData.tx2.grid, tx2Peak);
             auto tx2Coor = m_coordSolver.Solve(tx2Proj);
             if (tx2Coor.valid) {
+                m_lastResult.point.tx2X = static_cast<float>(tx2Coor.dim1) / Asa::kCoorUnit;
+                m_lastResult.point.tx2Y = static_cast<float>(tx2Coor.dim2) / Asa::kCoorUnit;
+
                 // Convert TX2 to global too
                 tx2Coor.dim1 += static_cast<int32_t>(m_gridData.tx2.anchorCol) *
                                 Asa::kCoorUnit - centerOff;
