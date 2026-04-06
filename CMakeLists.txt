@@ -4,6 +4,8 @@ project(EGoTouchRev VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+include(CTest)
+enable_testing()
 # Use static MSVC runtime to avoid missing VCRUNTIME140.dll on target machines
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
@@ -214,6 +216,14 @@ if (EGO_BUILD_TESTS)
         Tools/tests/RawdataBenchmarkTest.cpp
     )
     target_link_libraries(EngineRawdataBenchmarkTest PRIVATE Engine Common)
+
+    add_executable(CommonLoggerTest
+        Tools/tests/LoggerTest.cpp
+    )
+    target_include_directories(CommonLoggerTest PRIVATE "${COMMON_ROOT}/include")
+    target_link_libraries(CommonLoggerTest PRIVATE Common)
+
+    add_test(NAME CommonLoggerTest COMMAND CommonLoggerTest)
 endif()
 
 
