@@ -384,8 +384,8 @@ bool StylusPipeline::Process(
     m_dbg.pointY    = m_lastResult.point.y;
     m_dbg.valid     = finalCoor.valid;
     m_dbg.speedInstant  = m_penStateMachine.GetInstantSpeed();
-    m_dbg.speedShortAvg = 0.f;  // Removed (was 24-frame history)
-    m_dbg.speedFullAvg  = 0.f;  // Removed
+    m_dbg.speedShortAvg = m_penStateMachine.GetSmoothedSpeed();  // EMA-smoothed (drives IIR)
+    m_dbg.speedFullAvg  = 0.f;  // Removed (was 24-frame history)
     m_dbg.iirCoef   = static_cast<float>(profile.iirCoef);
     m_dbg.isHover   = (m_lastResult.pressure == 0);
     m_dbg.isEdge    = isEdge;
@@ -509,10 +509,26 @@ std::vector<ConfigParam> StylusPipeline::GetConfigSchema() const {
             ConfigParam::Int, const_cast<int*>(&m_penStateMachine.hoverIirCoef), 1, 16, Cat::Filter),
         ConfigParam("sp.smJitterMax", "SM Jitter Max Strength",
             ConfigParam::Int, const_cast<int*>(&m_penStateMachine.jitterMax), 0, 5, Cat::Filter),
+        ConfigParam("sp.smSpdSmooth", "SM Speed Smooth Window",
+            ConfigParam::Int, const_cast<int*>(&m_penStateMachine.speedSmoothWindow), 1, 20, Cat::Filter),
+        ConfigParam("sp.smDirHalve", "SM Dir Halve Enable",
+            ConfigParam::Bool, const_cast<bool*>(&m_penStateMachine.enableDirectionalHalve), Cat::Filter),
+        ConfigParam("sp.smDirVelThr", "SM Dir Velocity Thr",
+            ConfigParam::Float, const_cast<float*>(&m_penStateMachine.directionalVelThreshold), 0.1f, 50.0f, Cat::Filter),
         ConfigParam("sp.smLiftTimeout", "SM Lift Timeout",
             ConfigParam::Int, const_cast<int*>(&m_penStateMachine.liftTimeout), 1, 30, Cat::General),
         ConfigParam("sp.smLongPress", "SM Long Press Frames",
             ConfigParam::Int, const_cast<int*>(&m_penStateMachine.longPressFrames), 10, 600, Cat::General),
+
+        // === Jitter (4-param TSACore) ===
+        ConfigParam("sp.jitEdgeDim1", "Jitter Edge Param Dim1",
+            ConfigParam::Int, const_cast<int*>(&m_postProcessor.jitterEdgeParamDim1), 0, 20, Cat::Filter),
+        ConfigParam("sp.jitEdgeDim2", "Jitter Edge Param Dim2",
+            ConfigParam::Int, const_cast<int*>(&m_postProcessor.jitterEdgeParamDim2), 0, 20, Cat::Filter),
+        ConfigParam("sp.jitCntrDim1", "Jitter Center Param Dim1",
+            ConfigParam::Int, const_cast<int*>(&m_postProcessor.jitterCenterParamDim1), 0, 20, Cat::Filter),
+        ConfigParam("sp.jitCntrDim2", "Jitter Center Param Dim2",
+            ConfigParam::Int, const_cast<int*>(&m_postProcessor.jitterCenterParamDim2), 0, 20, Cat::Filter),
 
         // === LinearFilter ===
         ConfigParam("sp.lfMinFitLen", "LF Min Fit Length",
@@ -639,8 +655,16 @@ void StylusPipeline::SaveConfig(std::ostream& out) const {
     out << "sp.smIirDivisor=" << m_penStateMachine.iirDivisorN << "\n";
     out << "sp.smHoverIir=" << m_penStateMachine.hoverIirCoef << "\n";
     out << "sp.smJitterMax=" << m_penStateMachine.jitterMax << "\n";
+    out << "sp.smSpdSmooth=" << m_penStateMachine.speedSmoothWindow << "\n";
+    out << "sp.smDirHalve=" << m_penStateMachine.enableDirectionalHalve << "\n";
+    out << "sp.smDirVelThr=" << m_penStateMachine.directionalVelThreshold << "\n";
     out << "sp.smLiftTimeout=" << m_penStateMachine.liftTimeout << "\n";
     out << "sp.smLongPress=" << m_penStateMachine.longPressFrames << "\n";
+    // Jitter 4-param
+    out << "sp.jitEdgeDim1=" << m_postProcessor.jitterEdgeParamDim1 << "\n";
+    out << "sp.jitEdgeDim2=" << m_postProcessor.jitterEdgeParamDim2 << "\n";
+    out << "sp.jitCntrDim1=" << m_postProcessor.jitterCenterParamDim1 << "\n";
+    out << "sp.jitCntrDim2=" << m_postProcessor.jitterCenterParamDim2 << "\n";
     // LinearFilter
     out << "sp.lfMinFitLen=" << m_linearFilter.minFitLength << "\n";
     out << "sp.lfEnterResidual=" << m_linearFilter.enterResidualThreshold << "\n";
@@ -729,8 +753,16 @@ void StylusPipeline::LoadConfig(
     else if (key == "sp.smIirDivisor") m_penStateMachine.iirDivisorN = toInt(value);
     else if (key == "sp.smHoverIir") m_penStateMachine.hoverIirCoef = toInt(value);
     else if (key == "sp.smJitterMax") m_penStateMachine.jitterMax = toInt(value);
+    else if (key == "sp.smSpdSmooth") m_penStateMachine.speedSmoothWindow = toInt(value);
+    else if (key == "sp.smDirHalve") m_penStateMachine.enableDirectionalHalve = toBool(value);
+    else if (key == "sp.smDirVelThr") m_penStateMachine.directionalVelThreshold = toFloat(value);
     else if (key == "sp.smLiftTimeout") m_penStateMachine.liftTimeout = toInt(value);
     else if (key == "sp.smLongPress") m_penStateMachine.longPressFrames = toInt(value);
+    // Jitter 4-param
+    else if (key == "sp.jitEdgeDim1") m_postProcessor.jitterEdgeParamDim1 = toInt(value);
+    else if (key == "sp.jitEdgeDim2") m_postProcessor.jitterEdgeParamDim2 = toInt(value);
+    else if (key == "sp.jitCntrDim1") m_postProcessor.jitterCenterParamDim1 = toInt(value);
+    else if (key == "sp.jitCntrDim2") m_postProcessor.jitterCenterParamDim2 = toInt(value);
     // LinearFilter
     else if (key == "sp.lfMinFitLen") m_linearFilter.minFitLength = toInt(value);
     else if (key == "sp.lfEnterResidual") m_linearFilter.enterResidualThreshold = toFloat(value);

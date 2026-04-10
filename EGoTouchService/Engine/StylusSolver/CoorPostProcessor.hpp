@@ -71,22 +71,36 @@ public:
     // Jitter offset compensation (TSACore: AftCoorProcess)
     // Dynamic threshold based on sensor/screen dimensions
     // Independent X/Y axis locking
+    // Uses original TSACore 4-parameter formula for edge/center thresholds
     // ══════════════════════════════════════════════
     inline AsaCoorResult StepJitter(const AsaCoorResult& cur,
                                      int strength, bool isEdge) {
         if (strength <= 0) return cur;
 
-        // Compute thresholds from strength (replaces old config params)
-        // strength: 1=weak, 2=medium, 3=strong
-        int32_t baseDim1 = (screenDimDim1 > 0)
-            ? (strength * sensorDimCols * kCoorUnit) / screenDimDim1
-            : static_cast<int32_t>(strength) * 10;
-        int32_t baseDim2 = (screenDimDim2 > 0)
-            ? (strength * sensorDimRows * kCoorUnit) / screenDimDim2
-            : static_cast<int32_t>(strength) * 10;
+        // TSACore: Edge detection in GLOBAL space
+        const bool isLocalEdge = isEdge ||
+            cur.dim1 < (kCoorUnit + 1) || cur.dim2 < (kCoorUnit + 1) ||
+            cur.dim1 >= (sensorDimCols - 1) * kCoorUnit ||
+            cur.dim2 >= (sensorDimRows - 1) * kCoorUnit;
 
-        int32_t thrDim1 = isEdge ? baseDim1 * 3 / 2 : baseDim1;
-        int32_t thrDim2 = isEdge ? baseDim2 * 3 / 2 : baseDim2;
+        // TSACore: Dynamic threshold = (param * sensorDim * 0x400) / screenDim
+        // Uses independent 4 parameters (edge/center × dim1/dim2)
+        int32_t thrDim1, thrDim2;
+        if (isLocalEdge) {
+            thrDim1 = (screenDimDim1 > 0)
+                ? (jitterEdgeParamDim1 * sensorDimCols * kCoorUnit) / screenDimDim1
+                : 40;
+            thrDim2 = (screenDimDim2 > 0)
+                ? (jitterEdgeParamDim2 * sensorDimRows * kCoorUnit) / screenDimDim2
+                : 40;
+        } else {
+            thrDim1 = (screenDimDim1 > 0)
+                ? (jitterCenterParamDim1 * sensorDimCols * kCoorUnit) / screenDimDim1
+                : 20;
+            thrDim2 = (screenDimDim2 > 0)
+                ? (jitterCenterParamDim2 * sensorDimRows * kCoorUnit) / screenDimDim2
+                : 20;
+        }
 
         // Lock starts on first valid frame
         if (!m_jitterActive) {
@@ -135,7 +149,11 @@ public:
     // ── Diagnostic accessors ──
     int GetFrameCount() const { return m_frameCount; }
 
-    // ── Configuration (Jitter) ──
+    // ── Configuration (Jitter — TSACore 4-parameter formula) ──
+    int  jitterEdgeParamDim1   = 3;   // TSACore: flash[0xa66]
+    int  jitterEdgeParamDim2   = 3;   // TSACore: flash[0xa67]
+    int  jitterCenterParamDim1 = 2;   // TSACore: flash[0xa64]
+    int  jitterCenterParamDim2 = 2;   // TSACore: flash[0xa65]
     int  screenDimDim1 = 16000;       // HID X resolution
     int  screenDimDim2 = 25600;       // HID Y resolution
     int  sensorDimCols = 60;          // Total sensor columns (dim1/X)

@@ -30,12 +30,14 @@ struct MotionProfile {
     bool  isTap          = false;
 };
 
-/// PenStateMachine v2 — 4-state pen lifecycle with speed-continuous MotionProfile.
+/// PenStateMachine v2.1 — 4-state pen lifecycle with speed-continuous MotionProfile.
 ///
 /// States: Leave → Hover → Moving → Lifting → Leave
 ///
-/// The state machine runs AFTER coordinate solve + pressure, BEFORE all post-processing.
-/// It outputs a MotionProfile that drives the entire post-processing chain.
+/// v2.1 fixes:
+///   - Speed uses short-window EMA (3-frame) to suppress noise → stable IIR coef
+///   - Directional halve: when moving predominantly on one axis, IIR halved
+///   - movingIirHigh defaults to 16 (full pass-through at high speed, same as old TSACore)
 class PenStateMachine {
 public:
     enum class State : uint8_t {
@@ -54,14 +56,34 @@ public:
     /// @return MotionProfile for this frame's post-processing
     inline MotionProfile Update(bool coordValid, uint16_t pressure,
                                  int32_t curDim1, int32_t curDim2) {
-        // Compute instant speed from previous frame
+        // ── Speed Calculation ──
+        float rawSpeedThisFrame = 0.0f;
+        float rawVelDim1 = 0.0f;
+        float rawVelDim2 = 0.0f;
+
         if (coordValid && m_hasPrevCoor) {
             float dx = static_cast<float>(curDim1 - m_prevDim1);
             float dy = static_cast<float>(curDim2 - m_prevDim2);
-            m_instantSpeed = std::sqrt(dx * dx + dy * dy);
-        } else {
-            m_instantSpeed = 0.0f;
+            rawSpeedThisFrame = std::sqrt(dx * dx + dy * dy);
+            rawVelDim1 = std::abs(dx);
+            rawVelDim2 = std::abs(dy);
         }
+
+        // EMA smoothing on speed (α = 2/(N+1), N=speedSmoothWindow)
+        // This prevents single-frame noise spikes from whipsawing IIR
+        if (m_hasPrevCoor && coordValid) {
+            const float alpha = 2.0f / (static_cast<float>(speedSmoothWindow) + 1.0f);
+            m_smoothedSpeed = alpha * rawSpeedThisFrame + (1.0f - alpha) * m_smoothedSpeed;
+            m_smoothedVelDim1 = alpha * rawVelDim1 + (1.0f - alpha) * m_smoothedVelDim1;
+            m_smoothedVelDim2 = alpha * rawVelDim2 + (1.0f - alpha) * m_smoothedVelDim2;
+        } else {
+            m_smoothedSpeed = rawSpeedThisFrame;
+            m_smoothedVelDim1 = rawVelDim1;
+            m_smoothedVelDim2 = rawVelDim2;
+        }
+
+        // Expose raw for diagnostics
+        m_instantSpeed = rawSpeedThisFrame;
 
         // Save for next frame
         if (coordValid) {
@@ -120,7 +142,7 @@ public:
 
         // Track low-speed frames for long-press detection (only in Moving)
         if (m_state == State::Moving) {
-            if (m_instantSpeed < stillSpeedThreshold) {
+            if (m_smoothedSpeed < stillSpeedThreshold) {
                 m_lowSpeedFrames++;
             } else {
                 m_lowSpeedFrames = 0;
@@ -138,6 +160,7 @@ public:
 
     State GetState() const { return m_state; }
     float GetInstantSpeed() const { return m_instantSpeed; }
+    float GetSmoothedSpeed() const { return m_smoothedSpeed; }
     int   GetStateFrameCount() const { return m_stateFrameCount; }
     int   GetTotalContactFrames() const { return m_totalContactFrames; }
     int   GetLowSpeedFrames() const { return m_lowSpeedFrames; }
@@ -151,6 +174,9 @@ public:
         m_totalContactFrames = 0;
         m_lowSpeedFrames = 0;
         m_instantSpeed = 0.0f;
+        m_smoothedSpeed = 0.0f;
+        m_smoothedVelDim1 = 0.0f;
+        m_smoothedVelDim2 = 0.0f;
         m_hasPrevCoor = false;
         m_justLeftRange = false;
         m_wasTap = false;
@@ -160,8 +186,11 @@ public:
 
     // Speed thresholds (GLOBAL space, 0x400 units/frame)
     float stillSpeedThreshold = 3.0f;     // Long-press detection
-    float speedLow            = 5.0f;     // IIR interpolation low reference
+    float speedLow            = 3.0f;     // IIR interpolation low reference
     float speedHigh           = 300.0f;   // IIR interpolation high reference
+
+    // Speed smoothing window (EMA N)
+    int   speedSmoothWindow   = 5;        // 5-frame EMA for speed stabilization
 
     // Frame counts
     int   longPressFrames     = 120;      // @240Hz ≈ 0.5s
@@ -169,9 +198,15 @@ public:
     int   tapMaxFrames        = 5;
 
     // Moving IIR range (divisor = iirDivisorN)
-    int   movingIirLow        = 3;        // Very slow → strong smoothing
-    int   movingIirHigh       = 14;       // Fast → near pass-through
+    // -- Matches old TSACore defaults: still=4~16/16, moving=8~16/16
+    int   movingIirLow        = 4;        // Very slow → strong smoothing
+    int   movingIirHigh       = 16;       // Fast → full pass-through (16/16 = 1.0)
     int   iirDivisorN         = 16;
+
+    // Directional halve — when moving predominantly on one axis,
+    // halve the IIR coefficients for stronger cross-axis smoothing
+    bool  enableDirectionalHalve = true;
+    float directionalVelThreshold = 1.0f; // Min avg velocity to trigger halve
 
     // Hover IIR
     int   hoverIirCoef        = 4;
@@ -185,6 +220,9 @@ private:
     int   m_totalContactFrames = 0;
     int   m_lowSpeedFrames = 0;
     float m_instantSpeed = 0.0f;
+    float m_smoothedSpeed = 0.0f;
+    float m_smoothedVelDim1 = 0.0f;
+    float m_smoothedVelDim2 = 0.0f;
 
     // Previous frame coordinates for speed calculation
     int32_t m_prevDim1 = 0;
@@ -199,6 +237,9 @@ private:
         m_stateFrameCount = 0;
         m_hasPrevCoor = false;
         m_instantSpeed = 0.0f;
+        m_smoothedSpeed = 0.0f;
+        m_smoothedVelDim1 = 0.0f;
+        m_smoothedVelDim2 = 0.0f;
         m_lowSpeedFrames = 0;
     }
 
@@ -251,16 +292,32 @@ private:
     }
 
     inline void CalcMovingProfile(MotionProfile& p) const {
+        // Use SMOOTHED speed for interpolation (prevents single-frame noise spikes)
+        float effectiveSpeed = m_smoothedSpeed;
+
+        // ── Directional Halve (TSACore compatibility) ──
+        // When pen moves predominantly on one axis, reduce IIR coef range by half
+        // → stronger smoothing on the cross-axis to suppress perpendicular jitter
+        int effIirLow = movingIirLow;
+        int effIirHigh = movingIirHigh;
+
+        if (enableDirectionalHalve &&
+            (m_smoothedVelDim1 > directionalVelThreshold ||
+             m_smoothedVelDim2 > directionalVelThreshold)) {
+            effIirHigh = std::max(1, effIirHigh >> 1);
+            effIirLow  = std::max(1, effIirLow >> 1);
+        }
+
         // Continuous speed interpolation
         const float range = speedHigh - speedLow;
         const float t = (range > 0.0f)
-            ? std::clamp((m_instantSpeed - speedLow) / range, 0.0f, 1.0f)
+            ? std::clamp((effectiveSpeed - speedLow) / range, 0.0f, 1.0f)
             : 0.0f;
 
-        // IIR: lerp [movingIirLow .. movingIirHigh]
+        // IIR: lerp [effIirLow .. effIirHigh]
         p.iirCoef = static_cast<int>(
-            static_cast<float>(movingIirLow) +
-            t * static_cast<float>(movingIirHigh - movingIirLow) + 0.5f);
+            static_cast<float>(effIirLow) +
+            t * static_cast<float>(effIirHigh - effIirLow) + 0.5f);
         p.skipIIR = false;
         p.freezeOutput = false;
 
