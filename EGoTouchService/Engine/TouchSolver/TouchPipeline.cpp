@@ -53,6 +53,7 @@ bool TouchPipeline::Process(HeatmapFrame& frame) {
                              m_zoneExp.m_edgeBounds);
 
         // ── Update diagnostic caches ────────────────────────────────
+#if EGOTOUCH_DIAG
         m_cachedPeakCount = static_cast<int>(m_peakDet.GetPeaks().size());
         m_cachedZoneCount = m_zoneExp.GetZoneCount();
         m_cachedContactCount = static_cast<int>(frame.contacts.size());
@@ -76,6 +77,7 @@ bool TouchPipeline::Process(HeatmapFrame& frame) {
         for (const auto& pk : m_peakDet.GetPeaks()) {
             frame.peaks.push_back({pk.r, pk.c, pk.z, pk.id});
         }
+#endif
     }
 
     m_tracker.Process(frame);

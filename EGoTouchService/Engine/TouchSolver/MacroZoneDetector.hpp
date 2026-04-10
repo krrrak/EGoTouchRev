@@ -2,10 +2,10 @@
 // ── TouchPipeline Module: MacroZoneDetector ──
 // Header-only. Faithful replica of TouchSolver/MacroZoneDetector.{h,cpp}.
 // BFS 8-connected component labeling on the heatmap.
+// Optimized: stack-based BFS queue, zone storage reuse across frames.
 
 #include "EngineTypes.h"
 #include <vector>
-#include <queue>
 #include <cstdint>
 #include <cstring>
 
@@ -15,13 +15,15 @@ class MacroZoneDetector {
 public:
     static constexpr int kRows = 40;
     static constexpr int kCols = 60;
+    static constexpr int kGridSize = kRows * kCols; // 2400
 
     inline void Process(const HeatmapFrame& frame, int threshold) {
-        m_macroZones.clear();
         std::memset(m_visited, 0, sizeof(m_visited));
 
-        int dr[] = {-1, 1, 0, 0, -1, -1, 1, 1};
-        int dc[] = {0, 0, -1, 1, -1, 1, -1, 1};
+        static constexpr int dr[] = {-1, 1, 0, 0, -1, -1, 1, 1};
+        static constexpr int dc[] = {0, 0, -1, 1, -1, 1, -1, 1};
+
+        int zoneIdx = 0;
 
         for (int r = 0; r < kRows; ++r) {
             for (int c = 0; c < kCols; ++c) {
@@ -29,15 +31,23 @@ public:
                 if (m_visited[idx]) continue;
 
                 if (frame.heatmapMatrix[r][c] >= threshold) {
-                    MacroZone zone;
-                    std::queue<int> q;
+                    // Reuse existing zone storage to avoid vector reallocation
+                    if (zoneIdx >= static_cast<int>(m_macroZones.size())) {
+                        m_macroZones.emplace_back();
+                        m_macroZones.back().pixels.reserve(128);
+                    }
+                    auto& zone = m_macroZones[zoneIdx];
+                    zone.pixels.clear();  // keeps reserved capacity
+                    zone.area = 0;
 
-                    q.push(idx);
+                    // Stack-based BFS queue (no heap allocation)
+                    m_queueHead = 0;
+                    m_queueTail = 0;
+                    m_queueBuf[m_queueTail++] = idx;
                     m_visited[idx] = true;
 
-                    while (!q.empty()) {
-                        int currIdx = q.front();
-                        q.pop();
+                    while (m_queueHead < m_queueTail) {
+                        int currIdx = m_queueBuf[m_queueHead++];
 
                         zone.pixels.push_back(currIdx);
                         zone.area++;
@@ -53,18 +63,20 @@ public:
                                 int nIdx = nr * kCols + nc;
                                 if (!m_visited[nIdx] && frame.heatmapMatrix[nr][nc] >= threshold) {
                                     m_visited[nIdx] = true;
-                                    q.push(nIdx);
+                                    m_queueBuf[m_queueTail++] = nIdx;
                                 }
                             }
                         }
                     }
 
                     if (zone.area > 0) {
-                        m_macroZones.push_back(std::move(zone));
+                        zoneIdx++;
                     }
                 }
             }
         }
+        // Trim excess zones (keeps capacity for future frames)
+        m_macroZones.resize(zoneIdx);
     }
 
     const std::vector<MacroZone>& GetMacroZones() const { return m_macroZones; }
@@ -72,7 +84,11 @@ public:
 
 private:
     std::vector<MacroZone> m_macroZones;
-    bool m_visited[kRows * kCols] = {};
+    bool m_visited[kGridSize] = {};
+    // Pre-allocated BFS queue buffer (max = grid size, no heap alloc)
+    int m_queueBuf[kGridSize];
+    int m_queueHead = 0;
+    int m_queueTail = 0;
 };
 
 }} // namespace Engine::Touch

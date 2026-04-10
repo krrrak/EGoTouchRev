@@ -17,11 +17,11 @@ public:
         if (!m_enabled) return true;
 
         // Master 帧: 7B header + 4800B matrix + 256B suffix = 5063B
-        if (frame.rawData.size() < Frame::kMasterFrameSize) {
+        if (frame.rawLen < Frame::kMasterFrameSize) {
             return true;
         }
 
-        const uint8_t* raw_ptr = frame.rawData.data() + Frame::kHeaderBytes;
+        const uint8_t* raw_ptr = frame.rawPtr + Frame::kHeaderBytes;
         int16_t* heat_ptr = reinterpret_cast<int16_t*>(frame.heatmapMatrix);
 
         // 使用标准 C++ 循环处理，避免在 ARM64 和未对齐地址导致的硬件异常
@@ -33,14 +33,14 @@ public:
             heat_ptr[i] = static_cast<int16_t>(val);
         }
 
-        // Populate structured suffix views from rawData
+        // Populate structured suffix views from rawPtr
         frame.masterSuffix.LoadFromBytes(
-            frame.rawData.data() + Frame::kMasterSuffixOffset);
+            frame.rawPtr + Frame::kMasterSuffixOffset);
         frame.masterSuffixValid = true;
 
-        if (frame.rawData.size() >= Frame::kTotalFrameSize) {
+        if (frame.rawLen >= Frame::kTotalFrameSize) {
             frame.slaveSuffix.LoadFromBytes(
-                frame.rawData.data() + Frame::kSlaveSuffixOffset);
+                frame.rawPtr + Frame::kSlaveSuffixOffset);
             frame.slaveSuffixValid = true;
         }
 

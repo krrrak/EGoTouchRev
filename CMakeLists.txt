@@ -145,6 +145,7 @@ target_include_directories(EGoTouchApp PRIVATE
 )
 
 # Link D3D11 for the ImGui DX11 backend
+target_compile_definitions(EGoTouchApp PRIVATE EGOTOUCH_DIAGNOSTICS)
 target_link_libraries(EGoTouchApp PRIVATE Device Engine Host Common ImGuiCommon d3d11 d3dcompiler dwmapi setupapi)
 
 # --- EGoTouchService (Production Service Shell) ---
@@ -189,6 +190,7 @@ if (EGO_BUILD_TESTS)
     add_executable(EngineRawdataBenchmarkTest
         Tools/tests/RawdataBenchmarkTest.cpp
     )
+    target_compile_definitions(EngineRawdataBenchmarkTest PRIVATE EGOTOUCH_DIAGNOSTICS)
     target_link_libraries(EngineRawdataBenchmarkTest PRIVATE Engine Common)
 
     add_executable(CommonLoggerTest

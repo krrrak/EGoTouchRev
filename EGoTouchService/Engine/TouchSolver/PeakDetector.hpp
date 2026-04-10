@@ -112,15 +112,17 @@ private:
                 }
                 if (v < thold) continue;
 
-                // --- Asymmetric Local-Max Test (scales with m_z8Radius) ---
+                // --- Combined Local-Max + Neighbor Sum (single pass) ---
                 bool isPeak = true;
-                for (int dr = -m_z8Radius; dr <= m_z8Radius; ++dr) {
+                int nbrSigSum = 0;
+                for (int dr = -m_z8Radius; dr <= m_z8Radius && isPeak; ++dr) {
                     for (int dc = -m_z8Radius; dc <= m_z8Radius; ++dc) {
                         if (dr == 0 && dc == 0) continue;
                         int nr = r + dr;
                         int nc = c + dc;
                         if (nr >= 0 && nr < kRows && nc >= 0 && nc < kCols) {
                             int16_t nv = val(nr, nc);
+                            nbrSigSum += nv;
                             bool after = (dr > 0) || (dr == 0 && dc > 0);
                             if (after) {
                                 if (nv > v) { isPeak = false; break; }
@@ -129,7 +131,6 @@ private:
                             }
                         }
                     }
-                    if (!isPeak) break;
                 }
                 if (!isPeak) continue;
 
@@ -138,17 +139,6 @@ private:
                     DetectPressureDrift(frame, c, r)) {
                     continue;
                 }
-
-                // Peak_CalcZn: sum neighbors up to m_z8Radius
-                int nbrSigSum = 0;
-                for (int dr = -m_z8Radius; dr <= m_z8Radius; ++dr)
-                    for (int dc = -m_z8Radius; dc <= m_z8Radius; ++dc) {
-                        if (dr == 0 && dc == 0) continue;
-                        int nr = r + dr, nc = c + dc;
-                        if (nr >= 0 && nr < kRows &&
-                            nc >= 0 && nc < kCols)
-                            nbrSigSum += val(nr, nc);
-                    }
 
                 // TSACore Peak_Insert: cap at m_maxPeaks, replace weakest
                 if (static_cast<int>(m_peaks.size()) < m_maxPeaks) {

@@ -311,7 +311,13 @@ void DeviceRuntime::OnStreaming() {
 
     // 3. Touch pipeline (always active)
     Engine::HeatmapFrame touchFrame;
+    // 零拷贝: rawPtr 指向 Chip::back_data (在下次 GetFrame 前有效)
+    touchFrame.rawPtr = rawData.data();
+    touchFrame.rawLen = rawData.size();
+#if EGOTOUCH_DIAG
+    // Debug/App 模式: 拷贝完整帧数据供 IPC 帧推送
     touchFrame.rawData.assign(rawData.begin(), rawData.end());
+#endif
     touchFrame.masterWasRead = m_chip.m_lastMasterWasRead;  // 传递 master 读取状态给帧写入器
 
     // Inject stylus result so TouchTracker stylus suppression can work
@@ -323,16 +329,16 @@ void DeviceRuntime::OnStreaming() {
     m_touchPipeline.Process(touchFrame);
     m_vhfReporter.DispatchTouch(touchFrame);
 
-    // 4. Merge results for UI push
+#ifdef _DEBUG
+    // 4. Merge results for UI push (Debug only)
     if (m_framePushCb) {
         if (!touchOnly) {
-            touchFrame.stylus = m_stylusPipeline.GetLastResult();
-            touchFrame.stylus.packet = stylusPacket;
-            // Single-copy diagnostics (replaces 40-line manual field copy)
+            // 补充诊断字段 (仅 IPC 可视化需要, 复用已有的 stylus 结果)
             touchFrame.stylus.diag = m_stylusPipeline.GetDebugCoord();
         }
         m_framePushCb(touchFrame);
     }
+#endif
 }
 
 // --------------- MCU 事件路由 ---------------

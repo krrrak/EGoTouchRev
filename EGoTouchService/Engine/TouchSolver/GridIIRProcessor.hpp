@@ -42,34 +42,36 @@ public:
             return true;
         }
 
-        // Compute per-frame dynamic threshold
+        // Compute per-frame dynamic threshold (merged scan: find max while iterating)
+        // We still need a two-pass approach because dynThreshold depends on frameMax
+        // which requires the full frame. Optimize by using pointer arithmetic instead of 2D indexing.
+        const int16_t* matPtr = &frame.heatmapMatrix[0][0];
         int16_t frameMax = 0;
-        for (int y = 0; y < 40; ++y)
-            for (int x = 0; x < 60; ++x)
-                if (frame.heatmapMatrix[y][x] > frameMax)
-                    frameMax = frame.heatmapMatrix[y][x];
+        for (int i = 0; i < 2400; ++i) {
+            if (matPtr[i] > frameMax) frameMax = matPtr[i];
+        }
 
         const int16_t dynThreshold = static_cast<int16_t>(std::max(
             static_cast<int>(std::lround(frameMax * m_gateRatio)),
             m_gateStaticFloor));
 
-        // Apply per-pixel
-        for (int y = 0; y < 40; ++y) {
-            for (int x = 0; x < 60; ++x) {
-                int16_t current = frame.heatmapMatrix[y][x];
-                int16_t history = m_historyBuffer[y][x];
+        // Apply per-pixel IIR with flat pointer iteration
+        int16_t* framePixel = &frame.heatmapMatrix[0][0];
+        int16_t* histPixel  = &m_historyBuffer[0][0];
+        for (int i = 0; i < 2400; ++i) {
+            int16_t current = framePixel[i];
+            int16_t history = histPixel[i];
 
-                // Residual correction
-                if (m_residualEnabled && history > current) {
-                    int16_t residual = static_cast<int16_t>(
-                        (history - current) * m_residualAlpha);
-                    current = std::max<int16_t>(0, current - residual);
-                }
-
-                int16_t filtered = ApplyIIR(current, history, dynThreshold);
-                frame.heatmapMatrix[y][x] = filtered;
-                m_historyBuffer[y][x] = filtered;
+            // Residual correction
+            if (m_residualEnabled && history > current) {
+                int16_t residual = static_cast<int16_t>(
+                    (history - current) * m_residualAlpha);
+                current = std::max<int16_t>(0, current - residual);
             }
+
+            int16_t filtered = ApplyIIR(current, history, dynThreshold);
+            framePixel[i] = filtered;
+            histPixel[i] = filtered;
         }
         return true;
     }

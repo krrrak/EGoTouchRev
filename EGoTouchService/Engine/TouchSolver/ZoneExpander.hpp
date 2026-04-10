@@ -8,7 +8,6 @@
 #include "PeakDetector.hpp"
 #include "EdgeCompensation.h"   // ZoneEdgeInfo, EdgeBounds, TZ_* helpers
 #include <vector>
-#include <queue>
 #include <array>
 #include <algorithm>
 #include <cstdint>
@@ -49,7 +48,8 @@ public:
             m_units[pi].peakCol = pk.c;
             m_units[pi].peakRow = pk.r;
             m_units[pi].peakSig = pk.z;
-            m_units[pi].peakIndices.push_back(pi);
+            m_units[pi].peakCount = 0;
+            m_units[pi].addPeakIndex(pi);
             FloodFill(frame, pi, pk, zoneThold);
             m_zoneCount++;
         }
@@ -95,7 +95,14 @@ private:
         ZoneType type = NF;     // TZ_GetType result
         int peakCol = 0, peakRow = 0;
         int16_t peakSig = 0;
-        std::vector<int> peakIndices; // All peak indices in this zone
+        static constexpr int kMaxPeaksPerZone = 16;
+        int peakIndices[kMaxPeaksPerZone];
+        int peakCount = 0;
+        void addPeakIndex(int idx) {
+            if (peakCount < kMaxPeaksPerZone) peakIndices[peakCount] = idx;
+            peakCount++;
+        }
+        int getPeakCount() const { return std::min(peakCount, kMaxPeaksPerZone); }
     };
 
     std::array<uint8_t, kGridSize> m_touchZones{};
@@ -103,6 +110,11 @@ private:
     std::vector<ZoneUnit> m_units;
     std::vector<ZoneEdgeInfo> m_edgeInfos;
     int m_zoneCount = 0;
+    // Pre-allocated BFS queue buffer (max = grid size)
+    int m_bfsQueue[kGridSize];
+    int m_bfsHead = 0, m_bfsTail = 0;
+    // Scratch buffer for DilateAndErode (avoids 2x 2400B array copies)
+    std::array<uint8_t, kGridSize> m_scratch{};
 
     inline void Reset() {
         m_touchZones.fill(0);
@@ -136,18 +148,19 @@ private:
         static constexpr int dc[] = {-1, 0, 1,-1, 1,-1, 0, 1};
 
         uint8_t zoneId = static_cast<uint8_t>(peakIdx + 1);
-        std::queue<int> q;
 
         int seedIdx = peak.r * kCols + peak.c;
         m_touchZones[seedIdx] = zoneId;
-        q.push(seedIdx);
+        // Use member BFS queue buffer (no heap allocation)
+        m_bfsHead = 0;
+        m_bfsTail = 0;
+        m_bfsQueue[m_bfsTail++] = seedIdx;
 
         auto& unit = m_units[peakIdx];
         auto addPixel = [&](int r, int c, int16_t sig) {
             unit.area++;
             unit.signalSum += sig;
             if (sig > 0) {
-                // TSACore weighted centroid: pos*128*signal
                 unit.weightedColSum += c * 128 * sig;
                 unit.weightedRowSum += r * 128 * sig;
                 unit.weightTotal += sig;
@@ -155,12 +168,11 @@ private:
         };
 
         addPixel(peak.r, peak.c, peak.z);
-        // Seed pixel edge info (flagMask=7 = core)
         TZ_UpdateEdgeInfo(m_edgeInfos[peakIdx], peak.z,
                           peak.c, peak.r, 7);
 
-        while (!q.empty()) {
-            int idx = q.front(); q.pop();
+        while (m_bfsHead < m_bfsTail) {
+            int idx = m_bfsQueue[m_bfsHead++];
             int r = idx / kCols, c = idx % kCols;
 
             for (int d = 0; d < 8; ++d) {
@@ -171,23 +183,20 @@ private:
                 int16_t sig = frame.heatmapMatrix[nr][nc];
 
                 if (m_touchZones[ni] != 0) {
-                    // Already visited — check zone overlap
                     uint8_t otherZone = m_touchZones[ni];
                     if (otherZone != zoneId) {
-                        unit.flags |= 0x4000; // zone overlap
+                        unit.flags |= 0x4000;
                     }
                     continue;
                 }
 
                 if (sig >= zoneThold) {
-                    // ★ Core zone: mark + enqueue + accumulate centroid
                     m_touchZones[ni] = zoneId;
                     addPixel(nr, nc, sig);
-                    q.push(ni);
+                    m_bfsQueue[m_bfsTail++] = ni;
                     TZ_UpdateEdgeInfo(m_edgeInfos[peakIdx], sig,
                         nc, nr, 7);
                 } else if (sig > 0) {
-                    // ★ Edge zone: mark but do NOT enqueue
                     m_touchZones[ni] = zoneId;
                     unit.edgeArea++;
                     unit.edgeSignalSum += sig;
@@ -196,7 +205,6 @@ private:
                 }
             }
         }
-        // TZ_GetEdgeTouchedFlag — set boundary flags after BFS
         TZ_GetEdgeTouchedFlag(m_edgeInfos[peakIdx]);
     }
 
@@ -209,41 +217,42 @@ private:
         static constexpr int dr[] = {-1,-1,-1, 0, 0, 1, 1, 1};
         static constexpr int dc[] = {-1, 0, 1,-1, 1,-1, 0, 1};
 
-        auto orig = m_touchZones;
-        auto dilated = m_touchZones;
+        // Save original zone state in scratch (single 2400B copy)
+        std::memcpy(m_scratch.data(), m_touchZones.data(), kGridSize);
 
         // Dilate: fill empty pixels surrounded by zone pixels
+        // Write directly into m_touchZones (reading from m_scratch for neighbors)
         for (int r = 0; r < kRows; ++r) {
             for (int c = 0; c < kCols; ++c) {
                 int idx = r * kCols + c;
-                if (m_touchZones[idx] != 0) continue;
+                if (m_scratch[idx] != 0) continue; // already has a zone
                 uint8_t counts[22] = {};
                 uint8_t best = 0; int bestCnt = 0;
                 for (int d = 0; d < 8; ++d) {
                     int nr = r + dr[d], nc = c + dc[d];
                     if (nr < 0 || nr >= kRows || nc < 0 || nc >= kCols)
                         continue;
-                    uint8_t z = m_touchZones[nr * kCols + nc];
+                    uint8_t z = m_scratch[nr * kCols + nc];
                     if (z == 0 || z > 20) continue;
                     if (++counts[z] > bestCnt) {
                         bestCnt = counts[z]; best = z;
                     }
                 }
-                if (bestCnt >= 3) dilated[idx] = best;
+                if (bestCnt >= 3) m_touchZones[idx] = best;
             }
         }
 
-        // Erode: remove newly-dilated pixels bordering empty
-        m_touchZones = dilated;
+        // Erode: remove newly-dilated pixels that border empty space
+        // A pixel is "newly dilated" if m_scratch[idx]==0 but m_touchZones[idx]!=0
         for (int r = 0; r < kRows; ++r) {
             for (int c = 0; c < kCols; ++c) {
                 int idx = r * kCols + c;
-                if (dilated[idx] == 0 || orig[idx] != 0) continue;
+                if (m_touchZones[idx] == 0 || m_scratch[idx] != 0) continue;
                 for (int d = 0; d < 8; ++d) {
                     int nr = r + dr[d], nc = c + dc[d];
                     if (nr < 0 || nr >= kRows || nc < 0 || nc >= kCols)
                         continue;
-                    if (dilated[nr * kCols + nc] == 0) {
+                    if (m_touchZones[nr * kCols + nc] == 0) {
                         m_touchZones[idx] = 0; break;
                     }
                 }
@@ -273,12 +282,11 @@ private:
             int ownerUnit = zoneToUnit[zid];
             if (ownerUnit < 0 || ownerUnit >= (int)m_units.size()) continue;
             // Check if this peak is already registered
-            auto& indices = m_units[ownerUnit].peakIndices;
             bool found = false;
-            for (int existIdx : indices)
-                if (existIdx == pi) { found = true; break; }
+            for (int j = 0; j < m_units[ownerUnit].getPeakCount(); ++j)
+                if (m_units[ownerUnit].peakIndices[j] == pi) { found = true; break; }
             if (!found)
-                indices.push_back(pi);
+                m_units[ownerUnit].addPeakIndex(pi);
         }
     }
 
@@ -318,7 +326,7 @@ private:
             if (u.area == 0 || u.weightTotal == 0) continue;
 
             // TSACore TZ_GetType: classify zone type
-            if (u.peakIndices.size() >= 2) {
+            if (u.getPeakCount() >= 2) {
                 u.type = MF;  // MultiFinger
             } else if (u.area > 9) {
                 u.type = FF;  // FatFinger (large single touch)
@@ -345,10 +353,11 @@ private:
                 frame.contacts.push_back(tc);
             } else {
                 // ── Multi-peak (TZ_MFProcess): CTD_General 3×3 per peak ──
-                int sharedArea = u.area / static_cast<int>(u.peakIndices.size());
-                int sharedSig  = u.signalSum / static_cast<int>(u.peakIndices.size());
+                int sharedArea = u.area / u.getPeakCount();
+                int sharedSig  = u.signalSum / u.getPeakCount();
 
-                for (int pkIdx : u.peakIndices) {
+                for (int j = 0; j < u.getPeakCount(); ++j) {
+                    int pkIdx = u.peakIndices[j];
                     if (pkIdx < 0 || pkIdx >= (int)peaks.size()) continue;
                     const Peak& pk = peaks[pkIdx];
 

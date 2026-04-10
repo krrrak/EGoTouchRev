@@ -120,9 +120,11 @@ public:
     using BtScanModeSender = std::function<bool(uint8_t freq1, uint8_t freq2)>;
     void SetBtScanModeSender(BtScanModeSender fn) { m_btScanModeSender = std::move(fn); }
 
+#ifdef _DEBUG
     // Frame push callback for IPC (called after pipeline+VHF in worker loop)
     using FramePushCallback = std::function<void(const Engine::HeatmapFrame&)>;
     void SetFramePushCallback(FramePushCallback cb) { m_framePushCb = std::move(cb); }
+#endif
 
     void IngestSystemEvent(const Host::SystemStateEvent& ev);
     uint64_t SubmitCommand(command cmd, CommandSource src,
@@ -183,7 +185,9 @@ private:
     uint64_t m_lastCmdId = 0;
     std::string m_lastNote;
     std::atomic<uint64_t> m_nextCmdId{1};
+#ifdef _DEBUG
     FramePushCallback m_framePushCb;
+#endif
     BtFreqProvider m_btFreqProvider;
     BtScanModeSender m_btScanModeSender;
 

@@ -372,7 +372,8 @@ bool StylusPipeline::Process(
     m_lastResult.point.x = static_cast<float>(finalCoor.dim1);
     m_lastResult.point.y = static_cast<float>(finalCoor.dim2);
 
-    // ── Diagnostics ──
+#ifdef _DEBUG
+    // ── Diagnostics (Debug only) ──
     m_dbg.anchorRow = m_gridData.tx1.anchorRow;
     m_dbg.anchorCol = m_gridData.tx1.anchorCol;
     m_dbg.rawDim1   = rawCoor.dim1;
@@ -384,8 +385,8 @@ bool StylusPipeline::Process(
     m_dbg.pointY    = m_lastResult.point.y;
     m_dbg.valid     = finalCoor.valid;
     m_dbg.speedInstant  = m_penStateMachine.GetInstantSpeed();
-    m_dbg.speedShortAvg = m_penStateMachine.GetSmoothedSpeed();  // EMA-smoothed (drives IIR)
-    m_dbg.speedFullAvg  = 0.f;  // Removed (was 24-frame history)
+    m_dbg.speedShortAvg = m_penStateMachine.GetSmoothedSpeed();
+    m_dbg.speedFullAvg  = 0.f;
     m_dbg.iirCoef   = static_cast<float>(profile.iirCoef);
     m_dbg.isHover   = (m_lastResult.pressure == 0);
     m_dbg.isEdge    = isEdge;
@@ -403,8 +404,9 @@ bool StylusPipeline::Process(
     m_dbg.sigSuppressActive = false;
     m_dbg.penLifecycle      = static_cast<uint8_t>(m_penStateMachine.GetState());
     m_dbg.wasInking         = m_wasInking;
-    m_dbg.avg3PtDim1        = postCoor.dim1;  // Now final post-IIR coordinate
+    m_dbg.avg3PtDim1        = postCoor.dim1;
     m_dbg.avg3PtDim2        = postCoor.dim2;
+#endif
 
     // ── Phase 4: Edge Compensation + Output ──
 
@@ -442,11 +444,13 @@ bool StylusPipeline::Process(
     m_hasLastGoodFrame = true;
     if (m_lastResult.pressure > 0) m_wasInking = true;
 
+#ifdef _DEBUG
     // Final diagnostics
     m_dbg.rawPressure = m_lastResult.point.rawPressure;
     m_dbg.mappedPressure = m_lastResult.pressure;
     m_dbg.vhfPenState = outPacket.valid ? outPacket.bytes[1] : 0;
     m_dbg.linearFilterState = static_cast<uint8_t>(m_linearFilter.GetMode());
+#endif
     return outPacket.valid;
 }
 

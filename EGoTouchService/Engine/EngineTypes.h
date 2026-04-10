@@ -2,7 +2,15 @@
 #include <vector>
 #include <cstdint>
 #include <array>
+#include <cstring>
 #include "FrameLayout.h"
+
+// Diagnostic fields are available in Debug builds and for the diagnostic App
+#if defined(_DEBUG) || defined(EGOTOUCH_DIAGNOSTICS)
+#define EGOTOUCH_DIAG 1
+#else
+#define EGOTOUCH_DIAG 0
+#endif
 
 namespace Engine {
 
@@ -213,10 +221,15 @@ struct StylusFrameData {
 
 // 整个管线中流转的帧结构体
 struct HeatmapFrame {
-    // 原始下发的完整帧数据 (deprecated — 过渡期保留, Phase 3 完成后删除)
+#if EGOTOUCH_DIAG
+    // 原始下发的完整帧数据 (仅 Debug/App 模式保留，供 IPC 帧推送)
     std::vector<uint8_t> rawData;
+#endif
+    // 零拷贝原始数据指针 (Release: 指向 Chip::back_data; Debug: 同时设置)
+    const uint8_t* rawPtr = nullptr;
+    size_t rawLen = 0;
     
-    // ── 结构化 Suffix (新增 — 替代 rawData 中的 magic-offset 访问) ──
+    // ── 结构化 Suffix (替代 rawData 中的 magic-offset 访问) ──
     Frame::MasterSuffixView masterSuffix{};
     Frame::SlaveSuffixView  slaveSuffix{};
     bool masterSuffixValid = false;
@@ -229,10 +242,12 @@ struct HeatmapFrame {
     std::vector<TouchContact> contacts;
     std::array<TouchPacket, 2> touchPackets{};
 
-    // 识别出的原始波峰和区域连通图映射（供 IPC 可视化）
+#if EGOTOUCH_DIAG
+    // 识别出的原始波峰和区域连通图映射（供 IPC 可视化，仅 Debug/App）
     std::vector<TouchPeak> peaks;
     std::array<uint8_t, 2400> touchZones{}; // Now used for MacroZones
     std::array<uint8_t, 2400> peakZones{};  // Used for MicroZones (per-peak segmented regions)
+#endif
 
     // Stylus data parsed from slave overlay and solved in StylusProcessor.
     StylusFrameData stylus;
@@ -244,12 +259,7 @@ struct HeatmapFrame {
     bool masterWasRead = true;
 
     HeatmapFrame() : timestamp(0) {
-        // 初始化矩阵全0
-        for (int i=0; i<40; ++i) {
-            for (int j=0; j<60; ++j) {
-                heatmapMatrix[i][j] = 0;
-            }
-        }
+        std::memset(heatmapMatrix, 0, sizeof(heatmapMatrix));
     }
 };
 
