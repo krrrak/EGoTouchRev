@@ -3,10 +3,8 @@
 // Header-only. Converted from TouchSolver/CoordinateFilter.{h,cpp}.
 
 #include "EngineTypes.h"
-#include <unordered_map>
+#include <array>
 #include <cmath>
-#include <vector>
-#include <algorithm>
 
 namespace Engine { namespace Touch {
 
@@ -21,13 +19,12 @@ public:
         if (!m_enabled) return true;
 
         const uint64_t currentTimestamp = frame.timestamp;
-        std::vector<int> activeIds;
-        activeIds.reserve(frame.contacts.size());
+        m_activeMask.fill(0);
 
         for (auto& contact : frame.contacts) {
-            if (contact.id <= 0) continue;
-            activeIds.push_back(contact.id);
-            auto& state = m_states[contact.id];
+            if (contact.id <= 0 || contact.id > kMaxTouchIds) continue;
+            m_activeMask[static_cast<size_t>(contact.id)] = 1;
+            auto& state = m_states[static_cast<size_t>(contact.id)];
 
             if (!state.initialized || contact.state == TouchStateDown) {
                 state.x = contact.x;
@@ -64,17 +61,17 @@ public:
         }
 
         // Cleanup states for inactive touches
-        for (auto it = m_states.begin(); it != m_states.end(); ) {
-            if (std::find(activeIds.begin(), activeIds.end(), it->first) == activeIds.end())
-                it = m_states.erase(it);
-            else
-                ++it;
+        for (int id = 1; id <= kMaxTouchIds; ++id) {
+            if (m_activeMask[static_cast<size_t>(id)] == 0) {
+                m_states[static_cast<size_t>(id)] = FilterState{};
+            }
         }
         return true;
     }
 
 private:
     static constexpr float kPi = 3.14159265358979323846f;
+    static constexpr int kMaxTouchIds = 20;
 
     struct FilterState {
         float x = 0, y = 0, dx = 0, dy = 0;
@@ -82,7 +79,8 @@ private:
         bool initialized = false;
     };
 
-    std::unordered_map<int, FilterState> m_states;
+    std::array<FilterState, kMaxTouchIds + 1> m_states{};
+    std::array<uint8_t, kMaxTouchIds + 1> m_activeMask{};
 
     inline float Alpha(float rate, float cutoff) const {
         const float tau = 1.0f / (2.0f * kPi * cutoff);

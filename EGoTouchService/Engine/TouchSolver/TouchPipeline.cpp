@@ -7,6 +7,11 @@ namespace Engine {
 // Process — linear orchestration of all 6 phases
 // ══════════════════════════════════════════════════════════════════════
 bool TouchPipeline::Process(HeatmapFrame& frame) {
+    const size_t desiredContactCapacity = static_cast<size_t>(
+        std::max(m_zoneExp.m_maxTouches, m_tracker.m_maxTouchCount));
+    if (frame.contacts.capacity() < desiredContactCapacity) {
+        frame.contacts.reserve(desiredContactCapacity);
+    }
 
     // ── Phase 1: Frame Parsing ──────────────────────────────────────
     m_frameParser.Process(frame);
@@ -18,67 +23,75 @@ bool TouchPipeline::Process(HeatmapFrame& frame) {
 
     // ── Phase 3: Feature Extraction ─────────────────────────────────
     frame.contacts.clear();
-    {
-        std::lock_guard<std::mutex> lk(m_mtx);
+    // 3.1 Macro Zone Detection (BFS connected components)
+    m_macroZoneDet.Process(frame, m_peakDet.m_threshold);
 
-        // 3.1 Macro Zone Detection (BFS connected components)
-        m_macroZoneDet.Process(frame, m_peakDet.m_threshold);
+    // 3.2 Palm Rejection — remove large/elongated zones
+    m_palmReject.Process(m_macroZoneDet.GetMutableMacroZones(), frame);
 
-        // 3.2 Palm Rejection — remove large/elongated zones
-        m_palmReject.Process(m_macroZoneDet.GetMutableMacroZones(), frame);
+    // 3.3 Peak Detection (local maxima within macro zones)
+    m_peakDet.Detect(frame, m_macroZoneDet.GetMacroZones());
 
-        // 3.3 Peak Detection (local maxima within macro zones)
-        m_peakDet.Detect(frame, m_macroZoneDet.GetMacroZones());
+    const auto peaks = m_peakDet.GetPeaks();
 
-        // 3.4 Micro Zone Segmentation (Voronoi/Watershed)
-        m_microZoneSeg.Process(frame, m_macroZoneDet.GetMacroZones(),
-                               m_peakDet.GetPeaks());
+    // 3.4 Micro Zone Segmentation (Voronoi/Watershed)
+    m_microZoneSeg.Process(frame, m_macroZoneDet.GetMacroZones(), peaks);
 
-        // ── Phase 4: Zone Processing & Contact Generation ──────────
-        // 4.1 Zone expansion (BFS flood-fill from peaks → contacts)
-        m_zoneExp.Process(frame, m_peakDet.GetPeaks(),
-                          m_peakDet.m_threshold);
+    // ── Phase 4: Zone Processing & Contact Generation ──────────
+    // 4.1 Zone expansion (BFS flood-fill from peaks → contacts)
+    m_zoneExp.Process(frame, peaks, m_peakDet.m_threshold);
 
-        // 4.2 Edge Compensation (LUT-based boundary correction)
-        m_edgeComp.Process(frame.contacts,
-                           m_zoneExp.GetEdgeInfos(),
-                           m_zoneExp.m_edgeBounds);
+    // 4.2 Edge Compensation (LUT-based boundary correction)
+    m_edgeComp.Process(frame.contacts,
+                       m_zoneExp.GetEdgeInfos(),
+                       m_zoneExp.m_edgeBounds);
 
-        // 4.3 Touch Size calculation (signalSum → radius in mm)
-        m_touchSize.Process(frame.contacts);
+    // 4.3 Touch Size calculation (signalSum → radius in mm)
+    m_touchSize.Process(frame.contacts);
 
-        // 4.4 Edge Rejection (suppress new touches at sensor boundary)
-        m_edgeReject.Process(frame.contacts,
-                             m_zoneExp.GetEdgeInfos(),
-                             m_zoneExp.m_edgeBounds);
+    // 4.4 Edge Rejection (suppress new touches at sensor boundary)
+    m_edgeReject.Process(frame.contacts,
+                         m_zoneExp.GetEdgeInfos(),
+                         m_zoneExp.m_edgeBounds);
 
-        // ── Update diagnostic caches ────────────────────────────────
+    m_cachedPeakCount.store(static_cast<int>(peaks.size()), std::memory_order_relaxed);
+    m_cachedZoneCount.store(m_zoneExp.GetZoneCount(), std::memory_order_relaxed);
+    m_cachedContactCount.store(static_cast<int>(frame.contacts.size()), std::memory_order_relaxed);
+
+    // ── Update diagnostic caches ────────────────────────────────
 #if EGOTOUCH_DIAG
-        m_cachedPeakCount = static_cast<int>(m_peakDet.GetPeaks().size());
-        m_cachedZoneCount = m_zoneExp.GetZoneCount();
-        m_cachedContactCount = static_cast<int>(frame.contacts.size());
-
-        // ── MacroZone → touchZones colormap for IPC visualization ──
-        frame.touchZones.fill(0);
-        const auto& mZones = m_macroZoneDet.GetMacroZones();
-        for (size_t i = 0; i < mZones.size(); ++i) {
-            uint8_t colorId = static_cast<uint8_t>((i % 10) + 1);
-            for (int idx : mZones[i].pixels) {
-                if (idx >= 0 && idx < 2400)
-                    frame.touchZones[idx] = colorId;
+    // MacroZone → touchZones colormap for IPC visualization
+    frame.touchZones.fill(0);
+    const auto& mZones = m_macroZoneDet.GetMacroZones();
+    for (size_t i = 0; i < mZones.size(); ++i) {
+        const uint8_t colorId = static_cast<uint8_t>((i % 10) + 1);
+        for (int idx : mZones[i].pixels) {
+            if (idx >= 0 && idx < 2400) {
+                frame.touchZones[idx] = colorId;
             }
         }
-
-        // peakZones already written by microZoneSeg
-        frame.peakZones = m_microZoneSeg.GetPeakZones();
-
-        // Populate frame.peaks for IPC/UI visualization
-        frame.peaks.clear();
-        for (const auto& pk : m_peakDet.GetPeaks()) {
-            frame.peaks.push_back({pk.r, pk.c, pk.z, pk.id});
-        }
-#endif
     }
+
+    frame.peakZones = m_microZoneSeg.GetPeakZones();
+
+    if (frame.peaks.capacity() < peaks.size()) {
+        frame.peaks.reserve(peaks.size());
+    }
+    frame.peaks.clear();
+    for (const auto& pk : peaks) {
+        frame.peaks.push_back({pk.r, pk.c, pk.z, pk.id});
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(m_diagMtx);
+        if (m_diagPeaks.capacity() < peaks.size()) {
+            m_diagPeaks.reserve(peaks.size());
+        }
+        m_diagPeaks.assign(peaks.begin(), peaks.end());
+        m_diagTouchZones = frame.touchZones;
+        m_diagZoneEdge = m_zoneExp.GetZoneEdge();
+    }
+#endif
 
     m_tracker.Process(frame);
     m_coordFilter.Process(frame);
@@ -92,18 +105,30 @@ bool TouchPipeline::Process(HeatmapFrame& frame) {
 // Thread-safe accessors
 // ══════════════════════════════════════════════════════════════════════
 std::vector<Touch::Peak> TouchPipeline::GetPeaks() const {
-    std::lock_guard<std::mutex> lk(m_mtx);
-    return m_peakDet.GetPeaks();
+#if EGOTOUCH_DIAG
+    std::lock_guard<std::mutex> lk(m_diagMtx);
+    return m_diagPeaks;
+#else
+    return {};
+#endif
 }
 
 std::array<uint8_t, 2400> TouchPipeline::GetTouchZones() const {
-    std::lock_guard<std::mutex> lk(m_mtx);
-    return m_zoneExp.GetTouchZones();
+#if EGOTOUCH_DIAG
+    std::lock_guard<std::mutex> lk(m_diagMtx);
+    return m_diagTouchZones;
+#else
+    return {};
+#endif
 }
 
 std::array<uint8_t, 2400> TouchPipeline::GetZoneEdge() const {
-    std::lock_guard<std::mutex> lk(m_mtx);
-    return m_zoneExp.GetZoneEdge();
+#if EGOTOUCH_DIAG
+    std::lock_guard<std::mutex> lk(m_diagMtx);
+    return m_diagZoneEdge;
+#else
+    return {};
+#endif
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -409,7 +434,7 @@ void TouchPipeline::LoadConfig(const std::string& key,
     else if (key=="EdgeThresholdEnabled")    m_peakDet.m_edgeThresholdEnabled = toBool(value);
     else if (key=="EdgeThreshold")           m_peakDet.m_edgeThreshold = std::stoi(value);
     else if (key=="Z8Radius")                m_peakDet.m_z8Radius = std::stoi(value);
-    else if (key=="MaxPeaks")                m_peakDet.m_maxPeaks = std::stoi(value);
+    else if (key=="MaxPeaks")                m_peakDet.m_maxPeaks = std::clamp(std::stoi(value), 1, Touch::PeakDetector::kMaxStoredPeaks);
     else if (key=="PressureDriftDebounce")   m_peakDet.m_pressureDriftDebounceLimit = std::stoi(value);
     else if (key=="MacroZoneMinArea")        m_peakDet.m_macroZoneMinArea = std::stoi(value);
     // Phase 4: ZoneExpander

@@ -27,6 +27,7 @@ public:
     inline void Reset() {
         m_mode = Mode::Curve;
         m_bufCount = 0;
+        m_bufHead = 0;
         m_constraintAlpha = 0.0f;
         m_fit = LineFit{};
         m_output = AsaCoorResult{};
@@ -117,22 +118,25 @@ private:
     Mode m_mode = Mode::Curve;
     float m_constraintAlpha = 0.0f;
     int m_bufCount = 0;
+    int m_bufHead = 0;
     std::array<Point, kMaxBufLen> m_buf{};
     LineFit m_fit{};
     AsaCoorResult m_output{};
 
     inline void PushPoint(const AsaCoorResult& c) {
         if (m_bufCount < kMaxBufLen) {
-            m_buf[static_cast<size_t>(m_bufCount)] = {c.dim1, c.dim2};
+            const int insertIdx = (m_bufHead + m_bufCount) % kMaxBufLen;
+            m_buf[static_cast<size_t>(insertIdx)] = {c.dim1, c.dim2};
             m_bufCount++;
         } else {
-            // Shift left by 1 (drop oldest)
-            for (int i = 0; i < kMaxBufLen - 1; ++i) {
-                m_buf[static_cast<size_t>(i)] =
-                    m_buf[static_cast<size_t>(i + 1)];
-            }
-            m_buf[kMaxBufLen - 1] = {c.dim1, c.dim2};
+            m_buf[static_cast<size_t>(m_bufHead)] = {c.dim1, c.dim2};
+            m_bufHead = (m_bufHead + 1) % kMaxBufLen;
         }
+    }
+
+    inline const Point& BufferAt(int logicalIndex) const {
+        const int idx = (m_bufHead + logicalIndex) % kMaxBufLen;
+        return m_buf[static_cast<size_t>(idx)];
     }
 
     /// Least-squares line fit over all buffered points
@@ -148,8 +152,9 @@ private:
         const int n = m_bufCount;
 
         for (int i = 0; i < n; ++i) {
-            double dx = static_cast<double>(m_buf[static_cast<size_t>(i)].x) - refX;
-            double dy = static_cast<double>(m_buf[static_cast<size_t>(i)].y) - refY;
+            const auto& point = BufferAt(i);
+            double dx = static_cast<double>(point.x) - refX;
+            double dy = static_cast<double>(point.y) - refY;
             sumX += dx; sumY += dy;
             sumXX += dx * dx; sumXY += dx * dy; sumYY += dy * dy;
         }
@@ -199,8 +204,8 @@ private:
         };
 
         for (int i = 0; i < n; ++i) {
-            float d2 = calcDist2(m_buf[static_cast<size_t>(i)].x,
-                                 m_buf[static_cast<size_t>(i)].y);
+            const auto& point = BufferAt(i);
+            float d2 = calcDist2(point.x, point.y);
             result.totalDist += d2;
             if (d2 > result.maxDist) result.maxDist = d2;
         }

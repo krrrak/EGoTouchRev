@@ -38,6 +38,7 @@
 #include "TouchGestureStateMachine.hpp"
 
 #include <mutex>
+#include <atomic>
 #include <string>
 #include <vector>
 #include <iostream>
@@ -46,7 +47,11 @@ namespace Engine {
 
 class TouchPipeline {
 public:
-    TouchPipeline() = default;
+    TouchPipeline() {
+#if EGOTOUCH_DIAG
+        m_diagPeaks.reserve(Touch::PeakDetector::kMaxStoredPeaks);
+#endif
+    }
 
     /// Main entry: processes one frame through all 6 phases.
     bool Process(HeatmapFrame& frame);
@@ -64,9 +69,9 @@ public:
     std::array<uint8_t, 2400> GetTouchZones() const;
     std::array<uint8_t, 2400> GetZoneEdge() const;
 
-    int GetCachedPeakCount() const { return m_cachedPeakCount; }
-    int GetCachedZoneCount() const { return m_cachedZoneCount; }
-    int GetCachedContactCount() const { return m_cachedContactCount; }
+    int GetCachedPeakCount() const { return m_cachedPeakCount.load(std::memory_order_relaxed); }
+    int GetCachedZoneCount() const { return m_cachedZoneCount.load(std::memory_order_relaxed); }
+    int GetCachedContactCount() const { return m_cachedContactCount.load(std::memory_order_relaxed); }
 
     // ── Public module access (for direct parameter tuning from UI thread) ──
     // NOTE: Write access must be done when pipeline is idle or via config reload.
@@ -87,12 +92,17 @@ public:
     Touch::TouchGestureStateMachine  m_gesture;
 
 private:
-    mutable std::mutex m_mtx;
+#if EGOTOUCH_DIAG
+    mutable std::mutex m_diagMtx;
+    std::vector<Touch::Peak> m_diagPeaks;
+    std::array<uint8_t, 2400> m_diagTouchZones{};
+    std::array<uint8_t, 2400> m_diagZoneEdge{};
+#endif
 
     // UI-thread-safe cache
-    int m_cachedPeakCount = 0;
-    int m_cachedZoneCount = 0;
-    int m_cachedContactCount = 0;
+    std::atomic<int> m_cachedPeakCount{0};
+    std::atomic<int> m_cachedZoneCount{0};
+    std::atomic<int> m_cachedContactCount{0};
 };
 
 } // namespace Engine

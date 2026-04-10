@@ -4,11 +4,12 @@
 // TSACore Peak_Process: detect local maxima, filter, sort, track IDs.
 
 #include "EngineTypes.h"
-#include <vector>
+#include <array>
 #include <algorithm>
 #include <cstdint>
 #include <cmath>
 #include <cstdlib>
+#include <span>
 
 namespace Engine { namespace Touch {
 
@@ -23,6 +24,8 @@ struct Peak {
 
 class PeakDetector {
 public:
+    static constexpr int kMaxStoredPeaks = 100;
+
     int  m_threshold = 130;
     int  m_sigTholdLimit = 300;
     bool m_z8Filter = true;
@@ -52,9 +55,9 @@ public:
 
         // Step 3.5: MacroZone min area filter — remove peaks from tiny zones
         if (m_macroZoneMinArea > 1) {
-            m_peaks.erase(std::remove_if(m_peaks.begin(), m_peaks.end(),
-                [this](const Peak& p) { return p.macroZoneArea < m_macroZoneMinArea; }),
-                m_peaks.end());
+            CompactPeaks([this](const Peak& p) {
+                return p.macroZoneArea < m_macroZoneMinArea;
+            });
         }
 
         // Step 4: Edge peak filter — weak edge peaks < maxSig*5/8
@@ -64,22 +67,46 @@ public:
         SortPeaks();
 
         // Step 6: Cap to max
-        if (static_cast<int>(m_peaks.size()) > m_maxPeaks)
-            m_peaks.resize(m_maxPeaks);
+        m_peakCount = std::min(m_peakCount, EffectiveMaxPeaks());
 
         // Step 7: Peak_IDTracking — assign persistent IDs
         TrackPeakIDs();
     }
 
-    const std::vector<Peak>& GetPeaks() const { return m_peaks; }
+    std::span<const Peak> GetPeaks() const {
+        return std::span<const Peak>(m_peaks.data(),
+                                     static_cast<size_t>(m_peakCount));
+    }
 
 private:
     static constexpr int kRows = 40;
     static constexpr int kCols = 60;
 
-    std::vector<Peak> m_peaks;
-    std::vector<Peak> m_prevPeaks;
+    std::array<Peak, kMaxStoredPeaks> m_peaks{};
+    std::array<Peak, kMaxStoredPeaks> m_prevPeaks{};
+    int m_peakCount = 0;
+    int m_prevPeakCount = 0;
     uint8_t m_nextPeakId = 1;
+
+    inline int EffectiveMaxPeaks() const {
+        return std::clamp(m_maxPeaks, 1, kMaxStoredPeaks);
+    }
+
+    template <typename Pred>
+    inline void CompactPeaks(Pred&& pred) {
+        int writeIdx = 0;
+        for (int i = 0; i < m_peakCount; ++i) {
+            if (pred(m_peaks[static_cast<size_t>(i)])) {
+                continue;
+            }
+            if (writeIdx != i) {
+                m_peaks[static_cast<size_t>(writeIdx)] =
+                    m_peaks[static_cast<size_t>(i)];
+            }
+            ++writeIdx;
+        }
+        m_peakCount = writeIdx;
+    }
 
     // ────────────────────────────────────────────────────────
     // Peak_DetectInRange — TSACore asymmetric 8-neighbor
@@ -88,8 +115,8 @@ private:
     // ────────────────────────────────────────────────────────
     inline void DetectInRange(const HeatmapFrame& frame,
                               const std::vector<MacroZone>& macroZones) {
-        m_peaks.clear();
-        m_peaks.reserve(m_maxPeaks + 4);
+        m_peakCount = 0;
+        const int maxPeaks = EffectiveMaxPeaks();
 
         const int colEnd = kCols - 1;
 
@@ -141,16 +168,20 @@ private:
                 }
 
                 // TSACore Peak_Insert: cap at m_maxPeaks, replace weakest
-                if (static_cast<int>(m_peaks.size()) < m_maxPeaks) {
-                    m_peaks.push_back({r, c, v, nbrSigSum, 0, 0, zone.area});
+                if (m_peakCount < maxPeaks) {
+                    m_peaks[static_cast<size_t>(m_peakCount++)] =
+                        {r, c, v, nbrSigSum, 0, 0, zone.area};
                 } else {
                     // Buffer full — find weakest peak and replace
                     int weakIdx = 0;
-                    for (int k = 1; k < m_maxPeaks; ++k)
-                        if (m_peaks[k].z < m_peaks[weakIdx].z)
+                    for (int k = 1; k < maxPeaks; ++k)
+                        if (m_peaks[static_cast<size_t>(k)].z <
+                            m_peaks[static_cast<size_t>(weakIdx)].z)
                             weakIdx = k;
-                    if (m_peaks[weakIdx].z < v)
-                        m_peaks[weakIdx] = {r, c, v, nbrSigSum, 0, 0, zone.area};
+                    if (m_peaks[static_cast<size_t>(weakIdx)].z < v) {
+                        m_peaks[static_cast<size_t>(weakIdx)] =
+                            {r, c, v, nbrSigSum, 0, 0, zone.area};
+                    }
                 }
             }
         }
@@ -193,22 +224,16 @@ private:
     // Isolated spikes: strong peak but neighbors sum is small
     // ────────────────────────────────────────────────────────
     inline void ApplyZ8Filter() {
-        m_peaks.erase(
-            std::remove_if(m_peaks.begin(), m_peaks.end(),
-                [](const Peak& p) {
-                    return (p.z >> 5) > p.neighborSignalSum;
-                }),
-            m_peaks.end());
+        CompactPeaks([](const Peak& p) {
+            return (p.z >> 5) > p.neighborSignalSum;
+        });
     }
 
     // ────────────────────────────────────────────────────────
     // Peak_Z1Filter — remove peaks with signal < threshold
     // ────────────────────────────────────────────────────────
     inline void ApplyZ1Filter(int16_t thold) {
-        m_peaks.erase(
-            std::remove_if(m_peaks.begin(), m_peaks.end(),
-                [thold](const Peak& p) { return p.z < thold; }),
-            m_peaks.end());
+        CompactPeaks([thold](const Peak& p) { return p.z < thold; });
     }
 
     // ────────────────────────────────────────────────────────
@@ -219,17 +244,18 @@ private:
         auto filterEdgeLine = [this](auto predicate) {
             // Find max signal among edge peaks
             int16_t maxSig = 0;
-            for (auto& p : m_peaks)
-                if (predicate(p) && p.z > maxSig) maxSig = p.z;
+            for (int i = 0; i < m_peakCount; ++i) {
+                const auto& p = m_peaks[static_cast<size_t>(i)];
+                if (predicate(p) && p.z > maxSig) {
+                    maxSig = p.z;
+                }
+            }
             if (maxSig == 0) return;
             const int16_t cutoff =
                 static_cast<int16_t>((maxSig >> 3) * 5);  // 5/8
-            m_peaks.erase(
-                std::remove_if(m_peaks.begin(), m_peaks.end(),
-                    [&](const Peak& p) {
-                        return predicate(p) && p.z < cutoff;
-                    }),
-                m_peaks.end());
+            CompactPeaks([&](const Peak& p) {
+                return predicate(p) && p.z < cutoff;
+            });
         };
 
         // Row 0 (top edge)
@@ -246,7 +272,7 @@ private:
     // Peak sort — ascending by signal (TSACore default)
     // ────────────────────────────────────────────────────────
     inline void SortPeaks() {
-        std::sort(m_peaks.begin(), m_peaks.end(),
+        std::sort(m_peaks.begin(), m_peaks.begin() + m_peakCount,
             [](const Peak& a, const Peak& b) { return a.z < b.z; });
     }
 
@@ -256,24 +282,28 @@ private:
     // nearest-neighbor which is sufficient for peak-level tracking.
     // ────────────────────────────────────────────────────────
     inline void TrackPeakIDs() {
-        if (m_prevPeaks.empty()) {
+        if (m_prevPeakCount == 0) {
             // First frame: assign fresh IDs
-            for (auto& pk : m_peaks)
-                pk.id = m_nextPeakId++;
-            m_prevPeaks = m_peaks;
+            for (int i = 0; i < m_peakCount; ++i)
+                m_peaks[static_cast<size_t>(i)].id = m_nextPeakId++;
+            std::copy_n(m_peaks.begin(), m_peakCount, m_prevPeaks.begin());
+            m_prevPeakCount = m_peakCount;
             return;
         }
 
         // Mark which prev peaks have been matched
-        std::vector<bool> prevUsed(m_prevPeaks.size(), false);
+        std::array<bool, kMaxStoredPeaks> prevUsed{};
+        prevUsed.fill(false);
 
-        for (auto& pk : m_peaks) {
+        for (int i = 0; i < m_peakCount; ++i) {
+            auto& pk = m_peaks[static_cast<size_t>(i)];
             int bestDist = 9999;
             int bestIdx = -1;
-            for (int j = 0; j < (int)m_prevPeaks.size(); ++j) {
-                if (prevUsed[j]) continue;
-                int dist = std::abs(pk.r - m_prevPeaks[j].r)
-                         + std::abs(pk.c - m_prevPeaks[j].c);
+            for (int j = 0; j < m_prevPeakCount; ++j) {
+                if (prevUsed[static_cast<size_t>(j)]) continue;
+                const auto& prevPk = m_prevPeaks[static_cast<size_t>(j)];
+                int dist = std::abs(pk.r - prevPk.r)
+                         + std::abs(pk.c - prevPk.c);
                 if (dist < bestDist) {
                     bestDist = dist;
                     bestIdx = j;
@@ -281,15 +311,17 @@ private:
             }
             // Match if within 3 cells Manhattan distance
             if (bestIdx >= 0 && bestDist <= 3) {
-                pk.id = m_prevPeaks[bestIdx].id;
-                pk.tzAge = m_prevPeaks[bestIdx].tzAge + 1; // TZ_UpdatePeakTzAge
-                prevUsed[bestIdx] = true;
+                const auto& prevPk = m_prevPeaks[static_cast<size_t>(bestIdx)];
+                pk.id = prevPk.id;
+                pk.tzAge = prevPk.tzAge + 1; // TZ_UpdatePeakTzAge
+                prevUsed[static_cast<size_t>(bestIdx)] = true;
             } else {
                 pk.id = m_nextPeakId++;
                 pk.tzAge = 0;
             }
         }
-        m_prevPeaks = m_peaks;
+        std::copy_n(m_peaks.begin(), m_peakCount, m_prevPeaks.begin());
+        m_prevPeakCount = m_peakCount;
     }
 };
 

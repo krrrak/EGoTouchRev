@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstring>
 #include <algorithm>
+#include <span>
 
 namespace Engine { namespace Touch {
 
@@ -22,7 +23,7 @@ public:
 
     inline void Process(const HeatmapFrame& frame,
                         const std::vector<MacroZone>& macroZones,
-                        const std::vector<Peak>& peaks) {
+                        std::span<const Peak> peaks) {
         m_peakZones.fill(0);
 
         // Create a boolean map of all valid grid cells that belong to ANY MacroZone.

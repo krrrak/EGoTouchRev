@@ -4,7 +4,6 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <deque>
 #include <mutex>
 
 namespace Asa {
@@ -97,9 +96,7 @@ public:
         uint64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                               nowObj.time_since_epoch()).count();
         std::lock_guard<std::mutex> lock(m_btMutex);
-        m_btHistory.push_back({now_ms, p});
-        if (m_btHistory.size() > 20)
-            m_btHistory.pop_front();
+        PushBtSample({now_ms, p});
     }
 
     /// Get the most recent valid pressure sample from BT MCU history
@@ -109,13 +106,12 @@ public:
         uint64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                               nowObj.time_since_epoch()).count();
         std::lock_guard<std::mutex> lock(m_btMutex);
-        while (!m_btHistory.empty() &&
-               now_ms > m_btHistory.front().timestamp_ms + 100) {
-            m_btHistory.pop_front();
-        }
-        for (auto it = m_btHistory.rbegin(); it != m_btHistory.rend(); ++it) {
-            if (now_ms <= it->timestamp_ms + 50) {
-                if (it->pressure > btPress) btPress = it->pressure;
+        DiscardExpiredSamples(now_ms);
+        for (size_t offset = 0; offset < m_btCount; ++offset) {
+            const size_t logicalIndex = m_btCount - 1 - offset;
+            const auto& sample = BtSampleAt(logicalIndex);
+            if (now_ms <= sample.timestamp_ms + 50) {
+                if (sample.pressure > btPress) btPress = sample.pressure;
             }
         }
         return btPress;
@@ -148,8 +144,40 @@ private:
         uint64_t timestamp_ms;
         uint16_t pressure;
     };
+
+    static constexpr size_t kBtHistoryCapacity = 20;
+
     mutable std::mutex m_btMutex;
-    std::deque<BtPressureSample> m_btHistory;
+    std::array<BtPressureSample, kBtHistoryCapacity> m_btHistory{};
+    size_t m_btHead = 0;
+    size_t m_btCount = 0;
+
+    inline size_t BtPhysicalIndex(size_t logicalIndex) const {
+        return (m_btHead + logicalIndex) % kBtHistoryCapacity;
+    }
+
+    inline const BtPressureSample& BtSampleAt(size_t logicalIndex) const {
+        return m_btHistory[BtPhysicalIndex(logicalIndex)];
+    }
+
+    inline void PushBtSample(const BtPressureSample& sample) {
+        if (m_btCount < kBtHistoryCapacity) {
+            m_btHistory[BtPhysicalIndex(m_btCount)] = sample;
+            ++m_btCount;
+            return;
+        }
+
+        m_btHistory[m_btHead] = sample;
+        m_btHead = (m_btHead + 1) % kBtHistoryCapacity;
+    }
+
+    inline void DiscardExpiredSamples(uint64_t now_ms) {
+        while (m_btCount > 0 &&
+               now_ms > BtSampleAt(0).timestamp_ms + 100) {
+            m_btHead = (m_btHead + 1) % kBtHistoryCapacity;
+            --m_btCount;
+        }
+    }
 };
 
 } // namespace Asa

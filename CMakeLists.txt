@@ -190,7 +190,6 @@ if (EGO_BUILD_TESTS)
     add_executable(EngineRawdataBenchmarkTest
         Tools/tests/RawdataBenchmarkTest.cpp
     )
-    target_compile_definitions(EngineRawdataBenchmarkTest PRIVATE EGOTOUCH_DIAGNOSTICS)
     target_link_libraries(EngineRawdataBenchmarkTest PRIVATE Engine Common)
 
     add_executable(CommonLoggerTest

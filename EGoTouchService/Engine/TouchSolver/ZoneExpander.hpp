@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <span>
 
 namespace Engine { namespace Touch {
 
@@ -31,7 +32,7 @@ public:
     // Public entry — mirrors TSACore TZ_PeakBasedProcess
     // ────────────────────────────────────────────────────────
     inline void Process(HeatmapFrame& frame,
-                        const std::vector<Peak>& peaks,
+                        std::span<const Peak> peaks,
                         int16_t sigThold) {
         Reset();
         m_units.resize(peaks.size());
@@ -264,7 +265,7 @@ private:
     // TZ_PeakInfoRetrieval — scan ALL peaks to find which zone
     // they fell into. Adds absorbed peaks to owning zone's list.
     // ────────────────────────────────────────────────────────
-    inline void ScanAbsorbedPeaks(const std::vector<Peak>& peaks) {
+    inline void ScanAbsorbedPeaks(std::span<const Peak> peaks) {
         // Build zoneId→unitIndex map (zone ID is uint8_t, so max 256)
         std::array<int, 256> zoneToUnit{};
         zoneToUnit.fill(-1);
@@ -319,8 +320,13 @@ private:
     // Multi-peak zones (TZ_MFProcess): 3×3 local centroid per peak.
     // ────────────────────────────────────────────────────────
     inline void ComputeCentroidsAndContacts(
-            HeatmapFrame& frame, const std::vector<Peak>& peaks) {
+            HeatmapFrame& frame, std::span<const Peak> peaks) {
         frame.contacts.clear();
+        const size_t desiredCapacity = static_cast<size_t>(
+            std::max(m_maxTouches, static_cast<int>(peaks.size())));
+        if (frame.contacts.capacity() < desiredCapacity) {
+            frame.contacts.reserve(desiredCapacity);
+        }
         for (int pi = 0; pi < static_cast<int>(m_units.size()); ++pi) {
             auto& u = m_units[pi];
             if (u.area == 0 || u.weightTotal == 0) continue;

@@ -1,7 +1,7 @@
 #pragma once
 #include "AsaTypes.hpp"
 #include <algorithm>
-#include <vector>
+#include <array>
 
 namespace Asa {
 
@@ -14,14 +14,13 @@ public:
     inline GridPeakUnit FindPeak(const int16_t grid[kGridDim][kGridDim]) {
         GridPeakUnit best{};
         bool visited[kGridDim][kGridDim]{};
-        std::vector<std::pair<int,int>> region;
 
         for (int r = 0; r < kGridDim; ++r) {
             for (int c = 0; c < kGridDim; ++c) {
                 if (visited[r][c]) continue;
                 if (!IsPeak(grid, r, c)) continue;
 
-                int count = FloodFill(grid, visited, r, c, region);
+                int count = FloodFill(grid, visited, r, c);
                 if (count >= maxConnected) continue; // noise
 
                 // Compute 3×3 neighbor sum at the peak
@@ -98,17 +97,23 @@ private:
 
     inline int FloodFill(const int16_t grid[kGridDim][kGridDim],
                          bool visited[kGridDim][kGridDim],
-                         int r, int c,
-                         std::vector<std::pair<int,int>>& region) const {
-        region.clear();
-        // Stack-based flood fill
-        std::vector<std::pair<int,int>> stack;
-        stack.push_back({r, c});
+                         int r, int c) const {
+        struct GridCoord {
+            int row = 0;
+            int col = 0;
+        };
+
+        std::array<GridCoord, kGridSize> stack{};
+        int stackSize = 0;
+        int regionCount = 0;
+
+        stack[static_cast<size_t>(stackSize++)] = {r, c};
         visited[r][c] = true;
-        while (!stack.empty()) {
-            auto [cr, cc] = stack.back();
-            stack.pop_back();
-            region.push_back({cr, cc});
+        while (stackSize > 0) {
+            const auto cell = stack[static_cast<size_t>(--stackSize)];
+            const int cr = cell.row;
+            const int cc = cell.col;
+            ++regionCount;
             // 4-connected expansion
             constexpr int dr[] = {-1, 1, 0, 0};
             constexpr int dc[] = {0, 0, -1, 1};
@@ -119,10 +124,10 @@ private:
                 if (visited[nr][nc]) continue;
                 if (grid[nr][nc] <= noiseThreshold) continue;
                 visited[nr][nc] = true;
-                stack.push_back({nr, nc});
+                stack[static_cast<size_t>(stackSize++)] = {nr, nc};
             }
         }
-        return static_cast<int>(region.size());
+        return regionCount;
     }
 
     inline int32_t Calc3x3Sum(const int16_t grid[kGridDim][kGridDim],
