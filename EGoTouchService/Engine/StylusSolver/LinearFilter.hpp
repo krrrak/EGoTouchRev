@@ -144,19 +144,36 @@ private:
         LineFit result{};
         if (m_bufCount < 3) return result;
 
+        const int n = m_bufCount;
+        const int firstSegmentLen = std::min(n, kMaxBufLen - m_bufHead);
+        const int secondSegmentLen = n - firstSegmentLen;
+        const Point& refPoint = m_buf[static_cast<size_t>(m_bufHead)];
+
         // Reference point for numerical stability
-        const double refX = static_cast<double>(m_buf[0].x);
-        const double refY = static_cast<double>(m_buf[0].y);
+        const double refX = static_cast<double>(refPoint.x);
+        const double refY = static_cast<double>(refPoint.y);
 
         double sumX = 0, sumY = 0, sumXX = 0, sumXY = 0, sumYY = 0;
-        const int n = m_bufCount;
 
-        for (int i = 0; i < n; ++i) {
-            const auto& point = BufferAt(i);
-            double dx = static_cast<double>(point.x) - refX;
-            double dy = static_cast<double>(point.y) - refY;
-            sumX += dx; sumY += dy;
-            sumXX += dx * dx; sumXY += dx * dy; sumYY += dy * dy;
+        for (int i = 0; i < firstSegmentLen; ++i) {
+            const auto& point = m_buf[static_cast<size_t>(m_bufHead + i)];
+            const double dx = static_cast<double>(point.x) - refX;
+            const double dy = static_cast<double>(point.y) - refY;
+            sumX += dx;
+            sumY += dy;
+            sumXX += dx * dx;
+            sumXY += dx * dy;
+            sumYY += dy * dy;
+        }
+        for (int i = 0; i < secondSegmentLen; ++i) {
+            const auto& point = m_buf[static_cast<size_t>(i)];
+            const double dx = static_cast<double>(point.x) - refX;
+            const double dy = static_cast<double>(point.y) - refY;
+            sumX += dx;
+            sumY += dy;
+            sumXX += dx * dx;
+            sumXY += dx * dy;
+            sumYY += dy * dy;
         }
 
         const double dn = static_cast<double>(n);
@@ -191,23 +208,44 @@ private:
         result.totalDist = 0;
         result.maxDist = 0;
 
-        auto calcDist2 = [&](int32_t px, int32_t py) -> float {
-            float d;
-            if (!result.useYasX) {
-                d = (result.slope * static_cast<float>(px) +
-                     result.intercept - static_cast<float>(py)) / result.normFactor;
-            } else {
-                d = (result.slope * static_cast<float>(py) +
-                     result.intercept - static_cast<float>(px)) / result.normFactor;
+        if (!result.useYasX) {
+            for (int i = 0; i < firstSegmentLen; ++i) {
+                const auto& point = m_buf[static_cast<size_t>(m_bufHead + i)];
+                const float d = (result.slope * static_cast<float>(point.x) +
+                                 result.intercept - static_cast<float>(point.y)) /
+                                result.normFactor;
+                const float d2 = d * d;
+                result.totalDist += d2;
+                if (d2 > result.maxDist) result.maxDist = d2;
             }
-            return d * d;
-        };
-
-        for (int i = 0; i < n; ++i) {
-            const auto& point = BufferAt(i);
-            float d2 = calcDist2(point.x, point.y);
-            result.totalDist += d2;
-            if (d2 > result.maxDist) result.maxDist = d2;
+            for (int i = 0; i < secondSegmentLen; ++i) {
+                const auto& point = m_buf[static_cast<size_t>(i)];
+                const float d = (result.slope * static_cast<float>(point.x) +
+                                 result.intercept - static_cast<float>(point.y)) /
+                                result.normFactor;
+                const float d2 = d * d;
+                result.totalDist += d2;
+                if (d2 > result.maxDist) result.maxDist = d2;
+            }
+        } else {
+            for (int i = 0; i < firstSegmentLen; ++i) {
+                const auto& point = m_buf[static_cast<size_t>(m_bufHead + i)];
+                const float d = (result.slope * static_cast<float>(point.y) +
+                                 result.intercept - static_cast<float>(point.x)) /
+                                result.normFactor;
+                const float d2 = d * d;
+                result.totalDist += d2;
+                if (d2 > result.maxDist) result.maxDist = d2;
+            }
+            for (int i = 0; i < secondSegmentLen; ++i) {
+                const auto& point = m_buf[static_cast<size_t>(i)];
+                const float d = (result.slope * static_cast<float>(point.y) +
+                                 result.intercept - static_cast<float>(point.x)) /
+                                result.normFactor;
+                const float d2 = d * d;
+                result.totalDist += d2;
+                if (d2 > result.maxDist) result.maxDist = d2;
+            }
         }
 
         result.valid = true;

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <array>
 #include <cstring>
+#include <span>
 #include "FrameLayout.h"
 
 // Diagnostic fields are available in Debug builds and for the diagnostic App
@@ -74,8 +75,13 @@ struct TouchPeak {
 
 // Represents a connected component in the heatmap greater than a global threshold
 struct MacroZone {
-    std::vector<int> pixels; // 1D indices (r * cols + c)
+    std::span<const int> pixels{}; // 1D indices (r * cols + c), owned by MacroZoneDetector arena
     int area = 0;
+    int signalSum = 0;
+    int minR = 39;
+    int maxR = 0;
+    int minC = 59;
+    int maxC = 0;
 };
 
 struct StylusSolvePoint {

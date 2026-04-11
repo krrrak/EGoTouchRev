@@ -22,6 +22,13 @@
 #include <utility>
 #include <vector>
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace {
 
 constexpr int kRows = 40;
@@ -69,6 +76,14 @@ struct RunStats {
     double wallTotalMs = 0.0;
     double masterTotalMs = 0.0;
     double slaveTotalMs = 0.0;
+};
+
+struct PriorityStatus {
+    bool supported = false;
+    bool processRealtime = false;
+    bool threadTimeCritical = false;
+    uint32_t processError = 0;
+    uint32_t threadError = 0;
 };
 
 std::string Trim(std::string s) {
@@ -585,6 +600,46 @@ std::string FormatWallClock(std::chrono::system_clock::time_point timePoint) {
     return out.str();
 }
 
+PriorityStatus ElevateBenchmarkPriority() {
+    PriorityStatus status;
+#if defined(_WIN32)
+    status.supported = true;
+    if (SetPriorityClass(GetCurrentProcess(), REALTIME_PRIORITY_CLASS)) {
+        status.processRealtime = true;
+    } else {
+        status.processError = static_cast<uint32_t>(GetLastError());
+    }
+
+    if (SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL)) {
+        status.threadTimeCritical = true;
+    } else {
+        status.threadError = static_cast<uint32_t>(GetLastError());
+    }
+#endif
+    return status;
+}
+
+void PrintPriorityStatus(const PriorityStatus& status) {
+    if (!status.supported) {
+        std::cout << "[RawdataBenchmarkTest] priority_control=unsupported\n";
+        return;
+    }
+
+    std::cout << "[RawdataBenchmarkTest] process_priority="
+              << (status.processRealtime ? "realtime" : "unchanged") << "\n";
+    if (!status.processRealtime) {
+        std::cout << "[RawdataBenchmarkTest] process_priority_error="
+                  << status.processError << "\n";
+    }
+
+    std::cout << "[RawdataBenchmarkTest] thread_priority="
+              << (status.threadTimeCritical ? "time_critical" : "unchanged") << "\n";
+    if (!status.threadTimeCritical) {
+        std::cout << "[RawdataBenchmarkTest] thread_priority_error="
+                  << status.threadError << "\n";
+    }
+}
+
 RunStats RunBenchmark(BenchmarkMode mode,
                       const Options& options,
                       const std::filesystem::path& configPath,
@@ -728,6 +783,9 @@ void PrintStats(const RunStats& stats,
 
 int main(int argc, char** argv) {
     try {
+        const PriorityStatus priorityStatus = ElevateBenchmarkPriority();
+        PrintPriorityStatus(priorityStatus);
+
         const Options options = ParseOptions(argc, argv);
         const std::filesystem::path configPath = ResolveConfigPath(options.configPath);
         const std::filesystem::path dataRoot = ResolveDataRootPath(options.dataRoot, argv[0]);

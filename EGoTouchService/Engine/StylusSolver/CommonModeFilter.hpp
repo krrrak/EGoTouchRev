@@ -20,15 +20,20 @@ public:
         const int w = std::clamp(windowSize, 1, N - 1);
 
         // Apply to each row
-        for (int r = 0; r < N; ++r)
+        for (int r = 0; r < N; ++r) {
             MorphOpen1D(grid[r], N, w);
+        }
 
         // Apply to each column
         for (int c = 0; c < N; ++c) {
-            std::array<int16_t, kGridDim> col{};
-            for (int r = 0; r < N; ++r) col[static_cast<size_t>(r)] = grid[r][c];
+            std::array<int16_t, kGridDim> col;
+            for (int r = 0; r < N; ++r) {
+                col[static_cast<size_t>(r)] = grid[r][c];
+            }
             MorphOpen1D(col.data(), N, w);
-            for (int r = 0; r < N; ++r) grid[r][c] = col[static_cast<size_t>(r)];
+            for (int r = 0; r < N; ++r) {
+                grid[r][c] = col[static_cast<size_t>(r)];
+            }
         }
     }
 
@@ -39,27 +44,35 @@ public:
 private:
     /// 1D morphological open (erosion→dilation) then subtract
     static inline void MorphOpen1D(int16_t* arr, int len, int w) {
-        std::array<int16_t, kGridDim> eroded{};
-        std::array<int16_t, kGridDim> dilated{};
+        std::array<int16_t, kGridDim> eroded;
+        std::array<int16_t, kGridDim> dilated;
 
-        // Erosion: min over window [i-w, i+w]
+        // For the fixed 9-point stylus grid, a direct bounded scan has lower
+        // constant overhead than the generic deque-based sliding window while
+        // preserving the exact same symmetric window semantics.
         for (int i = 0; i < len; ++i) {
-            int lo = std::max(0, i - w);
-            int hi = std::min(len - 1, i + w);
+            const int lo = std::max(0, i - w);
+            const int hi = std::min(len - 1, i + w);
+
             int16_t minVal = arr[lo];
-            for (int j = lo + 1; j <= hi; ++j)
-                if (arr[j] < minVal) minVal = arr[j];
+            for (int j = lo + 1; j <= hi; ++j) {
+                if (arr[j] < minVal) {
+                    minVal = arr[j];
+                }
+            }
             eroded[static_cast<size_t>(i)] = minVal;
         }
 
-        // Dilation: max over erosion result
         for (int i = 0; i < len; ++i) {
-            int lo = std::max(0, i - w);
-            int hi = std::min(len - 1, i + w);
+            const int lo = std::max(0, i - w);
+            const int hi = std::min(len - 1, i + w);
+
             int16_t maxVal = eroded[static_cast<size_t>(lo)];
-            for (int j = lo + 1; j <= hi; ++j)
-                if (eroded[static_cast<size_t>(j)] > maxVal)
+            for (int j = lo + 1; j <= hi; ++j) {
+                if (eroded[static_cast<size_t>(j)] > maxVal) {
                     maxVal = eroded[static_cast<size_t>(j)];
+                }
+            }
             dilated[static_cast<size_t>(i)] = maxVal;
         }
 

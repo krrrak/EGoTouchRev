@@ -111,6 +111,13 @@ private:
     std::vector<ZoneUnit> m_units;
     std::vector<ZoneEdgeInfo> m_edgeInfos;
     int m_zoneCount = 0;
+    std::array<int, kGridSize> m_activeZoneCells{};
+    int m_activeZoneCellCount = 0;
+    std::array<int, kGridSize> m_dilateCandidates{};
+    int m_dilateCandidateCount = 0;
+    std::array<int, kGridSize> m_newDilatedCells{};
+    int m_newDilatedCellCount = 0;
+    std::array<uint8_t, kGridSize> m_candidateMask{};
     // Pre-allocated BFS queue buffer (max = grid size)
     int m_bfsQueue[kGridSize];
     int m_bfsHead = 0, m_bfsTail = 0;
@@ -123,6 +130,13 @@ private:
         m_units.clear();
         m_edgeInfos.clear();
         m_zoneCount = 0;
+        m_activeZoneCellCount = 0;
+        m_dilateCandidateCount = 0;
+        m_newDilatedCellCount = 0;
+    }
+
+    inline void RecordZoneCell(int idx) {
+        m_activeZoneCells[static_cast<size_t>(m_activeZoneCellCount++)] = idx;
     }
 
     // ────────────────────────────────────────────────────────
@@ -152,6 +166,7 @@ private:
 
         int seedIdx = peak.r * kCols + peak.c;
         m_touchZones[seedIdx] = zoneId;
+        RecordZoneCell(seedIdx);
         // Use member BFS queue buffer (no heap allocation)
         m_bfsHead = 0;
         m_bfsTail = 0;
@@ -193,12 +208,14 @@ private:
 
                 if (sig >= zoneThold) {
                     m_touchZones[ni] = zoneId;
+                    RecordZoneCell(ni);
                     addPixel(nr, nc, sig);
                     m_bfsQueue[m_bfsTail++] = ni;
                     TZ_UpdateEdgeInfo(m_edgeInfos[peakIdx], sig,
                         nc, nr, 7);
                 } else if (sig > 0) {
                     m_touchZones[ni] = zoneId;
+                    RecordZoneCell(ni);
                     unit.edgeArea++;
                     unit.edgeSignalSum += sig;
                     TZ_UpdateEdgeInfo(m_edgeInfos[peakIdx], sig,
@@ -220,44 +237,82 @@ private:
 
         // Save original zone state in scratch (single 2400B copy)
         std::memcpy(m_scratch.data(), m_touchZones.data(), kGridSize);
+        m_dilateCandidateCount = 0;
+        m_newDilatedCellCount = 0;
 
-        // Dilate: fill empty pixels surrounded by zone pixels
-        // Write directly into m_touchZones (reading from m_scratch for neighbors)
-        for (int r = 0; r < kRows; ++r) {
-            for (int c = 0; c < kCols; ++c) {
-                int idx = r * kCols + c;
-                if (m_scratch[idx] != 0) continue; // already has a zone
-                uint8_t counts[22] = {};
-                uint8_t best = 0; int bestCnt = 0;
-                for (int d = 0; d < 8; ++d) {
-                    int nr = r + dr[d], nc = c + dc[d];
-                    if (nr < 0 || nr >= kRows || nc < 0 || nc >= kCols)
-                        continue;
-                    uint8_t z = m_scratch[nr * kCols + nc];
-                    if (z == 0 || z > 20) continue;
-                    if (++counts[z] > bestCnt) {
-                        bestCnt = counts[z]; best = z;
-                    }
+        // Only empty cells adjacent to an originally occupied zone can be
+        // modified by the dilation pass, because votes are read from m_scratch.
+        for (int i = 0; i < m_activeZoneCellCount; ++i) {
+            const int idx = m_activeZoneCells[static_cast<size_t>(i)];
+            const int r = idx / kCols;
+            const int c = idx % kCols;
+            for (int d = 0; d < 8; ++d) {
+                const int nr = r + dr[d];
+                const int nc = c + dc[d];
+                if (nr < 0 || nr >= kRows || nc < 0 || nc >= kCols) {
+                    continue;
                 }
-                if (bestCnt >= 3) m_touchZones[idx] = best;
+
+                const int ni = nr * kCols + nc;
+                if (m_scratch[ni] != 0 || m_candidateMask[ni] != 0) {
+                    continue;
+                }
+
+                m_candidateMask[ni] = 1;
+                m_dilateCandidates[static_cast<size_t>(m_dilateCandidateCount++)] = ni;
             }
         }
 
-        // Erode: remove newly-dilated pixels that border empty space
-        // A pixel is "newly dilated" if m_scratch[idx]==0 but m_touchZones[idx]!=0
-        for (int r = 0; r < kRows; ++r) {
-            for (int c = 0; c < kCols; ++c) {
-                int idx = r * kCols + c;
-                if (m_touchZones[idx] == 0 || m_scratch[idx] != 0) continue;
-                for (int d = 0; d < 8; ++d) {
-                    int nr = r + dr[d], nc = c + dc[d];
-                    if (nr < 0 || nr >= kRows || nc < 0 || nc >= kCols)
-                        continue;
-                    if (m_touchZones[nr * kCols + nc] == 0) {
-                        m_touchZones[idx] = 0; break;
-                    }
+        // Dilate: fill empty pixels surrounded by zone pixels.
+        for (int i = 0; i < m_dilateCandidateCount; ++i) {
+            const int idx = m_dilateCandidates[static_cast<size_t>(i)];
+            const int r = idx / kCols;
+            const int c = idx % kCols;
+            uint8_t counts[22] = {};
+            uint8_t best = 0;
+            int bestCnt = 0;
+            for (int d = 0; d < 8; ++d) {
+                const int nr = r + dr[d];
+                const int nc = c + dc[d];
+                if (nr < 0 || nr >= kRows || nc < 0 || nc >= kCols) {
+                    continue;
+                }
+                const uint8_t z = m_scratch[nr * kCols + nc];
+                if (z == 0 || z > 20) {
+                    continue;
+                }
+                if (++counts[z] > bestCnt) {
+                    bestCnt = counts[z];
+                    best = z;
                 }
             }
+            if (bestCnt >= 3) {
+                m_touchZones[idx] = best;
+                m_newDilatedCells[static_cast<size_t>(m_newDilatedCellCount++)] = idx;
+            }
+        }
+
+        // Erode: remove only the pixels created by the dilation pass.
+        for (int i = 0; i < m_newDilatedCellCount; ++i) {
+            const int idx = m_newDilatedCells[static_cast<size_t>(i)];
+            const int r = idx / kCols;
+            const int c = idx % kCols;
+            for (int d = 0; d < 8; ++d) {
+                const int nr = r + dr[d];
+                const int nc = c + dc[d];
+                if (nr < 0 || nr >= kRows || nc < 0 || nc >= kCols) {
+                    continue;
+                }
+                if (m_touchZones[nr * kCols + nc] == 0) {
+                    m_touchZones[idx] = 0;
+                    break;
+                }
+            }
+        }
+
+        for (int i = 0; i < m_dilateCandidateCount; ++i) {
+            m_candidateMask[static_cast<size_t>(
+                m_dilateCandidates[static_cast<size_t>(i)])] = 0;
         }
     }
 
@@ -298,19 +353,31 @@ private:
         static constexpr int dr[] = {-1,-1,-1, 0, 0, 1, 1, 1};
         static constexpr int dc[] = {-1, 0, 1,-1, 1,-1, 0, 1};
         m_zoneEdge.fill(0);
-        for (int r = 0; r < kRows; ++r) {
-            for (int c = 0; c < kCols; ++c) {
-                int idx = r * kCols + c;
-                uint8_t zid = m_touchZones[idx];
-                if (zid == 0) continue;
-                for (int d = 0; d < 8; ++d) {
-                    int nr = r + dr[d], nc = c + dc[d];
-                    if (nr < 0 || nr >= kRows || nc < 0 || nc >= kCols
-                        || m_touchZones[nr * kCols + nc] != zid) {
-                        m_zoneEdge[idx] = 1; break;
-                    }
+
+        auto markIfEdge = [&](int idx) {
+            const uint8_t zid = m_touchZones[idx];
+            if (zid == 0 || m_zoneEdge[idx] != 0) {
+                return;
+            }
+
+            const int r = idx / kCols;
+            const int c = idx % kCols;
+            for (int d = 0; d < 8; ++d) {
+                const int nr = r + dr[d];
+                const int nc = c + dc[d];
+                if (nr < 0 || nr >= kRows || nc < 0 || nc >= kCols ||
+                    m_touchZones[nr * kCols + nc] != zid) {
+                    m_zoneEdge[idx] = 1;
+                    break;
                 }
             }
+        };
+
+        for (int i = 0; i < m_activeZoneCellCount; ++i) {
+            markIfEdge(m_activeZoneCells[static_cast<size_t>(i)]);
+        }
+        for (int i = 0; i < m_newDilatedCellCount; ++i) {
+            markIfEdge(m_newDilatedCells[static_cast<size_t>(i)]);
         }
     }
 
