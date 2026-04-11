@@ -37,6 +37,8 @@ public:
         m_prevReviseY = 0;
         m_lastTiltX = 0;
         m_lastTiltY = 0;
+        m_lastReportedTiltX = 0;
+        m_lastReportedTiltY = 0;
         m_prevPressure = 0;
     }
 
@@ -66,8 +68,8 @@ public:
         if (!tx2.valid) {
             // TX2 unavailable → keep last tilt
             if (keepLastOnInvalid && m_initialized) {
-                outTiltX = m_lastTiltX;
-                outTiltY = m_lastTiltY;
+                outTiltX = m_lastReportedTiltX;
+                outTiltY = m_lastReportedTiltY;
             }
             return out;
         }
@@ -76,11 +78,12 @@ public:
         // Step 1: TiltProcess — compute TX1-TX2 difference
         // ═══════════════════════════════════════════════
 
-        // TSACore: diff = TX1_mapped - TX2_mapped (int16 scale)
+        // Sign flipped for Windows-facing tilt orientation:
+        // use TX2 - TX1 so positive tilt matches the observed device axes.
         int16_t rawDiffDim1 = static_cast<int16_t>(std::clamp(
-            tx1.dim1 - tx2.dim1, -32768, 32767));
+            tx2.dim1 - tx1.dim1, -32768, 32767));
         int16_t rawDiffDim2 = static_cast<int16_t>(std::clamp(
-            tx1.dim2 - tx2.dim2, -32768, 32767));
+            tx2.dim2 - tx1.dim2, -32768, 32767));
 
         // TSACore anomaly check: if diff jumps too far from IIR history,
         // blend 7/8 old + 1/8 new (mirrors the comparison with sVar4/sVar5)
@@ -173,8 +176,15 @@ public:
         }
         m_lastTiltX = tiltDim1;
         m_lastTiltY = tiltDim2;
-        outTiltX = tiltDim1;
-        outTiltY = tiltDim2;
+
+        // Windows pen tilt uses a different axis convention than the
+        // internal TX1/TX2 tilt space used for coordinate revision.
+        const int16_t reportedTiltX = static_cast<int16_t>(-tiltDim2);
+        const int16_t reportedTiltY = tiltDim1;
+        m_lastReportedTiltX = reportedTiltX;
+        m_lastReportedTiltY = reportedTiltY;
+        outTiltX = reportedTiltX;
+        outTiltY = reportedTiltY;
 
         // ═══════════════════════════════════════════════
         // Step 2: CoorReviseCalculation
@@ -249,9 +259,10 @@ public:
     bool keepLastOnInvalid = true;
 
     /// Tilt multiplier: revise = multiplier × tilt_degrees.
-    /// Gaokun factory: prmt[0x26b] = prmt[0x26c] = 5.
-    int tiltMultiplierX = 5;
-    int tiltMultiplierY = 5;
+    /// Temporarily scaled 10x for debugging direction/magnitude issues.
+    /// Original Gaokun factory: prmt[0x26b] = prmt[0x26c] = 5.
+    int tiltMultiplierX = 50;
+    int tiltMultiplierY = 50;
 
     /// Coordinate diff averaging window (TSACore: GetTX1TX2CoorDifAverage(5))
     int diffAverageWindow = 5;
@@ -307,6 +318,8 @@ private:
     // Tilt output history
     int16_t m_lastTiltX = 0;
     int16_t m_lastTiltY = 0;
+    int16_t m_lastReportedTiltX = 0;
+    int16_t m_lastReportedTiltY = 0;
 
     // Pressure-based reset
     uint16_t m_prevPressure = 0;

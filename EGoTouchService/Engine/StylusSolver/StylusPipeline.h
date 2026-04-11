@@ -90,6 +90,10 @@ private:
     bool ValidateChecksum16(
         const uint8_t* bytes, size_t wordCount,
         uint16_t& outChecksum) const;
+    bool HasCurrentStylusSignal(std::span<const uint8_t> rawData) const;
+    bool HasLiveState() const;
+    bool ProcessNoStylusFrame(std::span<const uint8_t> rawData,
+                              StylusPacket& outPacket);
 
     // ── Algorithm modules (header-only) ──
     Asa::GridPeakDetector    m_peakDetector;

@@ -92,6 +92,8 @@ public:
     Touch::TouchGestureStateMachine  m_gesture;
 
 private:
+    void ResetIdleOutputs(HeatmapFrame& frame);
+
 #if EGOTOUCH_DIAG
     mutable std::mutex m_diagMtx;
     std::vector<Touch::Peak> m_diagPeaks;

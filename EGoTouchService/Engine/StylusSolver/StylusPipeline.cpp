@@ -50,6 +50,83 @@ bool StylusPipeline::ValidateChecksum16(
     return (outChecksum == 0) && (sum != 0);
 }
 
+bool StylusPipeline::HasCurrentStylusSignal(
+        std::span<const uint8_t> rawData) const {
+    if (rawData.size() < (kSlaveWordOffset + 4)) {
+        return true;
+    }
+
+    const uint8_t* anchor = rawData.data() + kSlaveWordOffset;
+    const uint16_t anchorRow = ReadU16Le(anchor);
+    const uint16_t anchorCol = ReadU16Le(anchor + 2);
+    return !((anchorRow & 0xFFu) == 0x00FFu &&
+             (anchorCol & 0xFFu) == 0x00FFu);
+}
+
+bool StylusPipeline::HasLiveState() const {
+    return m_prevValid || m_wasInking || m_hasLastGoodFrame;
+}
+
+bool StylusPipeline::ProcessNoStylusFrame(
+        std::span<const uint8_t> rawData,
+        StylusPacket& outPacket) {
+    m_lastResult = StylusFrameData{};
+    outPacket = StylusPacket{};
+    m_lastResult.slaveValid = (rawData.size() >= (kSlaveHeaderBytes + 4));
+    m_lastResult.pipelineStage = 2;
+
+    if (rawData.size() >= kSlaveHeaderBytes) {
+        const uint8_t* p = rawData.data();
+        std::memcpy(m_rawSlaveHdr, p, kSlaveHeaderBytes);
+        m_lastResult.status = ReadU16Le(p);
+    }
+
+    if (m_prevValid && m_noiseGate.ShouldExitSmooth(m_wasInking, m_hasLastGoodFrame)) {
+        m_lastResult = m_lastGoodFrame;
+        float outX = 0.0f;
+        float outY = 0.0f;
+        m_noiseGate.ApplyExitEdgeSnap(
+            m_lastGoodFrame.point.x, m_lastGoodFrame.point.y,
+            m_prevPointX, m_prevPointY,
+            m_sensorRows, m_sensorCols, outX, outY);
+        m_lastResult.point.x = outX;
+        m_lastResult.point.y = outY;
+        m_lastResult.pipelineStage = 7;
+        m_lastResult.point.valid = true;
+        m_packetBuilder.Build(m_lastResult,
+            m_bleButtonState.load(std::memory_order_relaxed),
+            m_emitPacketWhenInvalid, outPacket);
+        m_prevValid = false;
+        m_wasInking = false;
+        m_penStateMachine.Update(false, 0, 0, 0);
+        m_lastResult.animState = static_cast<uint8_t>(m_penStateMachine.GetState());
+        m_prevStatus = m_lastResult.status;
+        return outPacket.valid;
+    }
+
+    if (!m_prevValid) {
+        m_postProcessor.Reset();
+        m_oneEuroFilter.Reset();
+        m_tiltSolver.Reset();
+        m_coorReviser.Reset();
+        m_linearFilter.Reset();
+        m_pressureSolver.ResetSuppression();
+        m_noiseGate.Reset();
+        m_hasLastGoodFrame = false;
+    }
+    m_prevValid = false;
+    m_wasInking = false;
+    m_penStateMachine.Update(false, 0, 0, 0);
+    m_lastResult.animState = static_cast<uint8_t>(m_penStateMachine.GetState());
+    if (m_emitPacketWhenInvalid) {
+        m_packetBuilder.Build(m_lastResult,
+            m_bleButtonState.load(std::memory_order_relaxed),
+            m_emitPacketWhenInvalid, outPacket);
+    }
+    m_prevStatus = m_lastResult.status;
+    return false;
+}
+
 // ══════════════════════════════════════════════
 // UpdateButtonState
 // ══════════════════════════════════════════════
@@ -94,6 +171,22 @@ bool StylusPipeline::Process(
             m_bleButtonState.load(std::memory_order_relaxed),
             m_emitPacketWhenInvalid, outPacket);
         return outPacket.valid;
+    }
+
+    if (!HasCurrentStylusSignal(rawData)) {
+        const size_t required = kSlaveHeaderBytes + kSlaveWordCount * 2;
+        if (rawData.size() >= required) {
+            bool checksumOk = true;
+            if (m_enableSlaveChecksum) {
+                uint16_t cs = 0;
+                checksumOk = ValidateChecksum16(
+                    rawData.data() + kSlaveHeaderBytes,
+                    kSlaveWordCount, cs);
+            }
+            if (checksumOk) {
+                return ProcessNoStylusFrame(rawData, outPacket);
+            }
+        }
     }
 
     // ── Phase 1: Input Parsing ──

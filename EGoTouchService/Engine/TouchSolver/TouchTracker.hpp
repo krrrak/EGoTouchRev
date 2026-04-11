@@ -63,6 +63,7 @@ public:
     float m_stylusAftPalmSizeThresholdMm = 2.5f;
 
     inline bool Process(HeatmapFrame& frame);
+    inline bool HasLiveTracks() const { return m_trackCount > 0; }
 
 private:
     static constexpr int kMaxTracks = 20;

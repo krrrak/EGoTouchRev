@@ -110,7 +110,7 @@ public:
         for (size_t offset = 0; offset < m_btCount; ++offset) {
             const size_t logicalIndex = m_btCount - 1 - offset;
             const auto& sample = BtSampleAt(logicalIndex);
-            if (now_ms <= sample.timestamp_ms + 50) {
+            if (now_ms <= sample.timestamp_ms + kBtAggregationWindowMs) {
                 if (sample.pressure > btPress) btPress = sample.pressure;
             }
         }
@@ -145,6 +145,8 @@ private:
         uint16_t pressure;
     };
 
+    static constexpr uint64_t kBtAggregationWindowMs = 28;
+    static constexpr uint64_t kBtHistoryKeepMs = 60;
     static constexpr size_t kBtHistoryCapacity = 20;
 
     mutable std::mutex m_btMutex;
@@ -173,7 +175,7 @@ private:
 
     inline void DiscardExpiredSamples(uint64_t now_ms) {
         while (m_btCount > 0 &&
-               now_ms > BtSampleAt(0).timestamp_ms + 100) {
+               now_ms > BtSampleAt(0).timestamp_ms + kBtHistoryKeepMs) {
             m_btHead = (m_btHead + 1) % kBtHistoryCapacity;
             --m_btCount;
         }

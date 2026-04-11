@@ -47,6 +47,14 @@ public:
     bool  m_bypassStateMachine = false;
 
     TouchGestureStateMachine() { for (auto& s : m_slots) s.Reset(); }
+    inline bool HasLiveState() const {
+        for (const auto& slot : m_slots) {
+            if (slot.phase != GesturePhase::Idle || slot.upEmitted) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     inline bool Process(HeatmapFrame& frame) {
         if (!m_enabled) return true;

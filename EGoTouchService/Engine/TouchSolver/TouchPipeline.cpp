@@ -16,6 +16,17 @@ bool TouchPipeline::Process(HeatmapFrame& frame) {
     // ── Phase 1: Frame Parsing ──────────────────────────────────────
     m_frameParser.Process(frame);
 
+    const bool hasCurrentFinger =
+        frame.masterWasRead &&
+        frame.masterSuffixValid &&
+        frame.masterSuffix.hasFinger();
+    const bool hasLiveTouchState =
+        m_tracker.HasLiveTracks() || m_gesture.HasLiveState();
+    if (!hasCurrentFinger && !hasLiveTouchState) {
+        ResetIdleOutputs(frame);
+        return true;
+    }
+
     // ── Phase 2: Signal Conditioning ────────────────────────────────
     m_baseline.Process(frame);
     m_cmf.Process(frame);
@@ -99,6 +110,28 @@ bool TouchPipeline::Process(HeatmapFrame& frame) {
     m_gesture.Process(frame);
 
     return true;
+}
+
+void TouchPipeline::ResetIdleOutputs(HeatmapFrame& frame) {
+    frame.contacts.clear();
+    frame.touchPackets = {};
+
+    m_cachedPeakCount.store(0, std::memory_order_relaxed);
+    m_cachedZoneCount.store(0, std::memory_order_relaxed);
+    m_cachedContactCount.store(0, std::memory_order_relaxed);
+
+#if EGOTOUCH_DIAG
+    frame.touchZones.fill(0);
+    frame.peakZones.fill(0);
+    frame.peaks.clear();
+
+    {
+        std::lock_guard<std::mutex> lk(m_diagMtx);
+        m_diagPeaks.clear();
+        m_diagTouchZones.fill(0);
+        m_diagZoneEdge.fill(0);
+    }
+#endif
 }
 
 // ══════════════════════════════════════════════════════════════════════
