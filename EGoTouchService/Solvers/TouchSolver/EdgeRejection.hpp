@@ -3,12 +3,12 @@
 // Header-only. Converted from TouchSolver/EdgeRejection.{h,cpp}.
 // Suppresses touch-down events at sensor boundaries.
 
-#include "EngineTypes.h"
+#include "SolverTypes.h"
 #include "EdgeCompensation.h"
 #include <vector>
 #include <cstdint>
 
-namespace Engine { namespace Touch {
+namespace Solvers { namespace Touch {
 
 class EdgeRejector {
 public:
@@ -44,4 +44,4 @@ public:
     }
 };
 
-}} // namespace Engine::Touch
+}} // namespace Solvers::Touch

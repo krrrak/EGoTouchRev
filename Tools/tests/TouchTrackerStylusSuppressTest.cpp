@@ -10,9 +10,9 @@
 
 namespace {
 
-using Engine::HeatmapFrame;
-using Engine::TouchContact;
-using Engine::Touch::TouchTracker;
+using Solvers::HeatmapFrame;
+using Solvers::TouchContact;
+using Solvers::Touch::TouchTracker;
 
 struct ContactSpec {
     float x = 0.0f;

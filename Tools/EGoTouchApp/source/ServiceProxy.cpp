@@ -218,7 +218,7 @@ bool ServiceProxy::IsConnected() const {
     return m_client.IsConnected();
 }
 
-bool ServiceProxy::GetLatestFrame(Engine::HeatmapFrame& out) {
+bool ServiceProxy::GetLatestFrame(Solvers::HeatmapFrame& out) {
     if (!m_hasNewFrame.load()) return false;
     std::lock_guard<std::mutex> lk(m_frameMutex);
     out = m_latestFrame;

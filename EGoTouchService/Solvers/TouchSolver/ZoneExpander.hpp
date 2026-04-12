@@ -4,7 +4,7 @@
 // TSACore TZ_PeakBasedProcess: BFS flood-fill from peaks → contacts,
 // with DilateErode, MarkEdges, ScanAbsorbedPeaks, MultiFinger centroid.
 
-#include "EngineTypes.h"
+#include "SolverTypes.h"
 #include "PeakDetector.hpp"
 #include "EdgeCompensation.h"   // ZoneEdgeInfo, EdgeBounds, TZ_* helpers
 #include <vector>
@@ -14,7 +14,7 @@
 #include <cstring>
 #include <span>
 
-namespace Engine { namespace Touch {
+namespace Solvers { namespace Touch {
 
 class ZoneExpander {
 public:
@@ -470,4 +470,4 @@ private:
     }
 };
 
-}} // namespace Engine::Touch
+}} // namespace Solvers::Touch

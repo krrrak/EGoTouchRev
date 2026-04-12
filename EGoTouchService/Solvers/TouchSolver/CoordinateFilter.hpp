@@ -2,11 +2,11 @@
 // ── TouchPipeline Module: CoordinateFilter (1-Euro) ──
 // Header-only. Converted from TouchSolver/CoordinateFilter.{h,cpp}.
 
-#include "EngineTypes.h"
+#include "SolverTypes.h"
 #include <array>
 #include <cmath>
 
-namespace Engine { namespace Touch {
+namespace Solvers { namespace Touch {
 
 class CoordinateFilter {
 public:
@@ -88,4 +88,4 @@ private:
     }
 };
 
-}} // namespace Engine::Touch
+}} // namespace Solvers::Touch

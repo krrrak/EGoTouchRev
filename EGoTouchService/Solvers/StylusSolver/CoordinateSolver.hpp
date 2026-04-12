@@ -1,7 +1,6 @@
 #pragma once
 #include "AsaTypes.hpp"
 #include <algorithm>
-#include <cmath>
 
 namespace Asa {
 

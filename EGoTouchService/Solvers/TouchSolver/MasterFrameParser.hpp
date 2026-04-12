@@ -3,11 +3,11 @@
 // Header-only. Converted from Preprocessing/MasterFrameParser.{h,cpp}.
 // Parses raw frame bytes → heatmapMatrix + structured suffix views.
 
-#include "EngineTypes.h"
+#include "SolverTypes.h"
 #include "FrameLayout.h"
 #include <cstring>
 
-namespace Engine { namespace Touch {
+namespace Solvers { namespace Touch {
 
 class MasterFrameParser {
 public:
@@ -48,4 +48,4 @@ public:
     }
 };
 
-}} // namespace Engine::Touch
+}} // namespace Solvers::Touch

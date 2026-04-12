@@ -4,13 +4,13 @@
 // BFS 8-connected component labeling on the heatmap.
 // Optimized: stack-based BFS queue, zone storage reuse across frames.
 
-#include "EngineTypes.h"
+#include "SolverTypes.h"
 #include <array>
 #include <vector>
 #include <cstdint>
 #include <cstring>
 
-namespace Engine { namespace Touch {
+namespace Solvers { namespace Touch {
 
 class MacroZoneDetector {
 public:
@@ -125,4 +125,4 @@ private:
     }
 };
 
-}} // namespace Engine::Touch
+}} // namespace Solvers::Touch

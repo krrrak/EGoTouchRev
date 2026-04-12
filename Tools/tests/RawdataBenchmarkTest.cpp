@@ -14,7 +14,6 @@
 #include <iomanip>
 #include <iostream>
 #include <optional>
-#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -52,7 +51,7 @@ struct Options {
 };
 
 struct MasterDataset {
-    std::vector<Engine::HeatmapFrame> frames;
+    std::vector<Solvers::HeatmapFrame> frames;
     std::filesystem::path rootDir;
 };
 
@@ -201,7 +200,7 @@ bool ParseCsvRow60(const std::string& line, std::array<int16_t, kCols>& rowOut) 
     return true;
 }
 
-bool LoadCsvHeatmapFrame(const std::filesystem::path& path, Engine::HeatmapFrame& frameOut) {
+bool LoadCsvHeatmapFrame(const std::filesystem::path& path, Solvers::HeatmapFrame& frameOut) {
     std::ifstream in(path);
     if (!in.is_open()) {
         return false;
@@ -303,8 +302,8 @@ std::vector<size_t> ParseIndexedCsvFirstColumn(const std::filesystem::path& path
     return indices;
 }
 
-void LoadConfigFromFile(Engine::TouchPipeline& touchPipeline,
-                        Engine::StylusPipeline& stylusPipeline,
+void LoadConfigFromFile(Solvers::TouchPipeline& touchPipeline,
+                        Solvers::StylusPipeline& stylusPipeline,
                         const std::filesystem::path& configPath) {
     std::ifstream in(configPath);
     if (!in.is_open()) {
@@ -439,7 +438,7 @@ std::string BenchmarkModeName(BenchmarkMode mode) {
 
 void PrintUsage() {
     std::cout
-        << "Usage: EngineRawdataBenchmarkTest [options]\n"
+        << "Usage: SolversRawdataBenchmarkTest [options]\n"
         << "  --frames <N>             Total replay steps (default 5000)\n"
         << "  --mode <linked|independent|both>\n"
         << "                           Benchmark mode (default linked)\n"
@@ -497,7 +496,7 @@ MasterDataset LoadMasterDataset(const std::filesystem::path& rootDir) {
 
     const auto statusIndices = ParseIndexedCsvFirstColumn(rootDir / "master_status.csv", "master_status");
 
-    std::vector<std::pair<size_t, Engine::HeatmapFrame>> indexedFrames;
+    std::vector<std::pair<size_t, Solvers::HeatmapFrame>> indexedFrames;
     for (const auto& entry : std::filesystem::directory_iterator(rootDir)) {
         if (!entry.is_regular_file()) {
             continue;
@@ -508,7 +507,7 @@ MasterDataset LoadMasterDataset(const std::filesystem::path& rootDir) {
             continue;
         }
 
-        Engine::HeatmapFrame frame;
+        Solvers::HeatmapFrame frame;
         if (!LoadCsvHeatmapFrame(entry.path(), frame)) {
             throw std::runtime_error("Failed to load master heatmap frame: " + entry.path().string());
         }
@@ -636,12 +635,12 @@ uint64_t SyntheticTimestampMs(int frameStep) {
     return static_cast<uint64_t>(std::llround(static_cast<double>(frameStep) * 1000.0 / kTouchSampleRateHz));
 }
 
-Engine::HeatmapFrame PrepareTouchFrame(const Engine::HeatmapFrame& sourceFrame, int frameStep) {
-    Engine::HeatmapFrame frame = sourceFrame;
+Solvers::HeatmapFrame PrepareTouchFrame(const Solvers::HeatmapFrame& sourceFrame, int frameStep) {
+    Solvers::HeatmapFrame frame = sourceFrame;
     frame.timestamp = SyntheticTimestampMs(frameStep);
     frame.contacts.clear();
     frame.touchPackets = {};
-    frame.stylus = Engine::StylusFrameData{};
+    frame.stylus = Solvers::StylusFrameData{};
     frame.masterWasRead = true;
     return frame;
 }
@@ -710,8 +709,8 @@ RunStats RunBenchmark(BenchmarkMode mode,
         throw std::runtime_error("linked mode requires master/slave frame counts to match");
     }
 
-    Engine::TouchPipeline touchPipeline;
-    Engine::StylusPipeline stylusPipeline;
+    Solvers::TouchPipeline touchPipeline;
+    Solvers::StylusPipeline stylusPipeline;
     LoadConfigFromFile(touchPipeline, stylusPipeline, configPath);
 
     const std::vector<size_t> masterSequence = BuildReplaySequence(masterDataset.frames.size());
@@ -733,12 +732,18 @@ RunStats RunBenchmark(BenchmarkMode mode,
             const size_t replayIndex = masterSequence[static_cast<size_t>(step) % masterSequence.size()];
             const auto& slaveRaw = slaveDataset.rawFrames[replayIndex];
 
-            Engine::StylusPacket stylusPacket{};
+            // Build a synthetic combined frame: kMasterBytes zeros + slave raw data
+            static constexpr size_t kMasterBytes = 5063;
+            std::vector<uint8_t> combined(kMasterBytes + slaveRaw.size(), 0);
+            std::memcpy(combined.data() + kMasterBytes, slaveRaw.data(), slaveRaw.size());
+
+            Solvers::HeatmapFrame stylusFrame;
+            stylusFrame.rawPtr = combined.data();
+            stylusFrame.rawLen = combined.size();
+
             const auto slaveBegin = std::chrono::steady_clock::now();
             stylusPipeline.SetBtMcuPressure(static_cast<uint16_t>(options.stylusPressure));
-            const bool slaveOk = stylusPipeline.Process(
-                std::span<const uint8_t>(slaveRaw.data(), slaveRaw.size()),
-                stylusPacket);
+            const bool slaveOk = stylusPipeline.Process(stylusFrame);
             const auto slaveEnd = std::chrono::steady_clock::now();
 
             stats.slaveProcessedFrames++;
@@ -748,9 +753,8 @@ RunStats RunBenchmark(BenchmarkMode mode,
             stats.slaveTotalMs +=
                 std::chrono::duration<double, std::milli>(slaveEnd - slaveBegin).count();
 
-            Engine::HeatmapFrame touchFrame = PrepareTouchFrame(masterDataset.frames[replayIndex], step);
-            touchFrame.stylus = stylusPipeline.GetLastResult();
-            touchFrame.stylus.packet = stylusPacket;
+            Solvers::HeatmapFrame touchFrame = PrepareTouchFrame(masterDataset.frames[replayIndex], step);
+            touchFrame.stylus = stylusFrame.stylus;
 
             const auto masterBegin = std::chrono::steady_clock::now();
             const bool masterOk = touchPipeline.Process(touchFrame);
@@ -766,13 +770,18 @@ RunStats RunBenchmark(BenchmarkMode mode,
             const size_t masterIndex = masterSequence[static_cast<size_t>(step) % masterSequence.size()];
             const size_t slaveIndex = slaveSequence[static_cast<size_t>(step) % slaveSequence.size()];
 
-            Engine::StylusPacket stylusPacket{};
+            const auto& slaveRaw = slaveDataset.rawFrames[slaveIndex];
+            static constexpr size_t kMasterBytes = 5063;
+            std::vector<uint8_t> combined(kMasterBytes + slaveRaw.size(), 0);
+            std::memcpy(combined.data() + kMasterBytes, slaveRaw.data(), slaveRaw.size());
+
+            Solvers::HeatmapFrame stylusFrame;
+            stylusFrame.rawPtr = combined.data();
+            stylusFrame.rawLen = combined.size();
+
             const auto slaveBegin = std::chrono::steady_clock::now();
             stylusPipeline.SetBtMcuPressure(static_cast<uint16_t>(options.stylusPressure));
-            const bool slaveOk = stylusPipeline.Process(
-                std::span<const uint8_t>(slaveDataset.rawFrames[slaveIndex].data(),
-                                         slaveDataset.rawFrames[slaveIndex].size()),
-                stylusPacket);
+            const bool slaveOk = stylusPipeline.Process(stylusFrame);
             const auto slaveEnd = std::chrono::steady_clock::now();
 
             stats.slaveProcessedFrames++;
@@ -782,7 +791,7 @@ RunStats RunBenchmark(BenchmarkMode mode,
             stats.slaveTotalMs +=
                 std::chrono::duration<double, std::milli>(slaveEnd - slaveBegin).count();
 
-            Engine::HeatmapFrame touchFrame = PrepareTouchFrame(masterDataset.frames[masterIndex], step);
+            Solvers::HeatmapFrame touchFrame = PrepareTouchFrame(masterDataset.frames[masterIndex], step);
             const auto masterBegin = std::chrono::steady_clock::now();
             const bool masterOk = touchPipeline.Process(touchFrame);
             const auto masterEnd = std::chrono::steady_clock::now();

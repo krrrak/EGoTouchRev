@@ -18,7 +18,7 @@ void RequireNear(float actual, float expected, float epsilon, const char* messag
     }
 }
 
-void LoadFromSavedText(Engine::TouchPipeline& pipeline, const std::string& saved) {
+void LoadFromSavedText(Solvers::TouchPipeline& pipeline, const std::string& saved) {
     std::istringstream in(saved);
     std::string line;
     while (std::getline(in, line)) {
@@ -30,7 +30,7 @@ void LoadFromSavedText(Engine::TouchPipeline& pipeline, const std::string& saved
 }
 
 void TestStylusSuppressRoundTrip() {
-    Engine::TouchPipeline pipeline;
+    Solvers::TouchPipeline pipeline;
     pipeline.m_tracker.m_stylusSuppressGlobalEnabled = false;
     pipeline.m_tracker.m_stylusSuppressLocalEnabled = true;
     pipeline.m_tracker.m_stylusSuppressLocalDistance = 3.75f;
@@ -75,7 +75,7 @@ void TestStylusSuppressRoundTrip() {
     Require(saved.find("RxGhostWeakRatio=0.42") != std::string::npos,
             "saved config should include rx ghost ratio");
 
-    Engine::TouchPipeline loaded;
+    Solvers::TouchPipeline loaded;
     LoadFromSavedText(loaded, saved);
 
     Require(!loaded.m_tracker.m_stylusSuppressGlobalEnabled, "global suppress flag should round-trip");
@@ -134,7 +134,7 @@ void TestStylusSuppressRoundTrip() {
 }
 
 void TestStylusSuppressSchemaContainsNewKeys() {
-    Engine::TouchPipeline pipeline;
+    Solvers::TouchPipeline pipeline;
     const auto schema = pipeline.GetConfigSchema();
 
     auto hasKey = [&](const char* key) {

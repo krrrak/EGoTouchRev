@@ -13,7 +13,7 @@
 #define EGOTOUCH_DIAG 0
 #endif
 
-namespace Engine {
+namespace Solvers {
 
 enum TouchContactState : int {
     TouchStateDown = 0,
@@ -270,4 +270,4 @@ struct HeatmapFrame {
     }
 };
 
-} // namespace Engine
+} // namespace Solvers

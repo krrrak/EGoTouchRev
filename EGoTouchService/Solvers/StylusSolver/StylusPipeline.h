@@ -15,7 +15,7 @@
 #include "PacketBuilder.hpp"
 #include "NoiseGate.hpp"
 #include "PipelineUtils.hpp"
-#include "EngineTypes.h"
+#include "SolverTypes.h"
 #include "ConfigSchema.h"
 
 #include <algorithm>
@@ -27,7 +27,7 @@
 #include <iosfwd>
 #include <vector>
 
-namespace Engine {
+namespace Solvers {
 
 /// StylusPipeline — Linear orchestrator for stylus processing.
 ///
@@ -39,8 +39,9 @@ namespace Engine {
 ///   Phase 4: Edge compensation + output
 class StylusPipeline {
 public:
-    bool Process(std::span<const uint8_t> rawData,
-                 StylusPacket& outPacket);
+    /// Frame-level entry: reads raw data from frame, solves stylus,
+    /// writes results back into frame.stylus (mirrors TouchPipeline::Process).
+    bool Process(HeatmapFrame& frame);
 
     /// 注入 BT MCU 压感值（由 PenBridge 线程实时更新）
     void SetBtMcuPressure(uint16_t p) {
@@ -71,12 +72,17 @@ public:
     void SetFilterMode(int mode) { m_filterMode = std::clamp(mode, 0, 2); }
 
     /// 实时坐标分解诊断
-    using DbgCoordBreakdown = Engine::StylusFrameData::StylusDiagnostics;
+    using DbgCoordBreakdown = Solvers::StylusFrameData::StylusDiagnostics;
     const DbgCoordBreakdown& GetDebugCoord() const { return m_dbg; }
 
 
 private:
+    /// Raw-bytes entry kept as private implementation detail.
+    bool ProcessRaw(std::span<const uint8_t> rawData,
+                    StylusPacket& outPacket);
+
     // ── Frame Constants ──
+    static constexpr size_t kMasterBytes      = 5063;
     static constexpr size_t kSlaveFrameBytes  = 339;
     static constexpr size_t kSlaveHeaderBytes = 7;
     static constexpr size_t kSlaveWordCount   = 166;
@@ -175,4 +181,4 @@ private:
     DbgCoordBreakdown m_dbg{};
 };
 
-} // namespace Engine
+} // namespace Solvers

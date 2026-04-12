@@ -1,6 +1,6 @@
 #pragma once
 #include "AsaTypes.hpp"
-#include "EngineTypes.h"
+#include "SolverTypes.h"
 #include <cmath>
 #include <cstdint>
 

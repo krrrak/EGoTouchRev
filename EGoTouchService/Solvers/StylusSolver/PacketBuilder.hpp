@@ -1,12 +1,12 @@
 #pragma once
 #include "AsaTypes.hpp"
-#include "EngineTypes.h"
+#include "SolverTypes.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
 
-namespace Engine {
+namespace Solvers {
 
 /// PacketBuilder — Builds HID pen reports from pipeline output.
 ///
@@ -127,4 +127,4 @@ private:
     }
 };
 
-} // namespace Engine
+} // namespace Solvers

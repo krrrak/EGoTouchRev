@@ -3,14 +3,14 @@
 // Header-only. Converted from Preprocessing/GridIIRProcessor.{h,cpp}.
 // Dynamic threshold gated IIR with aggressive noise floor decay.
 
-#include "EngineTypes.h"
+#include "SolverTypes.h"
 #include "NeonCompat.h"
 #include <algorithm>
 #include <cstring>
 #include <cmath>
 #include <cstdint>
 
-namespace Engine { namespace Touch {
+namespace Solvers { namespace Touch {
 
 class GridIIRProcessor {
 public:
@@ -184,4 +184,4 @@ private:
 #endif
 };
 
-}} // namespace Engine::Touch
+}} // namespace Solvers::Touch

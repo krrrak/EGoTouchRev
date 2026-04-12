@@ -11,15 +11,15 @@
 
 namespace {
 
-using Engine::HeatmapFrame;
-using Engine::TouchContact;
-using Engine::TouchLifeSilentGap;
-using Engine::TouchReportDown;
-using Engine::TouchReportMove;
-using Engine::TouchReportUp;
-using Engine::Touch::CoordinateFilter;
-using Engine::Touch::TouchGestureStateMachine;
-using Engine::Touch::TouchTracker;
+using Solvers::HeatmapFrame;
+using Solvers::TouchContact;
+using Solvers::TouchLifeSilentGap;
+using Solvers::TouchReportDown;
+using Solvers::TouchReportMove;
+using Solvers::TouchReportUp;
+using Solvers::Touch::CoordinateFilter;
+using Solvers::Touch::TouchGestureStateMachine;
+using Solvers::Touch::TouchTracker;
 
 struct PipelineHarness {
     TouchTracker tracker;

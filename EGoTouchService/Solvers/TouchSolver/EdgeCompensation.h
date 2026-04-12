@@ -1,10 +1,10 @@
 #pragma once
 
-#include "EngineTypes.h"
+#include "SolverTypes.h"
 #include <cstdint>
 #include <algorithm>
 
-namespace Engine {
+namespace Solvers {
 
 // TSACore edge boundary indices (sensor grid limits)
 // TSACore EC boundary values (physical sensor edges in grid units).
@@ -119,4 +119,4 @@ private:
                     bool isDimX);
 };
 
-} // namespace Engine
+} // namespace Solvers

@@ -3,7 +3,7 @@
 #include <vector>
 #include <iosfwd>
 
-namespace Engine {
+namespace Solvers {
 
 // 配置参数元数据（无 UI 依赖）
 struct ConfigParam {
@@ -37,4 +37,4 @@ public:
     virtual void LoadConfig(const std::string& key, const std::string& value) = 0;
 };
 
-} // namespace Engine
+} // namespace Solvers

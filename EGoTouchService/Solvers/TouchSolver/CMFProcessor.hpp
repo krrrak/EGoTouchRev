@@ -3,12 +3,12 @@
 // Header-only. Converted from Preprocessing/CMFProcessor.{h,cpp}.
 // Common Mode Filter: removes global row/column shift noise.
 
-#include "EngineTypes.h"
+#include "SolverTypes.h"
 #include "NeonCompat.h"
 #include <algorithm>
 #include <cstdint>
 
-namespace Engine { namespace Touch {
+namespace Solvers { namespace Touch {
 
 class CMFProcessor {
 public:
@@ -156,4 +156,4 @@ private:
 #endif
 };
 
-}} // namespace Engine::Touch
+}} // namespace Solvers::Touch

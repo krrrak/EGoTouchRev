@@ -3,13 +3,13 @@
 // Header-only. Converted from Reporting/TouchGestureStateMachine.{h,cpp}.
 // 5-Phase gesture lifecycle per slot.
 
-#include "EngineTypes.h"
+#include "SolverTypes.h"
 #include <array>
 #include <cstdint>
 #include <algorithm>
 #include <cmath>
 
-namespace Engine { namespace Touch {
+namespace Solvers { namespace Touch {
 
 enum class GesturePhase : uint8_t {
     Idle = 0, PressCandidate, Dragging, LongPressHold, ReleasePending,
@@ -241,4 +241,4 @@ private:
     }
 };
 
-}} // namespace Engine::Touch
+}} // namespace Solvers::Touch

@@ -3,7 +3,7 @@
 // Header-only. Faithful replica of TouchSolver/PeakDetector.{h,cpp}.
 // TSACore Peak_Process: detect local maxima, filter, sort, track IDs.
 
-#include "EngineTypes.h"
+#include "SolverTypes.h"
 #include <array>
 #include <algorithm>
 #include <cstdint>
@@ -11,7 +11,7 @@
 #include <cstdlib>
 #include <span>
 
-namespace Engine { namespace Touch {
+namespace Solvers { namespace Touch {
 
 struct Peak {
     int r = 0, c = 0;
@@ -325,4 +325,4 @@ private:
     }
 };
 
-}} // namespace Engine::Touch
+}} // namespace Solvers::Touch

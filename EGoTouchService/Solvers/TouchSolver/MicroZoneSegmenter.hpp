@@ -4,7 +4,7 @@
 // by signal strength (steepest-ascent flood fill), 8-connected.
 // Optimized: pre-allocated heap buffer, no std::priority_queue per-frame allocation.
 
-#include "EngineTypes.h"
+#include "SolverTypes.h"
 #include "PeakDetector.hpp"
 #include <vector>
 #include <array>
@@ -13,7 +13,7 @@
 #include <algorithm>
 #include <span>
 
-namespace Engine { namespace Touch {
+namespace Solvers { namespace Touch {
 
 class MicroZoneSegmenter {
 public:
@@ -122,4 +122,4 @@ private:
     }
 };
 
-}} // namespace Engine::Touch
+}} // namespace Solvers::Touch

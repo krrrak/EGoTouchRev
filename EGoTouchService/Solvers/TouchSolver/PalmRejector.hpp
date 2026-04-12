@@ -3,12 +3,12 @@
 // Header-only. Converted from TouchSolver/PalmRejector.{h,cpp}.
 // Removes palm/fist MacroZones before peak detection.
 
-#include "EngineTypes.h"
+#include "SolverTypes.h"
 #include <vector>
 #include <algorithm>
 #include <cstdint>
 
-namespace Engine { namespace Touch {
+namespace Solvers { namespace Touch {
 
 class PalmRejector {
 public:
@@ -58,4 +58,4 @@ public:
     }
 };
 
-}} // namespace Engine::Touch
+}} // namespace Solvers::Touch

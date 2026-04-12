@@ -6,9 +6,9 @@
 namespace App {
 
 void ConfigUIRenderer::RenderConfigSchema(
-    const std::vector<Engine::ConfigParam>& schema,
+    const std::vector<Solvers::ConfigParam>& schema,
     const std::string& sectionName,
-    std::optional<Engine::ConfigParam::Category> filterCategory) {
+    std::optional<Solvers::ConfigParam::Category> filterCategory) {
 
     if (schema.empty()) return;
 
@@ -21,12 +21,12 @@ void ConfigUIRenderer::RenderConfigSchema(
         std::string label = param.displayName + "##" + sectionName + "_" + param.key;
         
         switch (param.type) {
-            case Engine::ConfigParam::Bool:
+            case Solvers::ConfigParam::Bool:
                 ImGui::Checkbox(label.c_str(),
                                static_cast<bool*>(param.valuePtr));
                 break;
 
-            case Engine::ConfigParam::Int: {
+            case Solvers::ConfigParam::Int: {
                 int* ptr = static_cast<int*>(param.valuePtr);
                 if (param.maxVal > param.minVal) {
                     if (ImGui::SliderInt(label.c_str(), ptr,
@@ -40,7 +40,7 @@ void ConfigUIRenderer::RenderConfigSchema(
                 break;
             }
 
-            case Engine::ConfigParam::Float: {
+            case Solvers::ConfigParam::Float: {
                 float* ptr = static_cast<float*>(param.valuePtr);
                 if (param.maxVal > param.minVal) {
                     if (ImGui::SliderFloat(label.c_str(), ptr, param.minVal, param.maxVal)) {
@@ -52,7 +52,7 @@ void ConfigUIRenderer::RenderConfigSchema(
                 break;
             }
 
-            case Engine::ConfigParam::Double: {
+            case Solvers::ConfigParam::Double: {
                 double* ptr = static_cast<double*>(param.valuePtr);
                 if (param.maxVal > param.minVal) {
                     float fval = static_cast<float>(*ptr);
@@ -69,7 +69,7 @@ void ConfigUIRenderer::RenderConfigSchema(
                 break;
             }
 
-            case Engine::ConfigParam::String:
+            case Solvers::ConfigParam::String:
                 // String support can be added if needed
                 ImGui::Text("%s: (string)", label.c_str());
                 break;
@@ -78,7 +78,7 @@ void ConfigUIRenderer::RenderConfigSchema(
 }
 
 void ConfigUIRenderer::RenderConfigSchemaByModule(
-    const std::vector<Engine::ConfigParam>& schema,
+    const std::vector<Solvers::ConfigParam>& schema,
     const std::string& moduleTag) {
 
     for (const auto& param : schema) {
@@ -87,12 +87,12 @@ void ConfigUIRenderer::RenderConfigSchemaByModule(
         std::string label = param.displayName + "##mod_" + moduleTag + "_" + param.key;
 
         switch (param.type) {
-            case Engine::ConfigParam::Bool:
+            case Solvers::ConfigParam::Bool:
                 ImGui::Checkbox(label.c_str(),
                                static_cast<bool*>(param.valuePtr));
                 break;
 
-            case Engine::ConfigParam::Int: {
+            case Solvers::ConfigParam::Int: {
                 int* ptr = static_cast<int*>(param.valuePtr);
                 if (param.maxVal > param.minVal) {
                     if (ImGui::SliderInt(label.c_str(), ptr,
@@ -106,7 +106,7 @@ void ConfigUIRenderer::RenderConfigSchemaByModule(
                 break;
             }
 
-            case Engine::ConfigParam::Float: {
+            case Solvers::ConfigParam::Float: {
                 float* ptr = static_cast<float*>(param.valuePtr);
                 if (param.maxVal > param.minVal) {
                     if (ImGui::SliderFloat(label.c_str(), ptr, param.minVal, param.maxVal)) {
@@ -118,7 +118,7 @@ void ConfigUIRenderer::RenderConfigSchemaByModule(
                 break;
             }
 
-            case Engine::ConfigParam::Double: {
+            case Solvers::ConfigParam::Double: {
                 double* ptr = static_cast<double*>(param.valuePtr);
                 if (param.maxVal > param.minVal) {
                     float fval = static_cast<float>(*ptr);
@@ -135,7 +135,7 @@ void ConfigUIRenderer::RenderConfigSchemaByModule(
                 break;
             }
 
-            case Engine::ConfigParam::String:
+            case Solvers::ConfigParam::String:
                 ImGui::Text("%s: (string)", label.c_str());
                 break;
         }

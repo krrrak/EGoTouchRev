@@ -1,6 +1,6 @@
 #pragma once
 
-#include "EngineTypes.h"
+#include "SolverTypes.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -8,7 +8,7 @@
 #include <limits>
 #include <vector>
 
-namespace Engine { namespace Touch {
+namespace Solvers { namespace Touch {
 
 class TouchTracker {
 public:
@@ -892,4 +892,4 @@ inline bool TouchTracker::Process(HeatmapFrame& frame) {
     return true;
 }
 
-}} // namespace Engine::Touch
+}} // namespace Solvers::Touch

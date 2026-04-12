@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <cstdint>
 
-namespace Engine { namespace Touch {
+namespace Solvers { namespace Touch {
 
 // ── g_ctd256Ln[256]: official LUT from firmware ──
 static const uint16_t g_ctd256Ln[256] = {
@@ -138,4 +138,4 @@ private:
     }
 };
 
-}} // namespace Engine::Touch
+}} // namespace Solvers::Touch

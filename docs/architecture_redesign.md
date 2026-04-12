@@ -278,7 +278,7 @@ EGoTouchRev-rebuild/
 | `EGoTouchApp` | EXE | 调试诊断 GUI（ImGui DX11 + ServiceProxy） |
 | `BtMcuTestTool` | EXE | BT MCU 协议验证 |
 | `HostSystemStateMonitorTest` | EXE | Host 事件监听测试 |
-| `EngineRawdataBenchmarkTest` | EXE | Engine 性能基准 |
+| `SolversRawdataBenchmarkTest` | EXE | Engine 性能基准 |
 
 **依赖图（按 CMake 当前配置）：**
 
@@ -318,8 +318,8 @@ class DeviceRuntime {
     uint64_t SubmitCommand(command cmd, CommandSource src, const char* reason);
     void IngestSystemEvent(const Host::SystemStateEvent& ev);
 
-    Engine::FramePipeline& GetPipeline();
-    Engine::StylusPipeline& GetStylusPipeline();
+    Solvers::FramePipeline& GetPipeline();
+    Solvers::StylusPipeline& GetStylusPipeline();
     VhfReporter& GetVhfReporter();
 };
 ```
@@ -339,7 +339,7 @@ class ServiceHost {
 class ServiceProxy {
     bool Connect();
     void Disconnect();
-    bool GetLatestFrame(Engine::HeatmapFrame& out);
+    bool GetLatestFrame(Solvers::HeatmapFrame& out);
 
     bool SwitchAfeMode(uint8_t cmd, uint8_t param);
     bool SetVhfEnabled(bool enabled);

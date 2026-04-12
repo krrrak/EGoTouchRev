@@ -15,7 +15,6 @@
 #include <functional>
 #include "btmcu/PenUsbTypes.h"
 
-#include "Device.h"
 #include "himax/HimaxChip.h"
 #include "SystemStateEvent.h"
 #include "TouchSolver/TouchPipeline.h"
@@ -91,19 +90,16 @@ public:
     void SetAutoMode(bool enabled) { m_autoMode.store(enabled); }
     bool IsAutoMode() const { return m_autoMode.load(); }
 
-    // Touch-Only 模式（跳过 StylusPipeline / ProcessStylusStatus）
-    void SetTouchOnlyMode(bool v) { m_touchOnly.store(v); }
-    bool IsTouchOnlyMode() const { return m_touchOnly.load(); }
 
     // 单独的 Stylus VHF 输出开关
     void SetStylusVhfEnabled(bool v) { m_stylusVhfEnabled.store(v); }
     bool IsStylusVhfEnabled() const { return m_stylusVhfEnabled.load(); }
 
     // Pipeline / VHF 配置 — 仅在 Start() 前调用
-    Engine::TouchPipeline& GetTouchPipeline() { return m_touchPipeline; }
+    Solvers::TouchPipeline& GetTouchPipeline() { return m_touchPipeline; }
     // Legacy alias
-    Engine::TouchPipeline& GetPipeline() { return m_touchPipeline; }
-    Engine::StylusPipeline& GetStylusPipeline() { return m_stylusPipeline; }
+    Solvers::TouchPipeline& GetPipeline() { return m_touchPipeline; }
+    Solvers::StylusPipeline& GetStylusPipeline() { return m_stylusPipeline; }
     VhfReporter& GetVhfReporter() { return m_vhfReporter; }
 
     /// 注入 BT MCU 压感值（由 PenBridge 线程写入，StylusPipeline 帧内读取）
@@ -122,7 +118,7 @@ public:
 
 #ifdef _DEBUG
     // Frame push callback for IPC (called after pipeline+VHF in worker loop)
-    using FramePushCallback = std::function<void(const Engine::HeatmapFrame&)>;
+    using FramePushCallback = std::function<void(const Solvers::HeatmapFrame&)>;
     void SetFramePushCallback(FramePushCallback cb) { m_framePushCb = std::move(cb); }
 #endif
 
@@ -163,11 +159,10 @@ private:
     std::atomic<workerState> m_state{workerState::quit};
     std::atomic<StopReason> m_stopReason{StopReason::None};
     std::atomic<bool> m_autoMode{false};
-    std::atomic<bool> m_touchOnly{false};
     std::atomic<bool> m_stylusVhfEnabled{true};
     Himax::Chip m_chip;
-    Engine::TouchPipeline m_touchPipeline;
-    Engine::StylusPipeline m_stylusPipeline;
+    Solvers::TouchPipeline m_touchPipeline;
+    Solvers::StylusPipeline m_stylusPipeline;
     VhfReporter m_vhfReporter;
     uint8_t m_recoverCount = 0;
     bool m_needSuspendDeinit = false;  // suspend 首次进入时执行 Deinit

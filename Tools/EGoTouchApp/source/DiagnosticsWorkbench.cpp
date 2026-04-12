@@ -574,7 +574,7 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
         const auto& sd = m_currentFrame.stylus;
         
         if (ImGui::BeginTabItem("Solver (Coordinate)")) {
-            ConfigUIRenderer::RenderConfigSchema(schema, "Stylus Solver", Engine::ConfigParam::Solver);
+            ConfigUIRenderer::RenderConfigSchema(schema, "Stylus Solver", Solvers::ConfigParam::Solver);
             
             ImGui::Separator();
             ImGui::TextColored(ImVec4(0.4f,0.85f,1.0f,1.f), "[Coord Breakdown] (dim1=Col=X, dim2=Row=Y)");
@@ -615,7 +615,7 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
 
             ImGui::Separator();
             // ── Render all 'Filter' category params (auto-generated) ──
-            ConfigUIRenderer::RenderConfigSchema(schema, "Stylus Filters", Engine::ConfigParam::Filter);
+            ConfigUIRenderer::RenderConfigSchema(schema, "Stylus Filters", Solvers::ConfigParam::Filter);
 
             ImGui::Separator();
             ImGui::TextColored(ImVec4(1.0f,0.85f,0.4f,1.f), "[Post-Processing]");
@@ -637,7 +637,7 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
         }
 
         if (ImGui::BeginTabItem("Behavior (Tilt/Edge)")) {
-            ConfigUIRenderer::RenderConfigSchema(schema, "Stylus Behavior", Engine::ConfigParam::Behavior);
+            ConfigUIRenderer::RenderConfigSchema(schema, "Stylus Behavior", Solvers::ConfigParam::Behavior);
 
             ImGui::Separator();
             ImGui::TextColored(ImVec4(0.8f,0.6f,1.0f,1.f), "[Tilt Diagnostics]");
@@ -678,8 +678,8 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
         }
 
         if (ImGui::BeginTabItem("Output (HID/Pressure)")) {
-            ConfigUIRenderer::RenderConfigSchema(schema, "Stylus Output", Engine::ConfigParam::Output);
-            ConfigUIRenderer::RenderConfigSchema(schema, "Stylus General", Engine::ConfigParam::General);
+            ConfigUIRenderer::RenderConfigSchema(schema, "Stylus Output", Solvers::ConfigParam::Output);
+            ConfigUIRenderer::RenderConfigSchema(schema, "Stylus General", Solvers::ConfigParam::General);
 
             ImGui::Separator();
             ImGui::TextColored(ImVec4(1.0f,0.5f,0.3f,1.f), "[Pressure Chain]");
@@ -1133,13 +1133,13 @@ void DiagnosticsWorkbench::DrawCoordinateTable() {
 
     if (m_currentFrame.contacts.empty()) {
         // Keep a stable UI order by touch ID, so rows do not jump when X/Y changes.
-        std::vector<const Engine::TouchContact*> orderedContacts;
+        std::vector<const Solvers::TouchContact*> orderedContacts;
         orderedContacts.reserve(m_currentFrame.contacts.size());
         for (const auto& c : m_currentFrame.contacts) {
             orderedContacts.push_back(&c);
         }
         std::stable_sort(orderedContacts.begin(), orderedContacts.end(),
-                         [](const Engine::TouchContact* a, const Engine::TouchContact* b) {
+                         [](const Solvers::TouchContact* a, const Solvers::TouchContact* b) {
                              return a->id < b->id;
                          });
 
@@ -1209,10 +1209,10 @@ void DiagnosticsWorkbench::DrawCoordinateTable() {
 
                 ImGui::TableSetColumnIndex(10);
                 const char* reportEventStr = "UNK";
-                if (contact.reportEvent == Engine::TouchReportIdle) reportEventStr = "Idle";
-                else if (contact.reportEvent == Engine::TouchReportDown) reportEventStr = "Down";
-                else if (contact.reportEvent == Engine::TouchReportMove) reportEventStr = "Move";
-                else if (contact.reportEvent == Engine::TouchReportUp) reportEventStr = "Up";
+                if (contact.reportEvent == Solvers::TouchReportIdle) reportEventStr = "Idle";
+                else if (contact.reportEvent == Solvers::TouchReportDown) reportEventStr = "Down";
+                else if (contact.reportEvent == Solvers::TouchReportMove) reportEventStr = "Move";
+                else if (contact.reportEvent == Solvers::TouchReportUp) reportEventStr = "Up";
                 ImGui::Text("%s", reportEventStr);
 
                 ImGui::TableSetColumnIndex(11);
@@ -1229,7 +1229,7 @@ void DiagnosticsWorkbench::DrawCoordinateTable() {
     }
 
     ImGui::Separator();
-    auto drawTouchPacket = [&](const char* label, const Engine::TouchPacket& packet) {
+    auto drawTouchPacket = [&](const char* label, const Solvers::TouchPacket& packet) {
         ImGui::Text("%s: %s (RID=0x%02X Len=%u)", label, packet.valid ? "Valid" : "Invalid",
                     packet.reportId, packet.length);
         if (!packet.valid) {

@@ -1,5 +1,5 @@
 #include "SharedFrameBuffer.h"
-#include "EngineTypes.h"
+#include "SolverTypes.h"
 #include "Logger.h"
 #include <algorithm>
 #include <cstring>
@@ -84,7 +84,7 @@ bool SharedFrameWriter::Create(const wchar_t* name) {
     return true;
 }
 
-void SharedFrameWriter::Write(const Engine::HeatmapFrame& frame) {
+void SharedFrameWriter::Write(const Solvers::HeatmapFrame& frame) {
     if (!m_buf) return;
 
     // Triple-buffer: write to slots[m_writeIdx] — Reader never touches this slot
@@ -318,7 +318,7 @@ bool SharedFrameReader::Open(const wchar_t* name) {
     return true;
 }
 
-bool SharedFrameReader::Read(Engine::HeatmapFrame& out) {
+bool SharedFrameReader::Read(Solvers::HeatmapFrame& out) {
     if (!m_buf) return false;
 
     // Triple-buffer: simply read from slots[readyIdx] — no retry needed

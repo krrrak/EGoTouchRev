@@ -2,7 +2,7 @@
 // ── TouchPipeline Module: BaselineSubtraction ──
 // Header-only. Converted from Preprocessing/BaselineSubtraction.{h,cpp}.
 
-#include "EngineTypes.h"
+#include "SolverTypes.h"
 #include "NeonCompat.h"
 #include <cstddef>
 #include <cstdint>
@@ -11,7 +11,7 @@
 #include <emmintrin.h>
 #endif
 
-namespace Engine { namespace Touch {
+namespace Solvers { namespace Touch {
 
 class BaselineSubtraction {
 public:
@@ -48,4 +48,4 @@ public:
     }
 };
 
-}} // namespace Engine::Touch
+}} // namespace Solvers::Touch

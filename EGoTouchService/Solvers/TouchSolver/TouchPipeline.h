@@ -7,7 +7,7 @@
 //   - Config schema/save/load unified in this class.
 // ══════════════════════════════════════════════════════════════════════
 
-#include "EngineTypes.h"
+#include "SolverTypes.h"
 #include "ConfigSchema.h"
 
 // ── Phase 1: Frame Parsing ──
@@ -43,7 +43,7 @@
 #include <vector>
 #include <iostream>
 
-namespace Engine {
+namespace Solvers {
 
 class TouchPipeline {
 public:
@@ -107,4 +107,4 @@ private:
     std::atomic<int> m_cachedContactCount{0};
 };
 
-} // namespace Engine
+} // namespace Solvers

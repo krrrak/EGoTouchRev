@@ -1,7 +1,7 @@
 #include "TouchPipeline.h"
 #include "Logger.h"
 
-namespace Engine {
+namespace Solvers {
 
 // ══════════════════════════════════════════════════════════════════════
 // Process — linear orchestration of all 6 phases
@@ -621,4 +621,4 @@ void TouchPipeline::LoadConfig(const std::string& key,
     else if (key=="BypassStateMachine")      m_gesture.m_bypassStateMachine = toBool(value);
 }
 
-} // namespace Engine
+} // namespace Solvers

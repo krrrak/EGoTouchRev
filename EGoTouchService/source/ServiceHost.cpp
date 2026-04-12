@@ -6,7 +6,6 @@
 #include <string>
 #include <algorithm>
 #include <cctype>
-#include <chrono>
 #include <ctime>
 #include <filesystem>
 #include <iomanip>
@@ -149,8 +148,8 @@ bool WriteCanonicalConfig(const std::string& configPath,
                           ServiceMode mode,
                           bool autoMode,
                           bool stylusVhfEnabled,
-                          const Engine::TouchPipeline& touchPipe,
-                          const Engine::StylusPipeline& stylusPipe) {
+                          const Solvers::TouchPipeline& touchPipe,
+                          const Solvers::StylusPipeline& stylusPipe) {
     std::ofstream out(configPath, std::ios::trunc);
     if (!out.is_open()) return false;
 
@@ -220,7 +219,6 @@ bool ServiceHost::Start() {
         kDevicePathMaster, kDevicePathSlave, kDevicePathInterrupt);
     m_deviceRuntime->SetAutoMode(m_autoMode);
     m_deviceRuntime->SetStylusVhfEnabled(m_stylusVhfEnabled);
-    m_deviceRuntime->SetTouchOnlyMode(m_mode == ServiceMode::TouchOnly);
     BuildDefaultPipeline(kConfigPath);
 
     if (!m_deviceRuntime->Start()) {
@@ -382,8 +380,8 @@ void ServiceHost::Stop() {
 // ── Shared config loader ────────────────────────────────────────────
 static LoadPipelineConfigResult LoadPipelineConfig(
     const std::string& configPath,
-    Engine::TouchPipeline& touchPipe,
-    Engine::StylusPipeline* stylusPipe = nullptr)
+    Solvers::TouchPipeline& touchPipe,
+    Solvers::StylusPipeline* stylusPipe = nullptr)
 {
     LoadPipelineConfigResult result;
     std::ifstream in(configPath);
@@ -482,7 +480,7 @@ Ipc::IpcResponse ServiceHost::HandleIpcCommand(
         // Just activate the frame push callback.
         if (m_frameWriter.IsOpen()) {
             m_deviceRuntime->SetFramePushCallback(
-                [this](const Engine::HeatmapFrame& f) {
+                [this](const Solvers::HeatmapFrame& f) {
                     m_frameWriter.Write(f);
                 });
             m_debugMode = true;
@@ -534,8 +532,6 @@ Ipc::IpcResponse ServiceHost::HandleIpcCommand(
         if (m_deviceRuntime) {
             // First, re-read [Service] global configs
             ParseServiceConfig(kConfigPath);
-            // Apply touchonly mode and VHF stylus config dynamically to the runtime
-            m_deviceRuntime->SetTouchOnlyMode(m_mode == ServiceMode::TouchOnly);
             m_deviceRuntime->SetStylusVhfEnabled(m_stylusVhfEnabled);
 
             auto& tp = m_deviceRuntime->GetPipeline();

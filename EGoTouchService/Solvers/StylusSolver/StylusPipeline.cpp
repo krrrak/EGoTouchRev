@@ -1,11 +1,10 @@
 #include "StylusPipeline.h"
 #include "Logger.h"
 #include <algorithm>
-#include <cmath>
 #include <cstring>
 #include <ostream>
 
-namespace Engine {
+namespace Solvers {
 
 // ── Helpers ──
 namespace {
@@ -149,7 +148,27 @@ uint32_t StylusPipeline::UpdateButtonState(
 }
 
 // ══════════════════════════════════════════════
-// Process — main pipeline v2 (linear orchestrator)
+// Process(HeatmapFrame&) — unified entry (mirrors TouchPipeline)
+// ══════════════════════════════════════════════
+bool StylusPipeline::Process(HeatmapFrame& frame) {
+    StylusPacket pkt{};
+    if (frame.rawLen >= kMasterBytes + kSlaveFrameBytes) {
+        ProcessRaw(
+            std::span<const uint8_t>(
+                frame.rawPtr + kMasterBytes, kSlaveFrameBytes),
+            pkt);
+    }
+    // Write results directly into the frame (no manual injection needed)
+    frame.stylus = m_lastResult;
+    frame.stylus.packet = pkt;
+#ifdef _DEBUG
+    frame.stylus.diag = m_dbg;
+#endif
+    return pkt.valid;
+}
+
+// ══════════════════════════════════════════════
+// ProcessRaw — raw-bytes pipeline v2 (linear orchestrator)
 //
 // Phase 1:   Input parsing
 // Phase 2:   TX1/TX2 coordinate solve → GLOBAL
@@ -157,7 +176,7 @@ uint32_t StylusPipeline::UpdateButtonState(
 // Phase 3:   Post-processing (LinearFilter → CoorReviser → IIR → Jitter)
 // Phase 4:   Edge compensation + output
 // ══════════════════════════════════════════════
-bool StylusPipeline::Process(
+bool StylusPipeline::ProcessRaw(
         std::span<const uint8_t> rawData,
         StylusPacket& outPacket) {
     m_lastResult = StylusFrameData{};
@@ -968,4 +987,4 @@ void StylusPipeline::LoadConfig(
     else if (key == "sp.1eur.sampleRate") m_oneEuroFilter.sampleRate = toInt(value);
 }
 
-} // namespace Engine
+} // namespace Solvers
