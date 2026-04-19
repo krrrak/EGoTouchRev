@@ -6,27 +6,22 @@
 #include "SharedFrameBuffer.h"
 #include "ConfigSync.h"
 #include "SolverTypes.h"
+#include "ServiceProxyTypes.h"
 #include "IpcProtocol.h"
 #include "TouchSolver/TouchPipeline.h"
 #include "StylusPipeline.h"
 #include "ConcurrentRingBuffer.h"
 #include "DvrFrameSlot.h"
 #include <atomic>
+#include <chrono>
+#include <filesystem>
+#include <memory>
 #include <mutex>
 #include <thread>
-#include <chrono>
+#include <unordered_map>
+#include <vector>
 
 namespace App {
-
-// Lightweight mirror of Service-side Pen channel status (no PenBridge.h dependency)
-struct PenBridgeStatus {
-    bool     evtRunning   = false;  // col00 事件通道运行中
-    bool     pressRunning = false;  // col01 压力通道运行中
-    uint8_t  reportType   = 0;
-    uint8_t  freq1        = 0;
-    uint8_t  freq2        = 0;
-    uint16_t press[4]     = {0,0,0,0};
-};
 
 class ServiceProxy {
 public:
@@ -40,15 +35,40 @@ public:
     void Disconnect();
     bool IsConnected() const;
 
-    // Auto-discovery: background thread retries Connect periodically
-    void StartAutoDiscovery(int intervalMs = 2000);
-    void StopAutoDiscovery();
-
-    // Manual one-shot connect attempt (non-blocking, returns success)
+    // Manual one-shot connect attempt
     bool TryConnect();
 
-    // Frame access (reads shared memory)
+    // Frame access (reads shared memory / playback dataset)
     bool GetLatestFrame(Solvers::HeatmapFrame& out);
+    bool GetCurrentFrame(Solvers::HeatmapFrame& out);
+    void UpdatePlayback();
+
+    // DVR playback/import
+    bool LoadDvrDataset(const std::filesystem::path& inputPath);
+    bool ExportLoadedDvrDatasetToCsv(const std::filesystem::path& outputDirectory, std::string* outError = nullptr) const;
+    void UnloadDvrDataset();
+    bool HasPlaybackDataset() const;
+    void SetFrameSourceMode(FrameSourceMode mode);
+    FrameSourceMode GetFrameSourceMode() const { return m_frameSourceMode.load(); }
+    bool IsLiveControlAllowed() const { return m_frameSourceMode.load() == FrameSourceMode::Live; }
+    int GetPlaybackFormatVersion() const { return m_playbackFormatVersion.load(); }
+    uint32_t GetPlaybackFlags() const { return m_playbackFlags.load(); }
+    std::string GetPlaybackStatusMessage() const;
+    void PlayPlayback();
+    void PausePlayback();
+    bool IsPlaybackPlaying() const { return m_playbackPlaying.load(); }
+    void StepPlaybackForward();
+    void StepPlaybackBackward();
+    void SeekPlaybackFrame(size_t index);
+    void SeekPlaybackTimeUs(uint64_t timeUs);
+    size_t GetPlaybackFrameIndex() const { return m_playbackFrameIndex.load(); }
+    size_t GetPlaybackFrameCount() const;
+    uint64_t GetPlaybackCurrentTimeUs() const { return m_playbackCurrentTimeUs.load(); }
+    uint64_t GetPlaybackStartTimeUs() const;
+    uint64_t GetPlaybackEndTimeUs() const;
+    uint64_t GetPlaybackCurrentSourceTimeUs() const;
+    uint64_t GetPlaybackCurrentHostReceiveTimeUs() const;
+    PlaybackTimingMode GetPlaybackTimingMode() const;
 
     // Pipeline for GUI config UI (local copy)
     Solvers::TouchPipeline& GetPipeline() { return m_pipeline; }
@@ -70,25 +90,21 @@ public:
     bool IsVhfEnabled() const { return m_vhfEnabled.load(); }
     bool IsVhfTransposeEnabled() const { return m_vhfTranspose.load(); }
 
-    // Auto AFE freq-shift sync
-    bool SetAutoAfeSync(bool enabled);
-    bool IsAutoAfeSyncEnabled() const { return m_autoAfeSync.load(); }
-
     // MasterParser-only mode (local pipeline control)
     void SetMasterParserOnlyMode(bool enabled);
     bool IsMasterParserOnlyMode() const { return m_masterParserOnly; }
 
     // Local DVR export
-    void TriggerDVRExport(bool heatmap, bool master, bool slave);
+    void TriggerDvrBinaryExport();
     bool IsDvrExporting() const { return m_dvrExporting.load(); }
 
     // Global Service config (UI mirrors)
     bool IsSrvModeFull() const { return m_srvModeFull; }
-    void SetSrvModeFull(bool full) { m_srvModeFull = full; }
+    void SetSrvModeFull(bool full);
     bool IsSrvStylusVhfEnabled() const { return m_srvStylusVhfEnabled; }
-    void SetSrvStylusVhfEnabled(bool enabled) { m_srvStylusVhfEnabled = enabled; }
+    void SetSrvStylusVhfEnabled(bool enabled);
     bool IsSrvAutoMode() const { return m_srvAutoMode; }
-    void SetSrvAutoMode(bool enabled) { m_srvAutoMode = enabled; }
+    void SetSrvAutoMode(bool enabled);
 
     // PenBridge status (polled from Service)
     PenBridgeStatus GetPenBridgeStatus() const {
@@ -100,10 +116,22 @@ public:
     int  GetAcquisitionFps() const { return m_fps.load(); }
     int  GetSlaveAcquisitionFps() const { return m_slaveFps.load(); }
 
+    // Dynamic debug schema/value access
+    uint16_t GetDynamicDebugSchemaVersion() const { return m_dynamicSchemaVersion.load(); }
+    uint32_t GetDynamicDebugSchemaHash() const { return m_dynamicSchemaHash.load(); }
+    std::vector<DynamicDebugField> GetDynamicDebugFields() const;
+    bool GetDynamicDebugValue(uint16_t fieldId, DynamicDebugValue& out) const;
+    DvrDynamicDebugSchema GetCurrentDvrDynamicDebugSchema() const { return CaptureDynamicDebugSchema(); }
+    DvrDynamicDebugFrame GetCurrentDvrDynamicDebugFrame() const { return CaptureDynamicDebugFrame(); }
+
 private:
+    DvrDynamicDebugSchema CaptureDynamicDebugSchema() const;
+    DvrDynamicDebugFrame CaptureDynamicDebugFrame() const;
+
     static constexpr const wchar_t* kSharedMemName =
         L"Global\\EGoTouchSharedFrame";
-    static constexpr int kDvrCapacity = 480;
+    static constexpr int kDvrCapacity = 960;
+    static constexpr size_t kDvrPreTriggerFrames = 480;
 
     Ipc::IpcPipeClient    m_client;
     Ipc::SharedFrameReader m_frameReader;
@@ -124,21 +152,27 @@ private:
     HANDLE m_logEvent = nullptr;
     HANDLE m_penEvent = nullptr;
 
-    // Auto-discovery thread
-    std::atomic<bool> m_discovering{false};
-    std::thread m_discoveryThread;
-    int m_discoveryIntervalMs = 2000;
-    void DiscoveryLoop();
-
     // DVR ring buffer (POD slots — zero heap allocation per frame)
-    std::unique_ptr<RingBuffer<Dvr::DvrFrameSlot, 480>> m_dvrBuffer;
+    std::unique_ptr<RingBuffer<Dvr::DvrFrameSlot, kDvrCapacity>> m_dvrBuffer;
+    std::atomic<uint64_t> m_dvrSeqCounter{0};
     std::atomic<bool> m_dvrExporting{false};
     std::thread m_dvrThread;
+
+    // Playback state
+    DvrPlaybackDataset m_playbackDataset;
+    mutable std::mutex m_playbackMutex;
+    std::string m_playbackStatusMessage;
+    std::atomic<FrameSourceMode> m_frameSourceMode{FrameSourceMode::Live};
+    std::atomic<bool> m_playbackPlaying{false};
+    std::atomic<size_t> m_playbackFrameIndex{0};
+    std::atomic<uint64_t> m_playbackCurrentTimeUs{0};
+    std::atomic<int> m_playbackFormatVersion{0};
+    std::atomic<uint32_t> m_playbackFlags{0};
+    std::chrono::steady_clock::time_point m_lastPlaybackAdvance{};
 
     // Remote state mirrors
     std::atomic<bool> m_vhfEnabled{true};
     std::atomic<bool> m_vhfTranspose{false};
-    std::atomic<bool> m_autoAfeSync{true};
 
     // MasterParser-only mode
     bool m_masterParserOnly = false;
@@ -147,6 +181,17 @@ private:
     // PenBridge status (polled alongside logs)
     mutable std::mutex m_penMutex;
     PenBridgeStatus m_penStatus;
+
+    // Dynamic debug schema/value cache
+    mutable std::mutex m_dynamicDebugMutex;
+    std::vector<DynamicDebugField> m_dynamicDebugFields;
+    std::unordered_map<uint16_t, DynamicDebugValue> m_dynamicDebugValues;
+    std::atomic<uint16_t> m_dynamicSchemaVersion{0};
+    std::atomic<uint32_t> m_dynamicSchemaHash{0};
+    DvrDynamicDebugSchema m_lastDvrDynamicSchema;
+
+    bool RefreshDynamicDebugSchema();
+    bool PollDynamicDebugSnapshot();
 
     // FPS measurement
     std::atomic<int> m_fps{0};

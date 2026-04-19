@@ -1,12 +1,13 @@
 #pragma once
 
-#include "ServiceProxy.h"
-#include "GuiLogSink.h"
-#include "SystemStateMonitor.h"
+#include "SolverTypes.h"
+#include <filesystem>
 #include <string>
 #include <vector>
 
 namespace App {
+
+class ServiceProxy;
 
 class DiagnosticsWorkbench {
 public:
@@ -36,14 +37,18 @@ private:
     void DrawHeatmap();
     void DrawCoordinateTable();
     void DrawStylusPanel();
+    void DrawDynamicDebugPanel();
     void DrawMasterSuffixTable();
     void DrawSlaveSuffixTable();
 
     // Tool panels (drawn inside Inspector tabs)
     void DrawBtMcuPanel();
     void DrawSystemEventsPanel();
+    void DrawDvrPanel();
 
-    void ExportCurrentFrameToCSV(bool isAutoCapture = false);
+    void ExitPlaybackToLivePreview();
+    void ExportCurrentFrameCsv(bool isAutoCapture = false);
+    void ExportSelectedDvrDatasetToCsv();
 
 private:
     ServiceProxy* m_proxy;
@@ -60,7 +65,6 @@ private:
     bool m_showMasterSuffixTable = true;
     bool m_showSlaveSuffixTable = true;
     bool m_fullscreen = false;                     // 按下 F11 时切换
-    bool m_showSlaveHeatmap = false;               // Slider for 9x9 Slave Heatmap
     int m_heatmapScale = 10;
     float m_colorRange = 1000.0f;
 
@@ -69,9 +73,6 @@ private:
     int m_activeInspectorTab = 0;
 
     // Export
-    bool m_exportHeatmap = true;
-    bool m_exportMasterStatus = false;
-    bool m_exportSlaveStatus = false;
     int m_autoExportTargetPeaks = 0;
     int m_lastPeakCount = 0;
     int m_lastContactCount = 0;
@@ -86,6 +87,11 @@ private:
     int m_afeForceScanRateIdx = 0;
     bool m_scanRateIs240Hz = false;
     std::string m_lastAfeActionStatus = "No command sent";
+
+    // Playback UI
+    std::filesystem::path m_dvrImportDirectory{"C:/ProgramData/EGoTouchRev/exports"};
+    std::string m_lastDvrImportStatus;
+    std::string m_lastCsvExportStatus;
 };
 
 } // namespace App

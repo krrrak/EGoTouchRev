@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "ghydra": {
+      "command": "C:/Users/Detach0-0/AppData/Local/GhidraMCP/.venv/Scripts/python.exe",
+      "args": [
+        "C:/Users/Detach0-0/AppData/Local/GhidraMCP/GhydraMCP-Complete-v2.2.0-rc.3-20260216-180506/bridge_mcp_hydra.py",
+        "--ghidra-server",
+        "http://127.0.0.1:8192/"
+      ],
+      "env": {
+        "GHIDRA_HYDRA_HOST": "localhost"
+      },
+      "disabledTools": [
+        "datatypes_search",
+        "namespaces_list",
+        "classes_list"
+      ]
+    }
+  }
+}

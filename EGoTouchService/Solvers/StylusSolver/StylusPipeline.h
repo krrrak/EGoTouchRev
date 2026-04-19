@@ -4,11 +4,10 @@
 #include "GridPeakDetector.hpp"
 #include "CoordinateSolver.hpp"
 #include "CoorPostProcessor.hpp"
-#include "EdgeLiftCorrector.hpp"
 #include "CoorReviser.hpp"
 #include "LinearFilter.hpp"
-#include "OneEuroFilter.hpp"
 #include "TiltSolver.hpp"
+#include "BtPressBuffer.hpp"
 #include "PressureSolver.hpp"
 #include "NoPressInkGate.hpp"
 #include "CommonModeFilter.hpp"
@@ -21,7 +20,6 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -46,21 +44,11 @@ public:
 
     /// 注入 BT MCU 压感值（由 PenBridge 线程实时更新）
     void SetBtMcuPressure(uint16_t p) {
-        m_pressureSolver.SetBtMcuPressure(p);
-    }
-
-    /// 蓝牙按键数据注入接口
-    void UpdateButtonFromBle(uint8_t raw_data) {
-        m_bleButtonState.store(raw_data, std::memory_order_relaxed);
+        m_btPressBuf.Push(p);
     }
 
     const StylusFrameData& GetLastResult() const {
         return m_lastResult;
-    }
-
-    /// P2 #20: Frequency shift output freeze control.
-    void SetFreqShiftFreezing(bool freezing) {
-        m_freqShiftFreezing = freezing;
     }
 
     std::vector<ConfigParam> GetConfigSchema() const;
@@ -98,7 +86,6 @@ private:
         const uint8_t* bytes, size_t wordCount,
         uint16_t& outChecksum) const;
     bool HasCurrentStylusSignal(std::span<const uint8_t> rawData) const;
-    bool HasLiveState() const;
     bool ProcessNoStylusFrame(std::span<const uint8_t> rawData,
                               StylusPacket& outPacket);
 
@@ -106,12 +93,11 @@ private:
     Asa::GridPeakDetector    m_peakDetector;
     Asa::CoordinateSolver    m_coordSolver;
     Asa::CoorPostProcessor   m_postProcessor;
-    Asa::EdgeLiftCorrector   m_edgeLiftCorrector;
     Asa::CoorReviser         m_coorReviser;
     Asa::LinearFilter        m_linearFilter;
-    Asa::OneEuroFilter       m_oneEuroFilter;
     Asa::TiltSolver          m_tiltSolver;
     Asa::PressureSolver      m_pressureSolver;
+    Asa::BtPressBuffer       m_btPressBuf;
     Asa::NoPressInkGate      m_noPressInkGate;
     Asa::CommonModeFilter    m_cmfFilter;
     Asa::PenStateMachine     m_penStateMachine;
@@ -130,11 +116,6 @@ private:
     uint32_t m_prevStatus = 0;
     float m_prevPointX = 0.0f;
     float m_prevPointY = 0.0f;
-    uint16_t m_prevPressureVal = 0;  // previous frame pressure for edge-lift detection
-    bool m_freqShiftFreezing = false;
-
-    // ── BLE button state ──
-    std::atomic<uint8_t> m_bleButtonState{0};
 
     // ── Sensor dimensions ──
     int m_sensorRows = 40;
@@ -149,19 +130,9 @@ private:
         []{ std::array<double, Asa::kMaxSensorDim + 1> a; a.fill(100.0); return a; }();
 
     // ── Slave header layout ──
-    int m_slaveHdrBtnOffset = 6;
     uint8_t m_rawSlaveHdr[7]{};
 
-    // ── Button state ──
-    int m_buttonReleaseHoldFrames = 2;
-    int m_buttonReleaseCounter = 0;
-    uint32_t UpdateButtonState(uint32_t rawBits, bool active);
-
-    // ── Edge lift corrector switch ──
-    bool m_elcEnabled = true;
-
     // ── Noise level (for recheck) ──
-    int m_noiseLevel = 0;
     int m_recheckThBase = 800;
     int m_recheckThMulti = 1200;
 
@@ -169,12 +140,10 @@ private:
     StylusFrameData m_lastGoodFrame{};
     bool m_hasLastGoodFrame = false;
 
-    // ── Pen exit smoothing ──
-    bool m_wasInking = false;
-
     // ── Config ──
     bool m_enableSlaveChecksum = false;
     bool m_emitPacketWhenInvalid = true;
+    int  m_btMapMode = 0;
 
     // P3 #16: TP Pattern Compensation (placeholder)
     bool m_tpPatternCompEnabled = false;

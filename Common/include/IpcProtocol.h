@@ -23,7 +23,6 @@ enum class IpcCommand : uint8_t {
     // VHF
     SetVhfEnabled    = 30,
     SetVhfTranspose  = 31,
-    SetAutoAfeSync   = 32,  // param[0] = bool enabled
     // Config
     ReloadConfig   = 40,  // Force Service to re-read config.ini
     SaveConfig     = 41,  // Service saves current params to config.ini
@@ -31,6 +30,115 @@ enum class IpcCommand : uint8_t {
     GetLogs        = 50,  // App requests recent log lines from Service
     // PenBridge (BT MCU)
     GetPenBridgeStatus = 60,  // App queries live pressure stats + running state
+    // Dynamic debug metadata + values
+    GetDebugSchema   = 61,
+    GetDebugSnapshot = 62,
+};
+
+enum class DebugValueType : uint8_t {
+    UInt32 = 0,
+    Int32  = 1,
+    Float32 = 2,
+    Bool = 3,
+};
+
+enum class DebugSourceKind : uint8_t {
+    MasterSuffixWord = 0,
+    SlaveSuffixWord = 1,
+    StylusField = 2,
+    PenBridgeField = 3,
+    DerivedField = 4,
+};
+
+enum class DebugDvrTarget : uint8_t {
+    None = 0,
+    MasterStatus = 1,
+    SlaveSuffix = 2,
+    DynamicDebug = 3,
+};
+
+enum class DebugDvrPositionMode : uint8_t {
+    Append = 0,
+    AfterAnchor = 1,
+    Index = 2,
+};
+
+enum class DebugStylusSourceIndex : int16_t {
+    Pressure = 0,
+    SignalX = 1,
+    SignalY = 2,
+    MaxRawPeak = 3,
+    Status = 4,
+    PipelineStage = 5,
+    PointX = 6,
+    PointY = 7,
+    RawPressure = 8,
+    MappedPressure = 9,
+    NoPressInkActive = 10,
+    TouchSuppressActive = 11,
+    BtSeq = 12,
+    PredictedAgeFrames = 13,
+    PressureIsReal = 14,
+};
+
+enum class DebugPenSourceIndex : int16_t {
+    EvtRunning = 0,
+    PressRunning = 1,
+    ReportType = 2,
+    Freq1 = 3,
+    Freq2 = 4,
+    Press0 = 5,
+    Press1 = 6,
+    Press2 = 7,
+    Press3 = 8,
+};
+
+struct DebugSchemaRequest {
+    uint16_t offset = 0;
+    uint16_t limit = 0;
+};
+
+struct DebugSchemaResponseHeader {
+    uint16_t schemaVersion = 0;
+    uint16_t totalFields = 0;
+    uint16_t returnedFields = 0;
+    uint16_t recordSize = 0;
+    uint32_t schemaHash = 0;
+};
+
+struct DebugFieldSchemaWire {
+    uint16_t fieldId = 0;
+    uint8_t  valueType = static_cast<uint8_t>(DebugValueType::UInt32);
+    uint8_t  sourceKind = static_cast<uint8_t>(DebugSourceKind::DerivedField);
+    int16_t  sourceIndex = -1;
+    uint8_t  uiOrder = 0;
+    uint8_t  dvrTarget = static_cast<uint8_t>(DebugDvrTarget::None);
+    uint8_t  dvrPositionMode = static_cast<uint8_t>(DebugDvrPositionMode::Append);
+    uint8_t  _reserved0 = 0;
+    int16_t  dvrIndex = -1;
+    int16_t  _reserved1 = 0;
+
+    char key[32]{};
+    char displayName[48]{};
+    char unit[16]{};
+    char uiGroup[24]{};
+    char dvrColumnName[32]{};
+    char dvrAnchor[32]{};
+};
+
+struct DebugSnapshotHeader {
+    uint16_t schemaVersion = 0;
+    uint16_t fieldCount = 0;
+    uint16_t recordSize = 0;
+    uint16_t _reserved0 = 0;
+};
+
+struct DebugSnapshotValueWire {
+    uint16_t fieldId = 0;
+    uint8_t  valueType = static_cast<uint8_t>(DebugValueType::UInt32);
+    uint8_t  flags = 0; // bit0: value valid
+    uint32_t _reserved0 = 0;
+    uint64_t rawValue = 0;
 };
 
 struct IpcRequest {

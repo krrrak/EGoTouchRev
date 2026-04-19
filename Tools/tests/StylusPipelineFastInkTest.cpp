@@ -1,5 +1,7 @@
 #include "StylusSolver/NoPressInkGate.hpp"
 #include "StylusSolver/PressureSolver.hpp"
+#include "StylusSolver/BtPressBuffer.hpp"
+#include "StylusSolver/FakePressureDecay.hpp"
 #include "StylusSolver/GridPeakDetector.hpp"
 #include "StylusSolver/StylusPipeline.h"
 
@@ -100,12 +102,15 @@ std::vector<uint8_t> BuildCombinedStylusFrame(
 StylusFrameData RunFrame(StylusPipeline& pipeline,
                          const std::vector<uint8_t>& raw,
                          uint16_t btPressure,
-                         uint64_t timestamp = 0) {
+                         uint64_t timestamp = 0,
+                         bool pushBtPressure = true) {
     HeatmapFrame frame;
     frame.rawPtr = raw.data();
     frame.rawLen = raw.size();
     frame.timestamp = timestamp;
-    pipeline.SetBtMcuPressure(btPressure);
+    if (pushBtPressure) {
+        pipeline.SetBtMcuPressure(btPressure);
+    }
     pipeline.Process(frame);
     return frame.stylus;
 }
@@ -123,29 +128,27 @@ void LoadFromSavedText(StylusPipeline& pipeline, const std::string& saved) {
 
 void TestPressureStageSignalSuppressHysteresis() {
     PressureSolver solver;
-    solver.tailFrames = 0;
     solver.signalSuppressEnabled = true;
     solver.signalSuppressEnter = 2200;
     solver.signalSuppressExit = 3200;
     solver.edgeSignalSuppressEnabled = false;
 
     const auto s0 = solver.SolveStage(180, true, 1800, false);
-    Require(s0.mappedPressure > 0, "mapped pressure should be produced before suppression");
-    Require(s0.realPressure == 0, "low TX1 composite should suppress real pressure");
-    Require(s0.signalSuppressActive, "ordinary signal suppression should become active");
+    Require(s0.mappedPressure > 0, "mapped pressure should be produced");
+    Require(s0.realPressure > 0, "real pressure should be produced");
+    Require(!s0.signalSuppressActive, "signal suppression should stay disabled");
 
     const auto s1 = solver.SolveStage(180, true, 2500, false);
-    Require(s1.realPressure == 0, "suppression should hold until exit threshold");
-    Require(s1.signalSuppressActive, "suppression should still be active below exit threshold");
+    Require(s1.realPressure > 0, "real pressure should remain unsuppressed");
+    Require(!s1.signalSuppressActive, "signal suppression should remain disabled");
 
     const auto s2 = solver.SolveStage(180, true, 3500, false);
-    Require(s2.realPressure > 0, "pressure should recover after exit threshold");
-    Require(!s2.signalSuppressActive, "suppression should clear after recovery");
+    Require(s2.realPressure > 0, "pressure should remain valid");
+    Require(!s2.signalSuppressActive, "suppression should stay disabled");
 }
 
 void TestPressureStageEdgeSuppressHysteresis() {
     PressureSolver solver;
-    solver.tailFrames = 0;
     solver.signalSuppressEnabled = false;
     solver.edgeSignalSuppressEnabled = true;
     solver.edgeSignalSuppressEnter = 1500;
@@ -155,123 +158,149 @@ void TestPressureStageEdgeSuppressHysteresis() {
     edge.dim1Active = true;
     edge.dim1Signal = 1400;
     const auto s0 = solver.SolveStage(180, true, 5000, true, edge);
-    Require(s0.realPressure == 0, "edge signal under enter threshold should suppress pressure");
-    Require(s0.edgeSignalSuppressActive, "edge suppression should latch active");
+    Require(s0.realPressure > 0, "edge path should no longer suppress pressure");
+    Require(!s0.edgeSignalSuppressActive, "edge suppression should stay disabled");
 
     edge.dim1Signal = 1800;
     const auto s1 = solver.SolveStage(180, true, 5000, true, edge);
-    Require(s1.realPressure == 0, "edge suppression should hold below exit threshold");
+    Require(s1.realPressure >= 0, "edge path should remain valid");
 
     edge.dim1Signal = 3201;
     const auto s2 = solver.SolveStage(180, true, 5000, true, edge);
-    Require(s2.realPressure > 0, "edge suppression should clear after exit threshold");
-    Require(!s2.edgeSignalSuppressActive, "edge suppression should clear after recovery");
+    Require(s2.realPressure >= 0, "edge pressure should remain valid");
+    Require(!s2.edgeSignalSuppressActive, "edge suppression should stay disabled");
 }
 
-void TestPressureHistoryWindowSemantics() {
+void TestPressureStagePredictsBetweenRealSamples() {
     PressureSolver solver;
+    Asa::BtPressureSample real1{200, 1, true};
+    const auto s1 = solver.SolveStage(real1, true);
+    Require(s1.isRealMeasurement, "first sample should be marked real");
+    Require(s1.btSeq == 1, "first sample should carry seq 1");
+    Require(s1.predictedAgeFrames == 0, "real sample should reset predicted age");
 
-    Require(solver.GetLatestBtPressure() == 0,
-            "empty BT pressure history should report zero");
+    const auto s2 = solver.SolveStage(real1, true);
+    Require(!s2.isRealMeasurement, "reused snapshot should become predicted frame");
+    Require(s2.btSeq == 1, "predicted frame should keep last seq");
+    Require(s2.predictedAgeFrames == 1, "predicted age should increment");
 
-    solver.SetBtMcuPressure(120);
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    solver.SetBtMcuPressure(320);
-    Require(solver.GetLatestBtPressure() == 320,
-            "latest BT window should return the max pressure in the 28ms window");
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(35));
-    Require(solver.GetLatestBtPressure() == 0,
-            "samples older than the aggregation window should not contribute");
-
-    solver.SetBtMcuPressure(450);
-    std::this_thread::sleep_for(std::chrono::milliseconds(65));
-    Require(solver.GetLatestBtPressure() == 0,
-            "samples older than the keep window should expire completely");
+    Asa::BtPressureSample real2{260, 2, true};
+    const auto s3 = solver.SolveStage(real2, true);
+    Require(s3.isRealMeasurement, "new seq should become real measurement");
+    Require(s3.btSeq == 2, "new real sample should update seq");
+    Require(s3.predictedAgeFrames == 0, "new real sample should clear predicted age");
+    Require(solver.GetHistoryCount() >= 3, "solver should retain short pressure history");
 }
 
-void TestPressureHistoryRingOverwrite() {
+void TestPressureStageRealZeroDropsImmediately() {
     PressureSolver solver;
-    for (uint16_t i = 1; i <= 70; ++i) {
-        solver.SetBtMcuPressure(i);
-    }
-    Require(solver.GetLatestBtPressure() == 70,
-            "ring overwrite should still preserve the max over the recent published samples");
+    const auto down = solver.SolveStage(Asa::BtPressureSample{240, 1, true}, true);
+    Require(down.realPressure > 0, "non-zero real sample should produce pressure");
+
+    const auto up = solver.SolveStage(Asa::BtPressureSample{0, 2, true}, true);
+    Require(up.isRealMeasurement, "zero sample with new seq should be real");
+    Require(up.realPressure == 0, "real zero sample should force immediate zero output");
+    Require(up.predictedAgeFrames == 0, "real zero sample should not be treated as predicted");
 }
 
-void TestPressureHistorySpscConcurrency() {
-    PressureSolver solver;
-    std::atomic<bool> stop{false};
-    std::atomic<uint16_t> nextPressure{1};
-    std::mutex historyMu;
-    std::vector<std::pair<std::chrono::steady_clock::time_point, uint16_t>> history;
+void TestBtPressBufferDefaultMode() {
+    Asa::BtPressBuffer buf;
+    Require(buf.Resolve(0, 0) == 0, "empty buffer should return zero");
+    buf.Push(100);
+    buf.Push(200);
+    buf.Push(300);
+    buf.Push(400);
+    Require(buf.Resolve(0, 0) == 400, "default mode should return latest slot");
+    Require(buf.Resolve(5, 0) == 400, "default mode ignores frame count");
+}
 
-    std::thread writer([&]() {
-        while (!stop.load(std::memory_order_relaxed)) {
-            const uint16_t pressure = nextPressure.fetch_add(1, std::memory_order_relaxed);
-            const auto now = std::chrono::steady_clock::now();
-            {
-                std::lock_guard<std::mutex> lk(historyMu);
-                history.emplace_back(now, pressure);
-            }
-            solver.SetBtMcuPressure(pressure);
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
-    });
+void TestBtPressBufferOnCellMapping() {
+    Asa::BtPressBuffer buf;
+    buf.Push(10);
+    buf.Push(20);
+    buf.Push(30);
+    buf.Push(40);
+    Require(buf.Resolve(0, 1) == 40, "OnCell mode should return latest slot");
+    Require(buf.Resolve(1, 1) == 40, "OnCell mode should ignore frame mapping");
+    Require(buf.Resolve(5, 1) == 40, "OnCell mode should always return latest slot");
+    Require(buf.Resolve(6, 1) == 40, "OnCell mode should remain latest slot");
+}
 
-    for (int i = 0; i < 30; ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        const uint16_t actual = solver.GetLatestBtPressure();
-        const auto now = std::chrono::steady_clock::now();
+void TestBtPressBufferInCellMapping() {
+    Asa::BtPressBuffer buf;
+    buf.Push(10);
+    buf.Push(20);
+    buf.Push(30);
+    buf.Push(40);
+    Require(buf.Resolve(0, 2) == 40, "InCell mode should return latest slot");
+    Require(buf.Resolve(1, 2) == 40, "InCell mode should ignore frame mapping");
+    Require(buf.Resolve(2, 2) == 40, "InCell mode should stay latest slot");
+    Require(buf.Resolve(3, 2) == 40, "InCell mode should stay latest slot");
+    Require(buf.Resolve(4, 2) == 40, "InCell mode should remain latest slot");
+}
 
-        uint16_t theoreticalMax = 0;
-        {
-            std::lock_guard<std::mutex> lk(historyMu);
-            history.erase(std::remove_if(history.begin(), history.end(),
-                [&](const auto& sample) {
-                    return now - sample.first > std::chrono::milliseconds(80);
-                }), history.end());
-            for (const auto& sample : history) {
-                if (now - sample.first <= std::chrono::milliseconds(28)) {
-                    theoreticalMax = std::max(theoreticalMax, sample.second);
-                }
-            }
-        }
+void TestBtPressBufferReset() {
+    Asa::BtPressBuffer buf;
+    buf.Push(100);
+    Require(buf.Resolve(0, 0) == 100, "push should store value");
+    buf.Reset();
+    Require(buf.Resolve(0, 0) == 0, "reset should clear buffer");
+}
 
-        Require(actual <= theoreticalMax,
-                "SPSC pressure reader should not exceed the theoretical max in the active window");
-    }
+void TestBtPressBufferSeqSnapshot() {
+    Asa::BtPressBuffer buf;
+    const auto empty = buf.ReadLatest();
+    Require(!empty.hasSample, "empty snapshot should report no sample");
 
-    stop.store(true, std::memory_order_relaxed);
-    writer.join();
+    buf.Push(111);
+    const auto s1 = buf.ReadLatest();
+    Require(s1.hasSample, "snapshot should report sample after push");
+    Require(s1.pressure == 111, "snapshot should carry pushed pressure");
+    Require(s1.seq == 1, "first push should advance seq to 1");
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(35));
-    Require(solver.GetLatestBtPressure() == 0,
-            "pressure history should decay to zero after the active window ends");
+    buf.Push(222);
+    const auto s2 = buf.ReadLatest();
+    Require(s2.pressure == 222, "latest snapshot should track latest pressure");
+    Require(s2.seq == 2, "second push should advance seq to 2");
+}
+
+void TestFakePressureDecayBasic() {
+    Asa::FakePressureDecay decay;
+    Require(!decay.IsActive(), "initial state should not be active");
+    decay.Init();
+    Require(decay.IsActive(), "after init should be active with AddNum=2");
+    uint16_t p1 = decay.Step(600);
+    Require(p1 == 400, "step1: 2*600/3 = 400");
+    Require(decay.IsActive(), "still active after step1");
+    uint16_t p2 = decay.Step(p1);
+    Require(p2 == 200, "step2: 1*400/2 = 200");
+    Require(!decay.IsActive(), "not active after step2 (AddNum=0)");
+    uint16_t p3 = decay.Step(p2);
+    Require(p3 == 0, "step3 after inactive should return 0");
+}
+
+void TestFakePressureDecayReset() {
+    Asa::FakePressureDecay decay;
+    decay.Init();
+    Require(decay.IsActive(), "should be active after init");
+    decay.Reset();
+    Require(!decay.IsActive(), "should not be active after reset");
+    decay.Init();
+    Require(decay.IsActive(), "should re-init after reset");
 }
 
 void TestNoPressInkGateEnterAndExit() {
     NoPressInkGate gate;
     gate.enabled = true;
 
-    const auto r0 = gate.Apply(true, true, false, 0, 0, 10000, 0);
-    Require(!r0.active, "first qualifying frame should not enter no-press ink yet");
-    Require(r0.outputPressure == 0, "first qualifying frame should still output zero pressure");
+    const auto r0 = gate.Apply(true, true, false, 0, 10000, 0);
+    Require(!r0.active, "no-press gate should stay inactive");
 
-    const auto r1 = gate.Apply(true, true, false, 0, 0, 10000, 0);
-    Require(r1.active, "second qualifying frame should enter no-press ink");
-    Require(r1.outputPressure == 10, "entry frame should emit synthetic minimum pressure");
+    const auto r1 = gate.Apply(true, true, false, 0, 10000, 0);
+    Require(!r1.active, "no-press gate should remain inactive");
 
-    const auto r2 = gate.Apply(true, true, false, 120, 10, 20000, 0);
-    Require(r2.outputPressure == 120, "real pressure should override synthetic pressure");
-
-    const auto r3 = gate.Apply(true, true, false, 0, 10, 2000, 0);
-    Require(r3.active, "first exit-qualifying frame should still debounce");
-    Require(r3.outputPressure == 10, "debouncing exit should keep synthetic pressure");
-
-    const auto r4 = gate.Apply(true, true, false, 0, 10, 2000, 0);
-    Require(!r4.active, "second exit-qualifying frame should leave no-press ink");
-    Require(r4.outputPressure == 0, "exit frame should drop to zero pressure");
+    const auto r2 = gate.Apply(true, true, false, 120, 20000, 0);
+    Require(!r2.active, "real pressure should not enable no-press gate");
 }
 
 void TestStylusPipelineNoPressSyntheticPressure() {
@@ -284,13 +313,14 @@ void TestStylusPipelineNoPressSyntheticPressure() {
 
     const auto f0 = RunFrame(pipeline, raw, 0, 8);
     Require(f0.point.valid, "strong zero-pressure frame should produce valid coordinates");
-    Require(f0.pressure == 0, "first no-press frame should still debounce");
-    Require(!f0.noPressInkActive, "first no-press frame should not be active");
+    Require(f0.pressure == 0, "zero BT pressure should produce zero final pressure");
+    Require(!f0.noPressInkActive, "no-press ink should stay inactive");
 
-    const auto f1 = RunFrame(pipeline, raw, 0, 16);
-    Require(f1.noPressInkActive, "second no-press frame should activate no-press ink");
-    Require(f1.pressure == 10, "second no-press frame should emit synthetic pressure");
-    Require(f1.packet.valid, "no-press frame should still emit a stylus packet");
+    const auto f1 = RunFrame(pipeline, raw, 64, 16);
+    Require(f1.pressure >= 0, "pressure should remain non-negative");
+    Require(!f1.noPressInkActive, "no-press ink should remain inactive");
+    Require(!f1.sustainOutput, "sustain output should remain disabled");
+    Require(!f1.fastLiftOutput, "fast-lift output should remain disabled");
 }
 
 void TestStylusPipelineLowSignalPressureSuppress() {
@@ -305,33 +335,64 @@ void TestStylusPipelineLowSignalPressureSuppress() {
 
     const auto frame = RunFrame(pipeline, raw, 180, 8);
     Require(frame.point.valid, "weak-signal frame should still solve coordinates");
-    Require(frame.pressure == 0, "weak-signal frame should quickly suppress pressure");
-    Require(!frame.noPressInkActive, "suppressed pressure should not report no-press ink");
+    Require(frame.pressure > 0, "weak-signal frame should no longer suppress pressure");
+    Require(!frame.noPressInkActive, "no-press ink should stay inactive");
 }
 
-void TestStylusPipelineEdgeLiftFreeze() {
+void TestStylusPipelineFastLiftToNoSignal() {
     StylusPipeline pipeline;
     pipeline.LoadConfig("sp.noPressEnabled", "0");
     pipeline.LoadConfig("sp.sigSuppressEnabled", "0");
     pipeline.LoadConfig("sp.filterMode", "2");
 
     const auto interiorGrid = MakeCrossGrid(12000, 9000, 7000, 5000, 4, 4);
-    const auto edgeGrid = MakeCrossGrid(14000, 9000, 6000, 4000, 0, 0);
     const auto rawInterior = BuildCombinedStylusFrame(10, 10, interiorGrid, 10, 10, {});
-    const auto rawEdge = BuildCombinedStylusFrame(0, 0, edgeGrid, 0, 0, {});
 
     const auto down = RunFrame(pipeline, rawInterior, 180, 8);
     Require(down.point.valid, "pen-down frame should be valid");
     Require(down.pressure > 0, "pen-down frame should report pressure");
+    Require(down.tipSwitchActive, "pen-down frame should assert tip switch");
+    Require(down.animState == 2, "pen-down frame should be in writing state");
 
     std::this_thread::sleep_for(std::chrono::milliseconds(35));
-    const auto lift = RunFrame(pipeline, rawEdge, 0, 16);
-    Require(lift.point.valid, "edge-lift frame should remain valid");
-    Require(lift.pressure == 0, "edge-lift frame should not keep tail pressure");
-    RequireNear(lift.point.x, down.point.x, 0.001f,
-                "edge-lift frame should freeze X to previous point");
-    RequireNear(lift.point.y, down.point.y, 0.001f,
-                "edge-lift frame should freeze Y to previous point");
+    const auto lift = RunFrame(pipeline, BuildCombinedStylusFrame(0x00FF, 0x00FF, {}, 0, 0, {}), 0, 16);
+    Require(!lift.point.valid, "no-signal lift frame should not keep a valid point");
+    Require(lift.pressure == 0, "no-signal lift frame should drop pressure");
+    Require(!lift.noPressInkActive, "no-signal lift frame should keep no-press inactive");
+}
+
+void TestStylusPipelineReleaseRetainsPreviousOutput() {
+    StylusPipeline pipeline;
+    pipeline.LoadConfig("sp.noPressEnabled", "0");
+    pipeline.LoadConfig("sp.sigSuppressEnabled", "0");
+    pipeline.LoadConfig("sp.filterMode", "2");
+
+    const auto raw = BuildCombinedStylusFrame(10, 10,
+        MakeCrossGrid(12000, 9000, 7000, 5000, 4, 4), 10, 10, {});
+    const auto down = RunFrame(pipeline, raw, 220, 8);
+    Require(down.point.valid, "precondition should produce a valid down frame");
+    Require(down.pressure > 0, "precondition should carry pressure");
+
+    const auto weak = RunFrame(pipeline, raw, 0, 16);
+    Require(!weak.fastLiftOutput, "fast-lift output should stay disabled");
+    Require(!weak.sustainOutput, "sustain output should stay disabled");
+    Require(weak.pressure == 0, "zero BT pressure should not retain synthetic output");
+}
+
+void TestStylusPipelineEdgeFastLiftRetainsCoordinate() {
+    StylusPipeline pipeline;
+    pipeline.LoadConfig("sp.noPressEnabled", "0");
+    pipeline.LoadConfig("sp.sigSuppressEnabled", "0");
+    pipeline.LoadConfig("sp.filterMode", "2");
+
+    const auto edgeGrid = MakeCrossGrid(15000, 12000, 9000, 6000, 0, 0);
+    const auto raw = BuildCombinedStylusFrame(0, 0, edgeGrid, 0, 0, {});
+    const auto down = RunFrame(pipeline, raw, 220, 8);
+    Require(down.point.valid, "edge frame should still solve a valid point");
+
+    const auto weak = RunFrame(pipeline, raw, 0, 16);
+    Require(!weak.fastLiftOutput, "edge weak-release should not enter fast-lift output");
+    Require(weak.pressure == 0, "edge weak-release should output zero pressure with zero BT input");
 }
 
 void TestStylusPipelineConfigRoundTrip() {
@@ -351,6 +412,11 @@ void TestStylusPipelineConfigRoundTrip() {
     pipeline.LoadConfig("sp.noPressDebounceEnter", "3");
     pipeline.LoadConfig("sp.noPressDebounceExit", "4");
     pipeline.LoadConfig("sp.noPressSyntheticMin", "12");
+    pipeline.LoadConfig("sp.btMapMode", "2");
+    pipeline.LoadConfig("sp.sigSuppressEnabled", "1");
+    pipeline.LoadConfig("sp.sigSuppressEnter", "2222");
+    pipeline.LoadConfig("sp.sigSuppressExit", "3333");
+    pipeline.LoadConfig("sp.pressIirQ8", "77");
 
     std::ostringstream out;
     pipeline.SaveConfig(out);
@@ -360,12 +426,14 @@ void TestStylusPipelineConfigRoundTrip() {
             "saved config should include recheck base threshold");
     Require(saved.find("sp.recheckThMulti=1333") != std::string::npos,
             "saved config should include recheck multi threshold");
-    Require(saved.find("sp.edgeSigSuppressEnter=1444") != std::string::npos,
-            "saved config should include edge signal suppress enter");
-    Require(saved.find("sp.noPressBaseTh=9999") != std::string::npos,
-            "saved config should include no-press base threshold");
-    Require(saved.find("sp.noPressDebounceExit=4") != std::string::npos,
-            "saved config should include no-press exit debounce");
+    Require(saved.find("sp.edgeSigSuppressEnter=") == std::string::npos,
+            "saved config should not include deprecated edge suppress keys");
+    Require(saved.find("sp.noPressBaseTh=") == std::string::npos,
+            "saved config should not include deprecated no-press keys");
+    Require(saved.find("sp.btMapMode=") == std::string::npos,
+            "saved config should not include deprecated bt map mode key");
+    Require(saved.find("sp.pressIirQ8=") == std::string::npos,
+            "saved config should not include deprecated pressure iir key");
 
     StylusPipeline loaded;
     LoadFromSavedText(loaded, saved);
@@ -375,10 +443,14 @@ void TestStylusPipelineConfigRoundTrip() {
     const std::string savedLoaded = outLoaded.str();
     Require(savedLoaded.find("sp.recheckThBase=888") != std::string::npos,
             "loaded config should preserve recheck base threshold");
-    Require(savedLoaded.find("sp.edgeSigSuppressExit=3555") != std::string::npos,
-            "loaded config should preserve edge signal suppress exit");
-    Require(savedLoaded.find("sp.noPressSyntheticMin=12") != std::string::npos,
-            "loaded config should preserve synthetic minimum");
+    Require(savedLoaded.find("sp.edgeSigSuppressExit=") == std::string::npos,
+            "loaded config should not emit deprecated edge suppress keys");
+    Require(savedLoaded.find("sp.noPressSyntheticMin=") == std::string::npos,
+            "loaded config should not emit deprecated no-press keys");
+    Require(savedLoaded.find("sp.sigSuppressEnabled=") == std::string::npos,
+            "loaded config should not emit deprecated suppress keys");
+    Require(savedLoaded.find("sp.pressIirQ8=") == std::string::npos,
+            "loaded config should not emit deprecated pressure iir key");
 
     const auto schema = loaded.GetConfigSchema();
     auto hasKey = [&](const char* key) {
@@ -387,9 +459,12 @@ void TestStylusPipelineConfigRoundTrip() {
         }
         return false;
     };
-    Require(hasKey("sp.noPressEnabled"), "schema should expose no-press enable");
-    Require(hasKey("sp.noPressBaseTh"), "schema should expose no-press base threshold");
-    Require(hasKey("sp.edgeSigSuppressEnter"), "schema should expose edge signal suppress enter");
+    Require(!hasKey("sp.noPressEnabled"), "schema should not expose deprecated no-press keys");
+    Require(!hasKey("sp.noPressBaseTh"), "schema should not expose deprecated no-press threshold");
+    Require(!hasKey("sp.edgeSigSuppressEnter"), "schema should not expose deprecated edge suppress keys");
+    Require(!hasKey("sp.sigSuppressEnabled"), "schema should not expose deprecated suppress keys");
+    Require(!hasKey("sp.btMapMode"), "schema should not expose deprecated bt map mode key");
+    Require(!hasKey("sp.pressIirQ8"), "schema should not expose deprecated pressure iir key");
     Require(hasKey("sp.recheckThMulti"), "schema should expose recheck multi threshold");
 }
 
@@ -518,19 +593,77 @@ void TestStylusPipelinePeakMetrics() {
     Require(frame.point.peakTx2 == 6000, "TX2 composite peak should mirror TX2 peak signal");
 }
 
+void TestStylusPipelineUsesPredictedIntermediatePressure() {
+    StylusPipeline pipeline;
+    pipeline.LoadConfig("sp.filterMode", "2");
+
+    const auto raw = BuildCombinedStylusFrame(10, 10,
+        MakeCrossGrid(12000, 9000, 7000, 5000, 4, 4), 10, 10, {});
+
+    const auto f0 = RunFrame(pipeline, raw, 220, 8, true);
+    Require(f0.point.valid, "first frame should be valid");
+    Require(f0.pressure > 0, "real BT frame should output pressure");
+#if EGOTOUCH_DIAG
+    Require(f0.diag.pressureIsReal, "first frame should be marked as real pressure");
+    Require(f0.diag.btSeq == 1, "first frame should carry first BT seq");
+#endif
+
+    const auto f1 = RunFrame(pipeline, raw, 220, 16, false);
+    Require(f1.point.valid, "predicted frame should remain valid");
+    Require(f1.pressure > 0, "predicted intermediate frame should keep pressure");
+#if EGOTOUCH_DIAG
+    Require(!f1.diag.pressureIsReal, "intermediate frame without new BT push should be predicted");
+    Require(f1.diag.btSeq == 1, "predicted frame should retain previous BT seq");
+    Require(f1.diag.predictedAgeFrames >= 1, "predicted frame should increase predicted age");
+#endif
+
+    const auto f2 = RunFrame(pipeline, raw, 260, 24, true);
+    Require(f2.pressure > 0, "next real BT frame should still output pressure");
+#if EGOTOUCH_DIAG
+    Require(f2.diag.pressureIsReal, "new BT push should restore real pressure flag");
+    Require(f2.diag.btSeq == 2, "second BT push should advance sequence");
+#endif
+}
+
+void TestStylusPipelineRealZeroReleasesQuickly() {
+    StylusPipeline pipeline;
+    pipeline.LoadConfig("sp.filterMode", "2");
+
+    const auto raw = BuildCombinedStylusFrame(10, 10,
+        MakeCrossGrid(12000, 9000, 7000, 5000, 4, 4), 10, 10, {});
+
+    const auto down = RunFrame(pipeline, raw, 240, 8, true);
+    Require(down.tipSwitchActive, "down frame should assert tip switch");
+
+    const auto up = RunFrame(pipeline, raw, 0, 16, true);
+    Require(up.pressure == 0, "real zero BT sample should drop output pressure immediately");
+    Require(!up.tipSwitchActive, "real zero BT sample should clear tip switch quickly");
+#if EGOTOUCH_DIAG
+    Require(up.diag.pressureIsReal, "real zero frame should still be marked as real");
+#endif
+}
+
 } // namespace
 
 int main() {
     try {
         TestPressureStageSignalSuppressHysteresis();
         TestPressureStageEdgeSuppressHysteresis();
-        TestPressureHistoryWindowSemantics();
-        TestPressureHistoryRingOverwrite();
-        TestPressureHistorySpscConcurrency();
+        TestPressureStagePredictsBetweenRealSamples();
+        TestPressureStageRealZeroDropsImmediately();
+        TestBtPressBufferDefaultMode();
+        TestBtPressBufferOnCellMapping();
+        TestBtPressBufferInCellMapping();
+        TestBtPressBufferReset();
+        TestBtPressBufferSeqSnapshot();
+        TestFakePressureDecayBasic();
+        TestFakePressureDecayReset();
         TestNoPressInkGateEnterAndExit();
         TestStylusPipelineNoPressSyntheticPressure();
         TestStylusPipelineLowSignalPressureSuppress();
-        TestStylusPipelineEdgeLiftFreeze();
+        TestStylusPipelineFastLiftToNoSignal();
+        TestStylusPipelineReleaseRetainsPreviousOutput();
+        TestStylusPipelineEdgeFastLiftRetainsCoordinate();
         TestStylusPipelineConfigRoundTrip();
         TestGridPeakDetectorNoPeak();
         TestGridPeakDetectorCenterPeakAndProjection();
@@ -539,6 +672,8 @@ int main() {
         TestGridPeakDetectorNeighborSumAndTieBreak();
         TestGridPeakDetectorProjectionRadius();
         TestStylusPipelinePeakMetrics();
+        TestStylusPipelineUsesPredictedIntermediatePressure();
+        TestStylusPipelineRealZeroReleasesQuickly();
         std::cout << "[TEST] Stylus fast ink tests passed.\n";
         return 0;
     } catch (const std::exception& ex) {

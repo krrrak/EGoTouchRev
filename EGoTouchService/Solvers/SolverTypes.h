@@ -126,23 +126,18 @@ struct StylusFrameData {
     bool tx2BlockValid = false;
 
     uint32_t status = 0;
-    uint16_t tx1Freq = 0x00A1;
-    uint16_t tx2Freq = 0x0018;
     uint16_t pressure = 0;
-    uint32_t button = 0;
-    uint16_t nextTx1Freq = 0x00A1;
-    uint16_t nextTx2Freq = 0x0018;
-    uint32_t rawButton = 0;
-    uint8_t buttonSource = 0; // 0=None, 1=MasterMeta, 2=SlaveWord
 
     // ASA/HPP process mirror fields for debug/alignment.
     uint8_t asaMode = 0;        // 0=None, 1=HPP2, 2=HPP3
     uint8_t dataType = 0;       // 0=Line, 1=IQLine, 2=Grid, 3=TiedGrid
     uint8_t processResult = 5;  // 0=Output, 1=InvalidReset, 3=Release, 5=Bypass
     bool validJudgmentPassed = false;
-    bool freqShiftReleasing = false;
     bool modeExitRelease = false;
     bool noPressInkActive = false;
+    bool tipSwitchActive = false;
+    bool sustainOutput = false;
+    bool fastLiftOutput = false;
     bool hpp3NoiseInvalid = false;
     bool hpp3NoiseDebounce = false;
     bool hpp3Dim1SignalValid = false;
@@ -206,12 +201,14 @@ struct StylusFrameData {
         uint16_t peakSignal     = 0;
         uint16_t rawPressure    = 0;
         uint16_t mappedPressure = 0;
+        uint32_t btSeq          = 0;
+        uint8_t  predictedAgeFrames = 0;
+        bool     pressureIsReal = false;
         // Stage 5: VHF state
         uint8_t  vhfPenState      = 0;
         uint8_t  linearFilterState = 0;
         // Stage 6: P3/P4 Extended diagnostics
         uint16_t signalRatio       = 0;
-        bool     freqShiftFreezing = false;
         bool     exitSmoothed      = false;
         bool     cmfEnabled        = false;
         bool     coorReviserActive = false;
@@ -260,8 +257,11 @@ struct HeatmapFrame {
     // Stylus data parsed from slave overlay and solved in StylusProcessor.
     StylusFrameData stylus;
 
-    // 时间戳或其他元数据
+    // Service 侧帧时间戳。
     uint64_t timestamp;
+
+    // App 侧收到该帧时记录的系统 epoch 微秒时间。
+    uint64_t receiveSystemEpochUs = 0;
 
     // 帧采集元数据：master 是否在本帧被实际读取（false = 2:1 交错跳过）
     bool masterWasRead = true;

@@ -8,10 +8,13 @@
 // sizeof(DvrFrameSlot) ≈ 10.3 KB per slot
 // Total DVR budget: 480 × 10.3 KB ≈ 4.8 MB (vs previous unbounded vector allocs)
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <vector>
 #include "FrameLayout.h"
 #include "SolverTypes.h"
+#include "ServiceProxyTypes.h"
 
 namespace Dvr {
 
@@ -40,10 +43,45 @@ struct DvrPeak {
 };
 static_assert(sizeof(DvrPeak) == 12, "DvrPeak must be exactly 12 bytes");
 
+// ── DVR stylus snapshot ──
+struct DvrStylusPoint {
+    bool valid = false;
+    float x = 0.0f;
+    float y = 0.0f;
+    uint16_t reportX = 0;
+    uint16_t reportY = 0;
+    uint16_t pressure = 0;
+    uint16_t rawPressure = 0;
+    uint16_t mappedPressure = 0;
+    uint16_t peakTx1 = 0;
+    uint16_t peakTx2 = 0;
+    float tx1X = 0.0f;
+    float tx1Y = 0.0f;
+    float tx2X = 0.0f;
+    float tx2Y = 0.0f;
+    float confidence = 0.0f;
+};
+
+struct DvrStylusData {
+    bool slaveValid = false;
+    bool checksumOk = false;
+    bool tx1BlockValid = false;
+    bool tx2BlockValid = false;
+    uint32_t status = 0;
+    uint16_t pressure = 0;
+    uint16_t signalX = 0;
+    uint16_t signalY = 0;
+    uint16_t maxRawPeak = 0;
+    uint8_t pipelineStage = 0;
+    DvrStylusPoint point{};
+};
+
 // ── DvrFrameSlot — the complete POD frame for DVR storage ──
 struct DvrFrameSlot {
     // Timestamp and metadata
     uint64_t timestamp = 0;
+    uint64_t receiveSystemEpochUs = 0;
+    uint64_t dvrSeq = 0;
     bool     masterWasRead = true;
 
     // Heatmap matrix (4800 bytes)
@@ -55,6 +93,9 @@ struct DvrFrameSlot {
     bool masterSuffixValid = false;
     bool slaveSuffixValid  = false;
 
+    // Stylus diagnostics snapshot
+    DvrStylusData stylus{};
+
     // Fixed-size contact/peak arrays (no heap allocation)
     DvrContact contacts[kMaxContacts]{};
     uint8_t    contactCount = 0;
@@ -62,9 +103,12 @@ struct DvrFrameSlot {
     DvrPeak    peaks[kMaxPeaks]{};
     uint8_t    peakCount = 0;
 
+    App::DvrDynamicDebugFrame dynamicDebug{};
+
     // ── Populate from HeatmapFrame ──
     void CopyFrom(const Solvers::HeatmapFrame& src) {
         timestamp = src.timestamp;
+        receiveSystemEpochUs = src.receiveSystemEpochUs;
         masterWasRead = src.masterWasRead;
 
         std::memcpy(heatmapMatrix, src.heatmapMatrix, sizeof(heatmapMatrix));
@@ -74,12 +118,41 @@ struct DvrFrameSlot {
         masterSuffixValid = src.masterSuffixValid;
         slaveSuffixValid  = src.slaveSuffixValid;
 
+        stylus.slaveValid = src.stylus.slaveValid;
+        stylus.checksumOk = src.stylus.checksumOk;
+        stylus.tx1BlockValid = src.stylus.tx1BlockValid;
+        stylus.tx2BlockValid = src.stylus.tx2BlockValid;
+        stylus.status = src.stylus.status;
+        stylus.pressure = src.stylus.pressure;
+        stylus.signalX = src.stylus.signalX;
+        stylus.signalY = src.stylus.signalY;
+        stylus.maxRawPeak = src.stylus.maxRawPeak;
+        stylus.pipelineStage = src.stylus.pipelineStage;
+        stylus.point.valid = src.stylus.point.valid;
+        stylus.point.x = src.stylus.point.x;
+        stylus.point.y = src.stylus.point.y;
+        stylus.point.reportX = src.stylus.point.reportX;
+        stylus.point.reportY = src.stylus.point.reportY;
+        stylus.point.pressure = src.stylus.point.pressure;
+        stylus.point.rawPressure = src.stylus.point.rawPressure;
+        stylus.point.mappedPressure = src.stylus.point.mappedPressure;
+        stylus.point.peakTx1 = src.stylus.point.peakTx1;
+        stylus.point.peakTx2 = src.stylus.point.peakTx2;
+        stylus.point.tx1X = src.stylus.point.tx1X;
+        stylus.point.tx1Y = src.stylus.point.tx1Y;
+        stylus.point.tx2X = src.stylus.point.tx2X;
+        stylus.point.tx2Y = src.stylus.point.tx2Y;
+        stylus.point.confidence = src.stylus.point.confidence;
+
         // Copy contacts (clamped to fixed capacity)
         contactCount = static_cast<uint8_t>(
             std::min(static_cast<int>(src.contacts.size()), kMaxContacts));
         for (int i = 0; i < contactCount; ++i) {
             const auto& sc = src.contacts[i];
             contacts[i] = { sc.id, sc.x, sc.y, sc.state, sc.area, sc.signalSum };
+        }
+        for (int i = contactCount; i < kMaxContacts; ++i) {
+            contacts[i] = {};
         }
 
         // Copy peaks (clamped to fixed capacity)
@@ -88,6 +161,9 @@ struct DvrFrameSlot {
         for (int i = 0; i < peakCount; ++i) {
             const auto& sp = src.peaks[i];
             peaks[i] = { sp.r, sp.c, sp.z, sp.id, 0 };
+        }
+        for (int i = peakCount; i < kMaxPeaks; ++i) {
+            peaks[i] = {};
         }
     }
 };

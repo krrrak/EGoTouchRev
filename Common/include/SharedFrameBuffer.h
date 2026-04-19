@@ -116,14 +116,7 @@ struct SharedFrameData {
     bool     stylusTx1Valid      = false;
     bool     stylusTx2Valid      = false;
     uint32_t stylusStatus        = 0;
-    uint16_t stylusTx1Freq       = 0;
-    uint16_t stylusTx2Freq       = 0;
     uint16_t stylusPressure      = 0;
-    uint32_t stylusButton        = 0;
-    uint32_t stylusRawButton     = 0;
-    uint8_t  stylusButtonSource  = 0;
-    uint16_t stylusNextTx1Freq   = 0;
-    uint16_t stylusNextTx2Freq   = 0;
 
     // ASA/HPP fields
     uint8_t  stylusAsaMode      = 0;

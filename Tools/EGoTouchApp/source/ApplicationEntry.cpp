@@ -26,6 +26,8 @@ void CreateRenderTarget();
 void CleanupRenderTarget();
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
+constexpr int kHotkeyDvrExport = 0x4501;
+
 int main(int, char**)
 {
     // 启动日志框架 (所有日志通过 GuiLogSink 在 Log 面板显示)
@@ -33,12 +35,16 @@ int main(int, char**)
                           Common::GuiLogSink::Instance());
     LOG_INFO("App", __func__, "System", "--- EGoTouchApp (DX11) Starts ---");
 
-    // 1. 创建 ServiceProxy（后台自动发现 Service）
+    // 1. 创建 ServiceProxy（手动连接 Service）
     App::ServiceProxy serviceProxy;
-    serviceProxy.StartAutoDiscovery();  // 后台线程定期尝试连接
 
     // 2. 创建 GUI 调试界面对象
     App::DiagnosticsWorkbench diagnosticsWorkbench(&serviceProxy);
+
+    const bool exportHotkeyRegistered = RegisterHotKey(nullptr, kHotkeyDvrExport, MOD_CONTROL | MOD_NOREPEAT, 'E');
+    if (!exportHotkeyRegistered) {
+        LOG_WARN("App", __func__, "UI", "Failed to register global hotkey Ctrl+E for DVR export (err={}).", GetLastError());
+    }
 
     // Create application window
     ImGui_ImplWin32_EnableDpiAwareness(); // 1. Fix DPI Issues on Multi-Monitor
@@ -142,6 +148,11 @@ int main(int, char**)
         while (::PeekMessage(&msg, nullptr, 0U, 0U, PM_REMOVE))
         {
             ::TranslateMessage(&msg);
+            if (msg.message == WM_HOTKEY && msg.wParam == kHotkeyDvrExport) {
+                if (serviceProxy.IsLiveControlAllowed() && !serviceProxy.IsDvrExporting()) {
+                    serviceProxy.TriggerDvrBinaryExport();
+                }
+            }
             ::DispatchMessage(&msg);
             if (msg.message == WM_QUIT)
                 done = true;
@@ -185,6 +196,9 @@ int main(int, char**)
     }
 
     // Cleanup
+    if (exportHotkeyRegistered) {
+        UnregisterHotKey(nullptr, kHotkeyDvrExport);
+    }
     serviceProxy.Disconnect();
 
     ImGui_ImplDX11_Shutdown();

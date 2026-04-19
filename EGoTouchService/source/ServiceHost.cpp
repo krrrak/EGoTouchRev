@@ -5,7 +5,10 @@
 #include <fstream>
 #include <string>
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cmath>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <iomanip>
@@ -27,6 +30,25 @@ static const std::wstring kDevicePathSlave     = L"\\\\.\\Global\\SPBTESTTOOL_SL
 static const std::wstring kDevicePathInterrupt = L"\\\\.\\Global\\SPBTESTTOOL_MASTER";
 
 namespace {
+
+uint64_t EncodeU32(uint32_t value) {
+    return static_cast<uint64_t>(value);
+}
+
+uint64_t EncodeI32(int32_t value) {
+    return static_cast<uint64_t>(static_cast<uint32_t>(value));
+}
+
+uint64_t EncodeBool(bool value) {
+    return value ? 1ull : 0ull;
+}
+
+uint64_t EncodeF32(float value) {
+    uint32_t bits = 0;
+    static_assert(sizeof(bits) == sizeof(value), "float/u32 size mismatch");
+    std::memcpy(&bits, &value, sizeof(bits));
+    return static_cast<uint64_t>(bits);
+}
 
 struct LoadPipelineConfigResult {
     bool fileOpened = false;
@@ -220,6 +242,7 @@ bool ServiceHost::Start() {
     m_deviceRuntime->SetAutoMode(m_autoMode);
     m_deviceRuntime->SetStylusVhfEnabled(m_stylusVhfEnabled);
     BuildDefaultPipeline(kConfigPath);
+    BuildDebugSchema();
 
     if (!m_deviceRuntime->Start()) {
         LOG_ERROR("Service", __func__, "Boot", "DeviceRuntime::Start() failed.");
@@ -295,16 +318,6 @@ bool ServiceHost::Start() {
         m_penEventBridge->Start();
         LOG_INFO("Service", __func__, "MCU", "PenEventBridge started (col00 event channel).");
 
-        // BT 笔切频命令发送器：DeviceRuntime 在检测到频率不匹配时调用
-        if (m_deviceRuntime) {
-            m_deviceRuntime->SetBtScanModeSender(
-                [this](uint8_t freq1, uint8_t freq2) -> bool {
-                    if (!m_penEventBridge) return false;
-                    return m_penEventBridge->SendScanMode(freq1, freq2);
-                });
-            LOG_INFO("Service", __func__, "MCU", "BtScanModeSender injected via PenEventBridge (col00).");
-        }
-
         // ── 4b. 压力通道 (col01): 'U' 报文频率 + 压感 ──────
         m_penPressureReader = std::make_unique<Himax::Pen::PenPressureReader>();
         if (m_penEvent) m_penPressureReader->SetNotifyEvent(m_penEvent);
@@ -312,16 +325,6 @@ bool ServiceHost::Start() {
             [this](uint16_t press) {
                 if (m_deviceRuntime) m_deviceRuntime->SetBtMcuPressure(press);
             });
-
-        // BT 频率提供者：DeviceRuntime 每帧 poll 获取最新 BT MCU 频率
-        if (m_deviceRuntime) {
-            m_deviceRuntime->SetBtFreqProvider(
-                [this]() -> std::pair<uint8_t, uint8_t> {
-                    if (!m_penPressureReader) return {0, 0};
-                    auto s = m_penPressureReader->GetPressureStats();
-                    return {s.freq1, s.freq2};
-                });
-        }
 
         m_penPressureReader->Start();
         LOG_INFO("Service", __func__, "MCU", "PenPressureReader started (col01 pressure channel).");
@@ -423,6 +426,225 @@ static LoadPipelineConfigResult LoadPipelineConfig(
 }
 
 // ── Pipeline 构建 ──────────────────────────────
+void ServiceHost::CopyCString(char* dst, size_t dstSize, const std::string& src) {
+    if (!dst || dstSize == 0) return;
+    std::memset(dst, 0, dstSize);
+    if (src.empty()) return;
+    const size_t n = std::min(dstSize - 1, src.size());
+    std::memcpy(dst, src.data(), n);
+}
+
+uint32_t ServiceHost::HashDebugSchema(const std::vector<DebugFieldDef>& defs) {
+    uint32_t h = 2166136261u;
+    auto hashBytes = [&h](const void* p, size_t n) {
+        const auto* b = reinterpret_cast<const uint8_t*>(p);
+        for (size_t i = 0; i < n; ++i) {
+            h ^= b[i];
+            h *= 16777619u;
+        }
+    };
+    for (const auto& d : defs) {
+        hashBytes(&d.fieldId, sizeof(d.fieldId));
+        const uint8_t t = static_cast<uint8_t>(d.valueType);
+        const uint8_t sk = static_cast<uint8_t>(d.sourceKind);
+        const uint8_t dt = static_cast<uint8_t>(d.dvrTarget);
+        const uint8_t pm = static_cast<uint8_t>(d.dvrPositionMode);
+        hashBytes(&t, sizeof(t));
+        hashBytes(&sk, sizeof(sk));
+        hashBytes(&d.sourceIndex, sizeof(d.sourceIndex));
+        hashBytes(&d.uiOrder, sizeof(d.uiOrder));
+        hashBytes(&dt, sizeof(dt));
+        hashBytes(&pm, sizeof(pm));
+        hashBytes(&d.dvrIndex, sizeof(d.dvrIndex));
+        hashBytes(d.key.data(), d.key.size());
+        hashBytes(d.displayName.data(), d.displayName.size());
+        hashBytes(d.unit.data(), d.unit.size());
+        hashBytes(d.uiGroup.data(), d.uiGroup.size());
+        hashBytes(d.dvrColumnName.data(), d.dvrColumnName.size());
+        hashBytes(d.dvrAnchor.data(), d.dvrAnchor.size());
+    }
+    return h;
+}
+
+uint64_t ServiceHost::EncodePenValue(const Himax::Pen::PenPressureStats& s,
+                                     bool evtRunning,
+                                     bool pressRunning,
+                                     int16_t sourceIndex,
+                                     bool& valid) {
+    valid = true;
+    switch (static_cast<Ipc::DebugPenSourceIndex>(sourceIndex)) {
+    case Ipc::DebugPenSourceIndex::EvtRunning: return EncodeBool(evtRunning);
+    case Ipc::DebugPenSourceIndex::PressRunning: return EncodeBool(pressRunning);
+    case Ipc::DebugPenSourceIndex::ReportType: return EncodeU32(s.reportType);
+    case Ipc::DebugPenSourceIndex::Freq1: return EncodeU32(s.freq1);
+    case Ipc::DebugPenSourceIndex::Freq2: return EncodeU32(s.freq2);
+    case Ipc::DebugPenSourceIndex::Press0: return EncodeU32(s.press[0]);
+    case Ipc::DebugPenSourceIndex::Press1: return EncodeU32(s.press[1]);
+    case Ipc::DebugPenSourceIndex::Press2: return EncodeU32(s.press[2]);
+    case Ipc::DebugPenSourceIndex::Press3: return EncodeU32(s.press[3]);
+    default:
+        valid = false;
+        return 0;
+    }
+}
+
+uint64_t ServiceHost::EncodeDebugValue(const Solvers::HeatmapFrame& frame,
+                                       const DebugFieldDef& def,
+                                       bool& valid) {
+    valid = true;
+    switch (def.sourceKind) {
+    case Ipc::DebugSourceKind::MasterSuffixWord:
+        if (!frame.masterSuffixValid || def.sourceIndex < 0 || def.sourceIndex >= Frame::kMasterSuffixWords) {
+            valid = false;
+            return 0;
+        }
+        return EncodeU32(frame.masterSuffix.words[def.sourceIndex]);
+    case Ipc::DebugSourceKind::SlaveSuffixWord:
+        if (!frame.slaveSuffixValid || def.sourceIndex < 0 || def.sourceIndex >= Frame::kSlaveSuffixWords) {
+            valid = false;
+            return 0;
+        }
+        return EncodeU32(frame.slaveSuffix.words[def.sourceIndex]);
+    case Ipc::DebugSourceKind::StylusField: {
+        const auto& s = frame.stylus;
+        switch (static_cast<Ipc::DebugStylusSourceIndex>(def.sourceIndex)) {
+        case Ipc::DebugStylusSourceIndex::Pressure: return EncodeU32(s.pressure);
+        case Ipc::DebugStylusSourceIndex::SignalX: return EncodeU32(s.signalX);
+        case Ipc::DebugStylusSourceIndex::SignalY: return EncodeU32(s.signalY);
+        case Ipc::DebugStylusSourceIndex::MaxRawPeak: return EncodeU32(s.maxRawPeak);
+        case Ipc::DebugStylusSourceIndex::Status: return EncodeU32(s.status);
+        case Ipc::DebugStylusSourceIndex::PipelineStage: return EncodeU32(s.pipelineStage);
+        case Ipc::DebugStylusSourceIndex::PointX: return EncodeF32(s.point.x);
+        case Ipc::DebugStylusSourceIndex::PointY: return EncodeF32(s.point.y);
+        case Ipc::DebugStylusSourceIndex::RawPressure: return EncodeU32(s.point.rawPressure);
+        case Ipc::DebugStylusSourceIndex::MappedPressure: return EncodeU32(s.point.mappedPressure);
+        case Ipc::DebugStylusSourceIndex::NoPressInkActive: return EncodeBool(s.noPressInkActive);
+        case Ipc::DebugStylusSourceIndex::TouchSuppressActive: return EncodeBool(s.touchSuppressActive);
+        case Ipc::DebugStylusSourceIndex::BtSeq: return EncodeU32(s.diag.btSeq);
+        case Ipc::DebugStylusSourceIndex::PredictedAgeFrames: return EncodeU32(s.diag.predictedAgeFrames);
+        case Ipc::DebugStylusSourceIndex::PressureIsReal: return EncodeBool(s.diag.pressureIsReal);
+        default:
+            valid = false;
+            return 0;
+        }
+    }
+    case Ipc::DebugSourceKind::PenBridgeField:
+        valid = false;
+        return 0;
+    case Ipc::DebugSourceKind::DerivedField:
+        if (def.key == "master_was_read") return EncodeBool(frame.masterWasRead);
+        if (def.key == "contact_count") return EncodeU32(static_cast<uint32_t>(frame.contacts.size()));
+        if (def.key == "peak_count") return EncodeU32(static_cast<uint32_t>(frame.peaks.size()));
+        if (def.key == "frame_timestamp") return frame.timestamp;
+        valid = false;
+        return 0;
+    default:
+        valid = false;
+        return 0;
+    }
+}
+
+void ServiceHost::BuildDebugSchema() {
+    m_debugSchema.clear();
+
+    auto add = [this](DebugFieldDef d) {
+        m_debugSchema.push_back(std::move(d));
+    };
+
+    add({1, Ipc::DebugValueType::UInt32, Ipc::DebugSourceKind::MasterSuffixWord,
+         static_cast<int16_t>(Frame::MasterWord::kTpFreq1), 1,
+         Ipc::DebugDvrTarget::MasterStatus, Ipc::DebugDvrPositionMode::AfterAnchor, -1,
+         "master_tp_freq1", "Master TpFreq1", "", "MasterSuffix",
+         "DBG_MasterTpFreq1", "MasterSuffixValid"});
+
+    add({2, Ipc::DebugValueType::UInt32, Ipc::DebugSourceKind::MasterSuffixWord,
+         static_cast<int16_t>(Frame::MasterWord::kTpFreq2), 2,
+         Ipc::DebugDvrTarget::MasterStatus, Ipc::DebugDvrPositionMode::AfterAnchor, -1,
+         "master_tp_freq2", "Master TpFreq2", "", "MasterSuffix",
+         "DBG_MasterTpFreq2", "DBG_MasterTpFreq1"});
+
+    add({3, Ipc::DebugValueType::UInt32, Ipc::DebugSourceKind::StylusField,
+         static_cast<int16_t>(Ipc::DebugStylusSourceIndex::Pressure), 1,
+         Ipc::DebugDvrTarget::SlaveSuffix, Ipc::DebugDvrPositionMode::AfterAnchor, -1,
+         "stylus_pressure", "Stylus Pressure", "", "Stylus",
+         "DBG_StylusPressure", "Pressure"});
+
+    add({4, Ipc::DebugValueType::Float32, Ipc::DebugSourceKind::StylusField,
+         static_cast<int16_t>(Ipc::DebugStylusSourceIndex::PointX), 2,
+         Ipc::DebugDvrTarget::SlaveSuffix, Ipc::DebugDvrPositionMode::AfterAnchor, -1,
+         "stylus_point_x", "Stylus Point X", "grid", "Stylus",
+         "DBG_StylusPointX", "PointX"});
+
+    add({5, Ipc::DebugValueType::Float32, Ipc::DebugSourceKind::StylusField,
+         static_cast<int16_t>(Ipc::DebugStylusSourceIndex::PointY), 3,
+         Ipc::DebugDvrTarget::SlaveSuffix, Ipc::DebugDvrPositionMode::AfterAnchor, -1,
+         "stylus_point_y", "Stylus Point Y", "grid", "Stylus",
+         "DBG_StylusPointY", "DBG_StylusPointX"});
+
+    add({13, Ipc::DebugValueType::UInt32, Ipc::DebugSourceKind::StylusField,
+         static_cast<int16_t>(Ipc::DebugStylusSourceIndex::BtSeq), 4,
+         Ipc::DebugDvrTarget::SlaveSuffix, Ipc::DebugDvrPositionMode::AfterAnchor, -1,
+         "stylus_bt_seq", "Stylus BT Seq", "", "Stylus",
+         "DBG_StylusBtSeq", "DBG_StylusPointY"});
+
+    add({14, Ipc::DebugValueType::UInt32, Ipc::DebugSourceKind::StylusField,
+         static_cast<int16_t>(Ipc::DebugStylusSourceIndex::PredictedAgeFrames), 5,
+         Ipc::DebugDvrTarget::SlaveSuffix, Ipc::DebugDvrPositionMode::AfterAnchor, -1,
+         "stylus_predicted_age", "Predicted Age", "frames", "Stylus",
+         "DBG_StylusPredictedAge", "DBG_StylusBtSeq"});
+
+    add({15, Ipc::DebugValueType::Bool, Ipc::DebugSourceKind::StylusField,
+         static_cast<int16_t>(Ipc::DebugStylusSourceIndex::PressureIsReal), 6,
+         Ipc::DebugDvrTarget::SlaveSuffix, Ipc::DebugDvrPositionMode::AfterAnchor, -1,
+         "stylus_pressure_is_real", "Pressure Is Real", "", "Stylus",
+         "DBG_StylusPressureIsReal", "DBG_StylusPredictedAge"});
+
+    add({6, Ipc::DebugValueType::UInt32, Ipc::DebugSourceKind::PenBridgeField,
+         static_cast<int16_t>(Ipc::DebugPenSourceIndex::Freq1), 1,
+         Ipc::DebugDvrTarget::None, Ipc::DebugDvrPositionMode::Append, -1,
+         "pen_freq1", "Pen Freq1", "", "PenBridge",
+         "DBG_PenFreq1", ""});
+
+    add({7, Ipc::DebugValueType::UInt32, Ipc::DebugSourceKind::PenBridgeField,
+         static_cast<int16_t>(Ipc::DebugPenSourceIndex::Freq2), 2,
+         Ipc::DebugDvrTarget::None, Ipc::DebugDvrPositionMode::Append, -1,
+         "pen_freq2", "Pen Freq2", "", "PenBridge",
+         "DBG_PenFreq2", ""});
+
+    add({8, Ipc::DebugValueType::UInt32, Ipc::DebugSourceKind::PenBridgeField,
+         static_cast<int16_t>(Ipc::DebugPenSourceIndex::Press0), 3,
+         Ipc::DebugDvrTarget::None, Ipc::DebugDvrPositionMode::Append, -1,
+         "pen_press0", "Pen Press0", "", "PenBridge",
+         "DBG_PenPress0", ""});
+
+    add({9, Ipc::DebugValueType::UInt32, Ipc::DebugSourceKind::PenBridgeField,
+         static_cast<int16_t>(Ipc::DebugPenSourceIndex::Press1), 4,
+         Ipc::DebugDvrTarget::None, Ipc::DebugDvrPositionMode::Append, -1,
+         "pen_press1", "Pen Press1", "", "PenBridge",
+         "DBG_PenPress1", ""});
+
+    add({10, Ipc::DebugValueType::UInt32, Ipc::DebugSourceKind::DerivedField,
+         -1, 1,
+         Ipc::DebugDvrTarget::MasterStatus, Ipc::DebugDvrPositionMode::AfterAnchor, -1,
+         "contact_count", "Contact Count", "", "Frame",
+         "DBG_ContactCount", "ContactCount"});
+
+    add({11, Ipc::DebugValueType::UInt32, Ipc::DebugSourceKind::DerivedField,
+         -1, 2,
+         Ipc::DebugDvrTarget::MasterStatus, Ipc::DebugDvrPositionMode::AfterAnchor, -1,
+         "peak_count", "Peak Count", "", "Frame",
+         "DBG_PeakCount", "DBG_ContactCount"});
+
+    add({12, Ipc::DebugValueType::Bool, Ipc::DebugSourceKind::DerivedField,
+         -1, 3,
+         Ipc::DebugDvrTarget::MasterStatus, Ipc::DebugDvrPositionMode::AfterAnchor, -1,
+         "master_was_read", "Master Was Read", "", "Frame",
+         "DBG_MasterWasRead", "DBG_PeakCount"});
+
+    m_debugSchemaHash = HashDebugSchema(m_debugSchema);
+    m_debugSchemaVersion = 1;
+}
+
 void ServiceHost::BuildDefaultPipeline(const std::string& configPath) {
     // TouchPipeline is self-contained: no processor registration needed.
     // Just load config.
@@ -481,6 +703,11 @@ Ipc::IpcResponse ServiceHost::HandleIpcCommand(
         if (m_frameWriter.IsOpen()) {
             m_deviceRuntime->SetFramePushCallback(
                 [this](const Solvers::HeatmapFrame& f) {
+                    {
+                        std::lock_guard<std::mutex> lk(m_debugFrameMutex);
+                        m_latestDebugFrame = f;
+                        m_hasLatestDebugFrame = true;
+                    }
                     m_frameWriter.Write(f);
                 });
             m_debugMode = true;
@@ -498,6 +725,11 @@ Ipc::IpcResponse ServiceHost::HandleIpcCommand(
     case Ipc::IpcCommand::ExitDebugMode:
 #ifdef _DEBUG
         m_deviceRuntime->SetFramePushCallback(nullptr);
+        {
+            std::lock_guard<std::mutex> lk(m_debugFrameMutex);
+            m_hasLatestDebugFrame = false;
+            m_latestDebugFrame = Solvers::HeatmapFrame{};
+        }
         m_debugMode = false;
 #endif
         resp.success = true;
@@ -588,10 +820,6 @@ Ipc::IpcResponse ServiceHost::HandleIpcCommand(
         }
         break;
 
-    case Ipc::IpcCommand::SetAutoAfeSync:
-        resp.success = true; // placeholder — future DeviceRuntime integration
-        break;
-
     case Ipc::IpcCommand::GetLogs: {
         auto lines = Common::GuiLogSink::Instance()->DrainNewLines();
         std::string packed;
@@ -626,6 +854,112 @@ Ipc::IpcResponse ServiceHost::HandleIpcCommand(
         }
         std::memcpy(resp.data, buf, sizeof(buf));
         resp.dataLen = sizeof(buf);
+        resp.success = true;
+        break;
+    }
+
+    case Ipc::IpcCommand::GetDebugSchema: {
+        Ipc::DebugSchemaRequest reqSchema{};
+        if (req.paramLen >= sizeof(Ipc::DebugSchemaRequest)) {
+            std::memcpy(&reqSchema, req.param, sizeof(Ipc::DebugSchemaRequest));
+        }
+
+        const uint16_t total = static_cast<uint16_t>(m_debugSchema.size());
+        const uint16_t offset = std::min<uint16_t>(reqSchema.offset, total);
+        const uint16_t maxByPayload = static_cast<uint16_t>(
+            (sizeof(resp.data) - sizeof(Ipc::DebugSchemaResponseHeader)) / sizeof(Ipc::DebugFieldSchemaWire));
+        uint16_t requested = reqSchema.limit == 0 ? maxByPayload : reqSchema.limit;
+        requested = std::min<uint16_t>(requested, maxByPayload);
+        const uint16_t available = static_cast<uint16_t>(total - offset);
+        const uint16_t take = std::min<uint16_t>(requested, available);
+
+        Ipc::DebugSchemaResponseHeader hdr{};
+        hdr.schemaVersion = m_debugSchemaVersion;
+        hdr.totalFields = total;
+        hdr.returnedFields = take;
+        hdr.recordSize = static_cast<uint16_t>(sizeof(Ipc::DebugFieldSchemaWire));
+        hdr.schemaHash = m_debugSchemaHash;
+
+        std::memcpy(resp.data, &hdr, sizeof(hdr));
+        size_t cursor = sizeof(hdr);
+        for (uint16_t i = 0; i < take; ++i) {
+            const auto& def = m_debugSchema[offset + i];
+            Ipc::DebugFieldSchemaWire w{};
+            w.fieldId = def.fieldId;
+            w.valueType = static_cast<uint8_t>(def.valueType);
+            w.sourceKind = static_cast<uint8_t>(def.sourceKind);
+            w.sourceIndex = def.sourceIndex;
+            w.uiOrder = def.uiOrder;
+            w.dvrTarget = static_cast<uint8_t>(def.dvrTarget);
+            w.dvrPositionMode = static_cast<uint8_t>(def.dvrPositionMode);
+            w.dvrIndex = def.dvrIndex;
+            CopyCString(w.key, sizeof(w.key), def.key);
+            CopyCString(w.displayName, sizeof(w.displayName), def.displayName);
+            CopyCString(w.unit, sizeof(w.unit), def.unit);
+            CopyCString(w.uiGroup, sizeof(w.uiGroup), def.uiGroup);
+            CopyCString(w.dvrColumnName, sizeof(w.dvrColumnName), def.dvrColumnName);
+            CopyCString(w.dvrAnchor, sizeof(w.dvrAnchor), def.dvrAnchor);
+            std::memcpy(resp.data + cursor, &w, sizeof(w));
+            cursor += sizeof(w);
+        }
+
+        resp.dataLen = static_cast<uint16_t>(cursor);
+        resp.success = true;
+        break;
+    }
+
+    case Ipc::IpcCommand::GetDebugSnapshot: {
+        Solvers::HeatmapFrame frame{};
+        bool hasFrame = false;
+        {
+            std::lock_guard<std::mutex> lk(m_debugFrameMutex);
+            if (m_hasLatestDebugFrame) {
+                frame = m_latestDebugFrame;
+                hasFrame = true;
+            }
+        }
+
+        const bool evtRunning = (m_penEventBridge && m_penEventBridge->IsRunning());
+        const bool pressRunning = (m_penPressureReader && m_penPressureReader->IsRunning());
+        Himax::Pen::PenPressureStats penStats{};
+        if (m_penPressureReader) {
+            penStats = m_penPressureReader->GetPressureStats();
+        }
+
+        const uint16_t maxByPayload = static_cast<uint16_t>(
+            (sizeof(resp.data) - sizeof(Ipc::DebugSnapshotHeader)) / sizeof(Ipc::DebugSnapshotValueWire));
+        const uint16_t take = std::min<uint16_t>(static_cast<uint16_t>(m_debugSchema.size()), maxByPayload);
+
+        Ipc::DebugSnapshotHeader hdr{};
+        hdr.schemaVersion = m_debugSchemaVersion;
+        hdr.fieldCount = take;
+        hdr.recordSize = static_cast<uint16_t>(sizeof(Ipc::DebugSnapshotValueWire));
+        std::memcpy(resp.data, &hdr, sizeof(hdr));
+
+        size_t cursor = sizeof(hdr);
+        for (uint16_t i = 0; i < take; ++i) {
+            const auto& def = m_debugSchema[i];
+            bool valid = true;
+            uint64_t raw = 0;
+
+            if (def.sourceKind == Ipc::DebugSourceKind::PenBridgeField) {
+                raw = EncodePenValue(penStats, evtRunning, pressRunning, def.sourceIndex, valid);
+            } else if (hasFrame) {
+                raw = EncodeDebugValue(frame, def, valid);
+            } else {
+                valid = false;
+            }
+
+            Ipc::DebugSnapshotValueWire v{};
+            v.fieldId = def.fieldId;
+            v.valueType = static_cast<uint8_t>(def.valueType);
+            v.flags = valid ? 0x1 : 0x0;
+            v.rawValue = raw;
+            std::memcpy(resp.data + cursor, &v, sizeof(v));
+            cursor += sizeof(v);
+        }
+
+        resp.dataLen = static_cast<uint16_t>(cursor);
         resp.success = true;
         break;
     }

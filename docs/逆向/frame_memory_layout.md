@@ -105,7 +105,7 @@ Word 位置            状态表字段
   6                  pendingFreqSwitch                ✅
   7                  (未知)
   8                  tpFreq1 (当前频率1)              ✅
-  9                  tpFreq2 (当前频率2)              ✅
+  9                  timestamp              ✅
   10..13             (未知)
   14                 penF0NoiseCount                  ✅
   15                 (未知)

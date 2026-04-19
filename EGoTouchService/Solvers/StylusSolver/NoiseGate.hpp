@@ -1,7 +1,5 @@
 #pragma once
 #include "AsaTypes.hpp"
-#include "SolverTypes.h"
-#include <cmath>
 #include <cstdint>
 
 namespace Asa {
@@ -39,12 +37,17 @@ public:
     /// Check if pen exit smoothing should activate.
     /// @param wasInking   Previous frame had pressure > 0
     /// @param hasGoodFrame  Whether a last-good frame exists
+    /// @param releaseLike  Whether current lifecycle is a release transition
+    /// @param weakRecheck  Whether current frame failed/weakly passed recheck
     /// @return true if caller should output the frozen frame
-    inline bool ShouldExitSmooth(bool wasInking, bool hasGoodFrame) const {
+    inline bool ShouldExitSmooth(bool wasInking, bool hasGoodFrame,
+                                 bool releaseLike = true,
+                                 bool weakRecheck = false) const {
         if (!exitSmoothEnabled) return false;
-        if (!wasInking) return false;
+        if (!wasInking && !releaseLike) return false;
         if (!hasGoodFrame) return false;
-        return true;
+        if (weakRecheck) return true;
+        return wasInking || releaseLike;
     }
 
     /// Apply edge coordinate snapping for pen exit.
@@ -91,6 +94,25 @@ public:
         const int th = (noiseLevel > 2) ? recheckSignalThreshBase * 2
                                         : recheckSignalThreshBase;
         return sig >= th;
+    }
+
+    inline bool EvaluateRecheck(uint16_t signalX, uint16_t signalY,
+                                uint16_t maxRawPeak, uint16_t baseThreshold,
+                                uint16_t sustainThreshold,
+                                bool overlapLike) const {
+        if (!recheckEnabled) return true;
+        const int primary = std::max<int>(signalX, signalY);
+        const int secondary = std::min<int>(signalX, signalY);
+        if (primary < static_cast<int>(baseThreshold)) {
+            return false;
+        }
+        if (overlapLike && primary < static_cast<int>(sustainThreshold)) {
+            return false;
+        }
+        if (maxRawPeak != 0 && maxRawPeak < static_cast<uint16_t>(baseThreshold / 2)) {
+            return false;
+        }
+        return secondary >= static_cast<int>(baseThreshold / 3) || !overlapLike;
     }
 
     // ── Configuration ──

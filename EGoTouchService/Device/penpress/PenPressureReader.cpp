@@ -74,8 +74,8 @@ void PenPressureReader::OnPacketReceived(const std::vector<uint8_t>& packet) {
         s.freq1      = packet[1];
         s.freq2      = packet[2];
         for (int k = 0; k < 4; ++k) {
-            s.press[k] = static_cast<uint16_t>(packet[3 + k * 2]) |
-                         (static_cast<uint16_t>(packet[4 + k * 2]) << 8);
+            s.press[k] = (static_cast<uint16_t>(packet[3 + k * 2]) |
+                         (static_cast<uint16_t>(packet[4 + k * 2]) << 8)) / 4;
         }
         {
             std::lock_guard<std::mutex> lk(m_statsMutex);

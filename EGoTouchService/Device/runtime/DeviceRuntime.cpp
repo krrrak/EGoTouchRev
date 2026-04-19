@@ -2,7 +2,6 @@
 #include "SolverTypes.h"
 #include "Logger.h"
 
-
 #include <format>
 
 namespace {
@@ -249,7 +248,7 @@ void DeviceRuntime::OnStreaming() {
     if (res == std::unexpected(ChipError::Timeout)) return;
     if (!res) {
         // 连续 N 帧非Timeout失败才进入 recover；
-        // AFE 命令（如 EnableFreqShift）可能导致一两帧 bus 暂时失响应，不算致命。
+        // 某些 AFE 命令可能导致一两帧 bus 暂时失响应，不算致命。
         m_consecutiveFrameErrors++;
         if (m_consecutiveFrameErrors >= kMaxConsecutiveFrameErrors) {
             LOG_ERROR("Runtime", __func__, "Streaming", "{} consecutive GetFrame failures -> recover.", m_consecutiveFrameErrors);
@@ -262,33 +261,9 @@ void DeviceRuntime::OnStreaming() {
     }
     m_consecutiveFrameErrors = 0;  // 成功读帧重置计数
 
-    // 0. BT MCU 心跳注入（每帧，原厂 ASA_SetBluetoothFreq 等价）
-    if (m_btFreqProvider) {
-        auto [f1, f2] = m_btFreqProvider();
-        m_chip.m_afe.UpdateBtHeartbeat(f1, f2);
-    }
-
-    // 1. 手写笔频率跟踪
-    if (m_chip.m_afe.ProcessStylusStatus()) {
-        auto targetIdx = m_chip.m_afe.GetStylusState().switchTargetIdx;
-
-        // 1a. TPIC 侧切频
-        SubmitCommand({AFE_Command::ForceToFreqPoint, targetIdx},
-                      CommandSource::SystemPolicy, "Stylus Freq Sync (TP)");
-
-        // 1b. BT 笔侧切频 —— 通过 col00 通知 MCU
-        if (m_btScanModeSender) {
-            uint8_t newFreq = m_chip.m_afe.GetTpicFreq(targetIdx);
-            bool ok = m_btScanModeSender(newFreq, newFreq);
-            LOG_INFO("Runtime", __func__, "FreqSync",
-                     "BT ScanMode sent: freqIdx={}, tpicFreq=0x{:02X}, ok={}",
-                     targetIdx, newFreq, ok);
-        }
-    }
-
     const auto& rawData = m_chip.back_data;
 
-    // 2. Build frame (zero-copy from Chip)
+    // 0. Build frame (zero-copy from Chip)
     Solvers::HeatmapFrame touchFrame;
     touchFrame.rawPtr = rawData.data();
     touchFrame.rawLen = rawData.size();
@@ -297,6 +272,11 @@ void DeviceRuntime::OnStreaming() {
     touchFrame.rawData.assign(rawData.begin(), rawData.end());
 #endif
     touchFrame.masterWasRead = m_chip.m_lastMasterWasRead;
+    if (rawData.size() >= Frame::kMasterFrameSize) {
+        Frame::MasterSuffixView masterSuffix;
+        masterSuffix.LoadFromBytes(rawData.data() + Frame::kMasterSuffixOffset);
+        touchFrame.timestamp = masterSuffix.timestamp();
+    }
 
     // 3. Stylus pipeline — reads rawPtr, writes frame.stylus
     m_stylusPipeline.Process(touchFrame);
@@ -347,11 +327,7 @@ void DeviceRuntime::OnPenEvent(const Himax::Pen::PenEvent& ev) {
             hexDump += buf;
         }
         LOG_INFO("Runtime", __func__, "MCU",
-                 "PenFreqJump (payload[{}]: {})", ev.payload.size(), hexDump);
-        command cmd{};
-        cmd.type  = AFE_Command::EnableFreqShift;
-        cmd.param = 0;
-        SubmitCommand(cmd, CommandSource::SystemPolicy, "PenFreqJump");
+                 "PenFreqJump ignored (payload[{}]: {})", ev.payload.size(), hexDump);
         break;
     }
 

@@ -26,10 +26,9 @@ class PacketBuilder {
 public:
     /// Build a StylusPacket from frame data.
     /// @param result    Current frame results
-    /// @param bleBtn    BLE button state byte (bit0=barrel, bit1=eraser)
     /// @param emitWhenInvalid  If true, emit a zero-state packet even for invalid coords
     /// @param[out] pkt  Output packet
-    inline void Build(const StylusFrameData& result, uint8_t bleBtn,
+    inline void Build(const StylusFrameData& result,
                       bool emitWhenInvalid, StylusPacket& pkt) const {
         pkt = StylusPacket{};
         pkt.reportId = 0x08;
@@ -46,9 +45,8 @@ public:
         // Status byte
         {
             uint8_t penState = 0;
-            if (result.point.valid) penState |= (1u << 5);   // InRange
-            if (result.pressure > 0) penState |= (1u << 0);  // TipSwitch
-            if (bleBtn & 0x01) penState |= (1u << 1);        // BarrelSwitch
+            if (result.point.valid) penState |= (1u << 5);          // InRange
+            if (result.tipSwitchActive) penState |= (1u << 0);      // TipSwitch
             b[1] = penState;
         }
 

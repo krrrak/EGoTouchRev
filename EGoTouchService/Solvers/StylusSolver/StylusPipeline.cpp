@@ -25,6 +25,14 @@ struct StylusSignalMetrics {
     uint16_t dim2EdgeSignal = 0;
 };
 
+struct StylusRecheckContext {
+    bool stable = false;
+    bool active = false;
+    bool overlapLike = false;
+    uint16_t finalThreshold = 0;
+    uint16_t sustainThreshold = 0;
+};
+
 inline uint16_t ClampU16(int value) {
     return static_cast<uint16_t>(std::clamp(value, 0, 0xFFFF));
 }
@@ -66,6 +74,22 @@ inline StylusSignalMetrics BuildSignalMetrics(const Asa::AsaProjection& proj,
     metrics.dim1EdgeSignal = dim1ProjectionPeak;
     metrics.dim2EdgeSignal = dim2ProjectionPeak;
     return metrics;
+}
+
+inline StylusRecheckContext BuildRecheckContext(const StylusSignalMetrics& metrics,
+                                                bool coordValid,
+                                                bool recentlyWriting,
+                                                int baseThreshold,
+                                                int multiThreshold) {
+    StylusRecheckContext ctx{};
+    ctx.finalThreshold = ClampU16(baseThreshold);
+    ctx.sustainThreshold = ClampU16(multiThreshold);
+    ctx.overlapLike = coordValid && metrics.signalY > 0 &&
+                      metrics.tx2Composite > metrics.tx1Composite &&
+                      metrics.signalX < ctx.sustainThreshold;
+    ctx.stable = coordValid && metrics.tx1Composite >= ctx.finalThreshold;
+    ctx.active = coordValid && (recentlyWriting || metrics.tx1Composite >= ctx.sustainThreshold);
+    return ctx;
 }
 } // namespace
 
@@ -117,10 +141,6 @@ bool StylusPipeline::HasCurrentStylusSignal(
              (anchorCol & 0xFFu) == 0x00FFu);
 }
 
-bool StylusPipeline::HasLiveState() const {
-    return m_prevValid || m_wasInking || m_hasLastGoodFrame;
-}
-
 bool StylusPipeline::ProcessNoStylusFrame(
         std::span<const uint8_t> rawData,
         StylusPacket& outPacket) {
@@ -135,76 +155,26 @@ bool StylusPipeline::ProcessNoStylusFrame(
         m_lastResult.status = ReadU16Le(p);
     }
 
-    if (m_prevValid && m_noiseGate.ShouldExitSmooth(m_wasInking, m_hasLastGoodFrame)) {
-        m_lastResult = m_lastGoodFrame;
-        float outX = 0.0f;
-        float outY = 0.0f;
-        m_noiseGate.ApplyExitEdgeSnap(
-            m_lastGoodFrame.point.x, m_lastGoodFrame.point.y,
-            m_prevPointX, m_prevPointY,
-            m_sensorRows, m_sensorCols, outX, outY);
-        m_lastResult.point.x = outX;
-        m_lastResult.point.y = outY;
-        m_lastResult.pipelineStage = 7;
-        m_lastResult.point.valid = true;
-        m_packetBuilder.Build(m_lastResult,
-            m_bleButtonState.load(std::memory_order_relaxed),
-            m_emitPacketWhenInvalid, outPacket);
-        m_prevValid = false;
-        m_wasInking = false;
-        m_prevPressureVal = 0;
-        m_penStateMachine.Update(false, 0, 0, 0);
-        m_pressureSolver.Reset();
-        m_noPressInkGate.Reset();
-        m_lastResult.animState = static_cast<uint8_t>(m_penStateMachine.GetState());
-        m_prevStatus = m_lastResult.status;
-        return outPacket.valid;
-    }
-
-    if (!m_prevValid) {
-        m_postProcessor.Reset();
-        m_oneEuroFilter.Reset();
-        m_tiltSolver.Reset();
-        m_coorReviser.Reset();
-        m_linearFilter.Reset();
-        m_pressureSolver.Reset();
-        m_noPressInkGate.Reset();
-        m_noiseGate.Reset();
-        m_hasLastGoodFrame = false;
-    }
+    m_postProcessor.Reset();
+    m_tiltSolver.Reset();
+    m_coorReviser.Reset();
+    m_linearFilter.Reset();
+    m_pressureSolver.Reset();
+    m_noPressInkGate.Reset();
+    m_noiseGate.Reset();
+    m_hasLastGoodFrame = false;
     m_prevValid = false;
-    m_wasInking = false;
-    m_prevPressureVal = 0;
-    m_penStateMachine.Update(false, 0, 0, 0);
-    m_lastResult.animState = static_cast<uint8_t>(m_penStateMachine.GetState());
+
+    Asa::PenFrameEvidence evidence{};
+    evidence.noSignal = true;
+    (void)m_penStateMachine.Update(evidence);
+    m_lastResult.animState = m_penStateMachine.GetAnimState();
     if (m_emitPacketWhenInvalid) {
         m_packetBuilder.Build(m_lastResult,
-            m_bleButtonState.load(std::memory_order_relaxed),
             m_emitPacketWhenInvalid, outPacket);
     }
     m_prevStatus = m_lastResult.status;
     return false;
-}
-
-// ══════════════════════════════════════════════
-// UpdateButtonState
-// ══════════════════════════════════════════════
-uint32_t StylusPipeline::UpdateButtonState(
-        uint32_t rawBits, bool active) {
-    if (!active) { m_buttonReleaseCounter = 0; return 0; }
-    const uint32_t pressed = (rawBits & 0x1u) ? 1u : 0u;
-    if (pressed) {
-        m_buttonReleaseCounter = m_buttonReleaseHoldFrames;
-        m_lastResult.button = 1;
-        return m_lastResult.status;
-    }
-    if (m_buttonReleaseCounter > 0) {
-        m_buttonReleaseCounter--;
-        m_lastResult.button = 1;
-        return m_lastResult.status;
-    }
-    m_lastResult.button = 0;
-    return m_lastResult.status;
 }
 
 // ══════════════════════════════════════════════
@@ -245,16 +215,6 @@ bool StylusPipeline::ProcessRaw(
     m_dbg.sigSuppressActive = false;
 #endif
 
-    // FreqShift freeze: output last known-good frame
-    if (m_freqShiftFreezing && m_hasLastGoodFrame) {
-        m_lastResult = m_lastGoodFrame;
-        m_lastResult.pipelineStage = 6;
-        m_packetBuilder.Build(m_lastResult,
-            m_bleButtonState.load(std::memory_order_relaxed),
-            m_emitPacketWhenInvalid, outPacket);
-        return outPacket.valid;
-    }
-
     if (!HasCurrentStylusSignal(rawData)) {
         const size_t required = kSlaveHeaderBytes + kSlaveWordCount * 2;
         if (rawData.size() >= required) {
@@ -280,16 +240,20 @@ bool StylusPipeline::ProcessRaw(
         m_lastResult.pipelineStage = 1;
         m_pressureSolver.Reset();
         m_noPressInkGate.Reset();
+        m_postProcessor.Reset();
+        m_coorReviser.Reset();
+        m_linearFilter.Reset();
+        m_prevValid = false;
+        Asa::PenFrameEvidence evidence{};
+        evidence.noSignal = true;
+        auto profile = m_penStateMachine.Update(evidence);
+        (void)profile;
+        m_lastResult.animState = m_penStateMachine.GetAnimState();
         if (m_emitPacketWhenInvalid) {
             outPacket.valid = true; outPacket.reportId = 0x08;
             outPacket.length = 17; outPacket.bytes.fill(0);
             outPacket.bytes[0] = 0x08;
         }
-        m_prevValid = false;
-        m_postProcessor.Reset();
-        m_coorReviser.Reset();
-        m_linearFilter.Reset();
-        m_oneEuroFilter.Reset();
         return false;
     }
     m_lastResult.slaveValid = true;
@@ -298,66 +262,31 @@ bool StylusPipeline::ProcessRaw(
     m_gridData = Asa::ExtractGridFromSlaveWords(
         sw.data(), static_cast<int>(sw.size()));
 
-    // 3. Slave header (status / button)
-    struct SlaveHdr {
-        bool valid = false;
-        uint16_t status = 0;
-        uint32_t button = 0;
-    } hdr;
+    // 3. Slave header status
     if (rawData.size() >= kSlaveHeaderBytes) {
         const uint8_t* p = rawData.data();
         std::memcpy(m_rawSlaveHdr, p, kSlaveHeaderBytes);
-        hdr.valid  = true;
-        hdr.status = ReadU16Le(p);
-        hdr.button = (m_slaveHdrBtnOffset >= 0 &&
-                      m_slaveHdrBtnOffset <= 6)
-                     ? static_cast<uint32_t>(p[m_slaveHdrBtnOffset]) : 0u;
-        m_lastResult.status = hdr.status;
+        m_lastResult.status = ReadU16Le(p);
     }
 
     // 4. TX1 validity check
     if (!m_gridData.tx1.valid) {
         m_lastResult.point.valid = false;
         m_lastResult.pipelineStage = 2;
-
-        // Pen exit smoothing
-        if (m_prevValid && m_noiseGate.ShouldExitSmooth(m_wasInking, m_hasLastGoodFrame)) {
-            m_lastResult = m_lastGoodFrame;
-            float outX, outY;
-            m_noiseGate.ApplyExitEdgeSnap(
-                m_lastGoodFrame.point.x, m_lastGoodFrame.point.y,
-                m_prevPointX, m_prevPointY,
-                m_sensorRows, m_sensorCols, outX, outY);
-            m_lastResult.point.x = outX;
-            m_lastResult.point.y = outY;
-            m_lastResult.pipelineStage = 7;
-            m_lastResult.point.valid = true;
-            m_packetBuilder.Build(m_lastResult,
-                m_bleButtonState.load(std::memory_order_relaxed),
-                m_emitPacketWhenInvalid, outPacket);
-            m_prevValid = false;
-            m_wasInking = false;
-            m_penStateMachine.Update(false, 0, 0, 0);
-            m_lastResult.animState = static_cast<uint8_t>(m_penStateMachine.GetState());
-            m_prevStatus = m_lastResult.status;
-            return outPacket.valid;
-        }
-
-        if (!m_prevValid) {
-            m_postProcessor.Reset(); m_oneEuroFilter.Reset();
-            m_tiltSolver.Reset();
-            m_coorReviser.Reset(); m_linearFilter.Reset();
-            m_pressureSolver.ResetSuppression();
-            m_noiseGate.Reset();
-            m_hasLastGoodFrame = false;
-        }
+        m_postProcessor.Reset();
+        m_tiltSolver.Reset();
+        m_coorReviser.Reset(); m_linearFilter.Reset();
+        m_pressureSolver.ResetSuppression();
+        m_noiseGate.Reset();
+        m_hasLastGoodFrame = false;
         m_prevValid = false;
-        m_wasInking = false;
-        m_penStateMachine.Update(false, 0, 0, 0);
-        m_lastResult.animState = static_cast<uint8_t>(m_penStateMachine.GetState());
+                Asa::PenFrameEvidence evidence{};
+        evidence.noSignal = true;
+        auto profile = m_penStateMachine.Update(evidence);
+        (void)profile;
+        m_lastResult.animState = m_penStateMachine.GetAnimState();
         if (m_emitPacketWhenInvalid)
             m_packetBuilder.Build(m_lastResult,
-                m_bleButtonState.load(std::memory_order_relaxed),
                 m_emitPacketWhenInvalid, outPacket);
         m_prevStatus = m_lastResult.status;
         return false;
@@ -379,12 +308,13 @@ bool StylusPipeline::ProcessRaw(
         m_pressureSolver.Reset();
         m_noPressInkGate.Reset();
         m_prevValid = false;
-        m_prevPressureVal = 0;
-        m_penStateMachine.Update(false, 0, 0, 0);
-        m_lastResult.animState = static_cast<uint8_t>(m_penStateMachine.GetState());
+                Asa::PenFrameEvidence evidence{};
+        evidence.noSignal = true;
+        auto profile = m_penStateMachine.Update(evidence);
+        (void)profile;
+        m_lastResult.animState = m_penStateMachine.GetAnimState();
         if (m_emitPacketWhenInvalid)
             m_packetBuilder.Build(m_lastResult,
-                m_bleButtonState.load(std::memory_order_relaxed),
                 m_emitPacketWhenInvalid, outPacket);
         m_prevStatus = m_lastResult.status;
         return false;
@@ -406,12 +336,13 @@ bool StylusPipeline::ProcessRaw(
         m_pressureSolver.Reset();
         m_noPressInkGate.Reset();
         m_prevValid = false;
-        m_prevPressureVal = 0;
-        m_penStateMachine.Update(false, 0, 0, 0);
-        m_lastResult.animState = static_cast<uint8_t>(m_penStateMachine.GetState());
+                Asa::PenFrameEvidence evidence{};
+        evidence.noSignal = true;
+        auto profile = m_penStateMachine.Update(evidence);
+        (void)profile;
+        m_lastResult.animState = m_penStateMachine.GetAnimState();
         if (m_emitPacketWhenInvalid)
             m_packetBuilder.Build(m_lastResult,
-                m_bleButtonState.load(std::memory_order_relaxed),
                 m_emitPacketWhenInvalid, outPacket);
         m_prevStatus = m_lastResult.status;
         return false;
@@ -438,25 +369,21 @@ bool StylusPipeline::ProcessRaw(
 
     // 8. Noise gate (jump detection)
     if (m_noiseGate.DetectNoiseJump(rawCoor)) {
-        if (m_hasLastGoodFrame) {
-            m_lastResult = m_lastGoodFrame;
-            m_lastResult.pipelineStage = 5;
-            m_packetBuilder.Build(m_lastResult,
-                m_bleButtonState.load(std::memory_order_relaxed),
-                m_emitPacketWhenInvalid, outPacket);
-            return outPacket.valid;
-        }
         m_lastResult.point.valid = false;
         m_lastResult.pipelineStage = 5;
         m_pressureSolver.Reset();
         m_noPressInkGate.Reset();
         m_prevValid = false;
-        m_prevPressureVal = 0;
-        m_penStateMachine.Update(false, 0, 0, 0);
-        m_lastResult.animState = static_cast<uint8_t>(m_penStateMachine.GetState());
+        m_postProcessor.Reset();
+        m_linearFilter.Reset();
+        m_coorReviser.Reset();
+        Asa::PenFrameEvidence evidence{};
+        evidence.noSignal = true;
+        auto profile = m_penStateMachine.Update(evidence);
+        (void)profile;
+        m_lastResult.animState = m_penStateMachine.GetAnimState();
         if (m_emitPacketWhenInvalid)
             m_packetBuilder.Build(m_lastResult,
-                m_bleButtonState.load(std::memory_order_relaxed),
                 m_emitPacketWhenInvalid, outPacket);
         m_prevStatus = m_lastResult.status;
         return false;
@@ -464,9 +391,8 @@ bool StylusPipeline::ProcessRaw(
 
     // ── Phase 2.5: Pressure + State Machine → MotionProfile ──
 
-    const bool isEdge = m_edgeLiftCorrector.IsInEdgeRegion(
-        static_cast<float>(rawCoor.dim1), static_cast<float>(rawCoor.dim2),
-        m_sensorCols, m_sensorRows);
+    const bool wasInking = m_lastResult.tipSwitchActive ||
+                           (m_hasLastGoodFrame && m_lastGoodFrame.tipSwitchActive);
 
     const uint16_t tx1PeakSignal = static_cast<uint16_t>(
         std::clamp(m_gridData.tx1.grid[peak.peakRow][peak.peakCol],
@@ -488,6 +414,7 @@ bool StylusPipeline::ProcessRaw(
     // Pressure (BT MCU) — solve BEFORE state machine
     const auto metrics = BuildSignalMetrics(
         proj, rawCoor, tx1PeakSignal, tx2PeakSignal, m_sensorCols, m_sensorRows);
+    const bool isEdge = metrics.dim1EdgeActive || metrics.dim2EdgeActive;
     m_lastResult.tx1BlockValid = m_gridData.tx1.valid;
     m_lastResult.tx2BlockValid = m_gridData.tx2.valid;
     m_lastResult.signalX = metrics.signalX;
@@ -497,71 +424,89 @@ bool StylusPipeline::ProcessRaw(
     m_lastResult.point.peakTx2 = metrics.tx2Composite;
     m_lastResult.hpp3Dim1SignalValid = (m_lastResult.signalX > 0);
     m_lastResult.hpp3Dim2SignalValid = (m_lastResult.signalY > 0);
-    {
-        uint16_t btPress = m_pressureSolver.GetLatestBtPressure();
-        m_lastResult.point.rawPressure = btPress;
-        const Asa::EdgeSignalInputs edgeSignals{
-            metrics.dim1EdgeActive,
-            metrics.dim2EdgeActive,
-            static_cast<int>(metrics.dim1EdgeSignal),
-            static_cast<int>(metrics.dim2EdgeSignal)
-        };
-        const auto pressureStage = m_pressureSolver.SolveStage(
-            btPress, rawCoor.valid,
-            static_cast<int>(metrics.tx1Composite),
-            isEdge, edgeSignals);
-        const auto noPressResult = m_noPressInkGate.Apply(
-            rawCoor.valid,
-            m_lastResult.tx1BlockValid,
-            pressureStage.signalSuppressActive || pressureStage.edgeSignalSuppressActive,
-            pressureStage.realPressure,
-            m_prevPressureVal,
-            metrics.tx1Composite,
-            metrics.tx2Composite);
-        m_lastResult.noPressInkActive =
-            noPressResult.active && (pressureStage.realPressure == 0);
-        m_lastResult.point.mappedPressure = pressureStage.mappedPressure;
-        m_lastResult.pressure = noPressResult.outputPressure;
-        m_lastResult.point.pressure = m_lastResult.pressure;
-        m_lastResult.recheckEnabled = m_noiseGate.recheckEnabled;
-        m_lastResult.recheckThreshold =
-            static_cast<uint16_t>(std::clamp(m_recheckThBase, 0, 0xFFFF));
-        m_lastResult.recheckThresholdMulti =
-            static_cast<uint16_t>(std::clamp(m_recheckThMulti, 0, 0xFFFF));
-        m_lastResult.recheckPassed =
-            !m_noiseGate.recheckEnabled ||
-            (rawCoor.valid &&
-             m_lastResult.tx1BlockValid &&
-             metrics.tx1Composite >= m_lastResult.recheckThreshold);
+    const auto btSample = m_btPressBuf.ReadLatest();
+    m_lastResult.point.rawPressure = btSample.pressure;
+    const Asa::EdgeSignalInputs edgeSignals{
+        metrics.dim1EdgeActive,
+        metrics.dim2EdgeActive,
+        static_cast<int>(metrics.dim1EdgeSignal),
+        static_cast<int>(metrics.dim2EdgeSignal)
+    };
+    const auto pressureStage = m_pressureSolver.SolveStage(
+        btSample, rawCoor.valid,
+        static_cast<int>(metrics.signalX),
+        isEdge, edgeSignals);
+
+    const bool recentlyWriting = m_hasLastGoodFrame && m_lastGoodFrame.tipSwitchActive;
+    const auto recheck = BuildRecheckContext(
+        metrics, rawCoor.valid, recentlyWriting, m_recheckThBase, m_recheckThMulti);
+    const bool recheckPassed = m_noiseGate.EvaluateRecheck(
+        metrics.signalX, metrics.signalY, metrics.maxRawPeak,
+        recheck.finalThreshold, recheck.sustainThreshold, recheck.overlapLike);
+
+    Asa::PenFrameEvidence evidence{};
+    evidence.coordValid = rawCoor.valid;
+    evidence.noSignal = false;
+    evidence.tx1BlockValid = m_lastResult.tx1BlockValid;
+    evidence.sustainActive = false;
+    evidence.activeStylusPresent = rawCoor.valid && m_lastResult.tx1BlockValid &&
+                                   (metrics.tx1Composite >= recheck.finalThreshold);
+    evidence.hoverSignalPresent = rawCoor.valid && m_lastResult.tx1BlockValid &&
+                                  metrics.tx1Composite >= recheck.finalThreshold;
+    evidence.recheckPassed = recheckPassed;
+    evidence.overlapLike = recheck.overlapLike;
+    evidence.edgeLike = isEdge;
+    evidence.exitSmoothCandidate = false;
+    evidence.suppressPressureButKeepContact = false;
+    evidence.btPressureResidual = false;
+    evidence.edgeSignalLow = false;
+    evidence.pressureIsReal = pressureStage.isRealMeasurement;
+    evidence.mappedPressure = pressureStage.mappedPressure;
+    evidence.realPressure = pressureStage.realPressure;
+    evidence.realMeasuredPressure = pressureStage.isRealMeasurement ? pressureStage.mappedPressure : 0;
+    evidence.pressureForContact = pressureStage.realPressure;
+    evidence.tx1Composite = metrics.tx1Composite;
+    evidence.tx2Composite = metrics.tx2Composite;
+    evidence.curDim1 = rawCoor.dim1;
+    evidence.curDim2 = rawCoor.dim2;
+    const auto update = m_penStateMachine.Update(evidence);
+    const auto& motion = update.motion;
+    const auto& output = update.output;
+
+    m_lastResult.point.mappedPressure = pressureStage.mappedPressure;
+    m_lastResult.pressure = output.outputPressure;
+    m_lastResult.point.pressure = m_lastResult.pressure;
+    m_lastResult.noPressInkActive = false;
+    m_lastResult.tipSwitchActive = output.tipSwitchActive;
+    m_lastResult.sustainOutput = false;
+    m_lastResult.fastLiftOutput = false;
+    m_lastResult.recheckEnabled = m_noiseGate.recheckEnabled;
+    m_lastResult.recheckThreshold = recheck.finalThreshold;
+    m_lastResult.recheckThresholdMulti = recheck.sustainThreshold;
+    m_lastResult.recheckOverlap = recheck.overlapLike;
+    m_lastResult.recheckPassed = recheckPassed;
 #ifdef _DEBUG
-        m_dbg.sigSuppressActive =
-            pressureStage.signalSuppressActive || pressureStage.edgeSignalSuppressActive;
+    m_dbg.sigSuppressActive = false;
 #endif
-    }
 
-    // State machine → MotionProfile
-    auto profile = m_penStateMachine.Update(
-        rawCoor.valid, m_lastResult.pressure,
-        rawCoor.dim1, rawCoor.dim2);
-
-    m_lastResult.animState = static_cast<uint8_t>(m_penStateMachine.GetState());
+    m_lastResult.animState = m_penStateMachine.GetAnimState();
 
     // Handle pen-leave resets
     if (m_penStateMachine.JustLeftRange()) {
         m_postProcessor.Reset();
         m_linearFilter.Reset();
-        m_oneEuroFilter.Reset();
         m_coorReviser.Reset();
         m_noiseGate.Reset();
     }
 
     // ── Phase 3: Post-Processing Chain (all in GLOBAL space, Profile-driven) ──
 
-    // 9a. LinearFilter (self-contained 400-frame buffer, 2-state + gradual constraint)
-    auto postCoor = m_linearFilter.Process(rawCoor, profile.enableLinearFilter);
+    // 9a. LinearFilter (shared history from PenStateMachine)
+    auto postCoor = m_linearFilter.Process(
+        rawCoor, motion.enableLinearFilter, m_penStateMachine);
 
     // 9b. CoorReviser (TX2 solve + tilt + coordinate revision)
-    if (profile.enableCoorReviser && m_coorReviser.enabled && m_gridData.tx2.valid) {
+    if (motion.enableCoorReviser && m_coorReviser.enabled && m_gridData.tx2.valid) {
         if (tx2Peak.valid) {
             // Signal ratio tracking
             m_signalRatioTracker.Push(
@@ -606,16 +551,37 @@ bool StylusPipeline::ProcessRaw(
     // 9c. Coordinate smoothing (Profile-driven IIR or 1-Euro)
     if (m_filterMode == 0) {
         postCoor = m_postProcessor.StepIIR(
-            postCoor, profile.iirCoef, profile.iirDivisorN, profile.skipIIR);
+            postCoor, motion.iirCoef, motion.iirDivisorN, motion.skipIIR);
     } else if (m_filterMode == 1) {
-        postCoor = m_oneEuroFilter.Filter(postCoor);
+        postCoor = m_postProcessor.StepIIR(
+            postCoor, motion.iirCoef, motion.iirDivisorN, motion.skipIIR);
     }
 
     // 9d. Jitter suppression (Profile-driven strength)
-    postCoor = m_postProcessor.StepJitter(postCoor, profile.jitterStrength, isEdge);
+    postCoor = m_postProcessor.StepJitter(postCoor, motion.jitterStrength, isEdge);
 
     // Store final coordinate
     auto finalCoor = postCoor;
+    if (output.keepPreviousCoordinate && m_hasLastGoodFrame) {
+        finalCoor.valid = output.keepInRangeOnReleaseFrame || m_lastGoodFrame.point.valid;
+        finalCoor.dim1 = static_cast<int32_t>(m_lastGoodFrame.point.x);
+        finalCoor.dim2 = static_cast<int32_t>(m_lastGoodFrame.point.y);
+        if (output.applyExitEdgeSnap) {
+            float snappedX = static_cast<float>(finalCoor.dim1);
+            float snappedY = static_cast<float>(finalCoor.dim2);
+            m_noiseGate.ApplyExitEdgeSnap(
+                m_lastGoodFrame.point.x,
+                m_lastGoodFrame.point.y,
+                m_prevPointX,
+                m_prevPointY,
+                m_sensorRows,
+                m_sensorCols,
+                snappedX,
+                snappedY);
+            finalCoor.dim1 = static_cast<int32_t>(snappedX);
+            finalCoor.dim2 = static_cast<int32_t>(snappedY);
+        }
+    }
     m_lastResult.pipelineStage = 0; // Success
 
     m_lastResult.point.valid = finalCoor.valid;
@@ -637,45 +603,30 @@ bool StylusPipeline::ProcessRaw(
     m_dbg.speedInstant  = m_penStateMachine.GetInstantSpeed();
     m_dbg.speedShortAvg = m_penStateMachine.GetSmoothedSpeed();
     m_dbg.speedFullAvg  = 0.f;
-    m_dbg.iirCoef   = static_cast<float>(profile.iirCoef);
+    m_dbg.iirCoef   = static_cast<float>(motion.iirCoef);
     m_dbg.isHover   = (m_lastResult.pressure == 0);
     m_dbg.isEdge    = isEdge;
     m_dbg.tiltDiffX = static_cast<float>(m_coorReviser.GetLastTiltX());
     m_dbg.tiltDiffY = static_cast<float>(m_coorReviser.GetLastTiltY());
     m_dbg.peakSignal = m_lastResult.maxRawPeak;
     m_dbg.signalRatio       = m_signalRatioTracker.GetAvgRatio();
-    m_dbg.freqShiftFreezing = m_freqShiftFreezing;
-    m_dbg.exitSmoothed      = (m_lastResult.pipelineStage == 7);
+    m_dbg.exitSmoothed      = false;
     m_dbg.cmfEnabled        = m_cmfFilter.enabled;
     m_dbg.coorReviserActive = m_coorReviser.enabled;
     m_dbg.coorRevDeltaX     = static_cast<float>(m_coorReviser.GetLastReviseX());
     m_dbg.coorRevDeltaY     = static_cast<float>(m_coorReviser.GetLastReviseY());
     m_dbg.tiltAnomalyDamped = false;
     m_dbg.penLifecycle      = static_cast<uint8_t>(m_penStateMachine.GetState());
-    m_dbg.wasInking         = m_wasInking;
+    m_dbg.wasInking         = m_lastResult.tipSwitchActive;
     m_dbg.avg3PtDim1        = postCoor.dim1;
     m_dbg.avg3PtDim2        = postCoor.dim2;
 #endif
 
     // ── Phase 4: Edge Compensation + Output ──
 
-    // 10a. Edge coordinate compensation
+    // 10a. Keep only upstream coordinate compensation in this refactor.
     m_edgeCoorPost.Apply(m_lastResult.point.x, m_lastResult.point.y,
                          m_sensorCols, m_sensorRows);
-
-    // 10b. Edge-lift artifact correction
-    if (m_elcEnabled && m_edgeLiftCorrector.IsEdgeLiftArtifact(
-            m_lastResult.point.x, m_lastResult.point.y,
-            m_prevPointX, m_prevPointY,
-            m_lastResult.pressure, m_prevPressureVal,
-            m_sensorRows, m_sensorCols)) {
-        m_lastResult.point.x = m_prevPointX;
-        m_lastResult.point.y = m_prevPointY;
-    }
-
-    // 11. Button (from slave header)
-    if (hdr.valid)
-        m_lastResult.status = UpdateButtonState(hdr.button, finalCoor.valid);
 
     // ── Output ──
 
@@ -683,20 +634,20 @@ bool StylusPipeline::ProcessRaw(
     m_prevPointY = m_lastResult.point.y;
     m_prevValid = finalCoor.valid;
     m_prevStatus = m_lastResult.status;
-    m_prevPressureVal = m_lastResult.pressure;
     m_packetBuilder.Build(m_lastResult,
-        m_bleButtonState.load(std::memory_order_relaxed),
         m_emitPacketWhenInvalid, outPacket);
 
     // Save last known-good frame
     m_lastGoodFrame = m_lastResult;
     m_hasLastGoodFrame = true;
-    if (m_lastResult.pressure > 0) m_wasInking = true;
 
 #ifdef _DEBUG
     // Final diagnostics
     m_dbg.rawPressure = m_lastResult.point.rawPressure;
-    m_dbg.mappedPressure = m_lastResult.pressure;
+    m_dbg.mappedPressure = m_lastResult.point.mappedPressure;
+    m_dbg.btSeq = pressureStage.btSeq;
+    m_dbg.predictedAgeFrames = pressureStage.predictedAgeFrames;
+    m_dbg.pressureIsReal = pressureStage.isRealMeasurement;
     m_dbg.vhfPenState = outPacket.valid ? outPacket.bytes[1] : 0;
     m_dbg.linearFilterState = static_cast<uint8_t>(m_linearFilter.GetMode());
 #endif
@@ -714,8 +665,6 @@ std::vector<ConfigParam> StylusPipeline::GetConfigSchema() const {
             ConfigParam::Bool, const_cast<bool*>(&m_enableSlaveChecksum), Cat::General),
         ConfigParam("sp.emitPacketWhenInvalid", "Emit Packet When Invalid",
             ConfigParam::Bool, const_cast<bool*>(&m_emitPacketWhenInvalid), Cat::General),
-        ConfigParam("sp.buttonReleaseHold", "Button Release Hold",
-            ConfigParam::Int, const_cast<int*>(&m_buttonReleaseHoldFrames), 0, 10, Cat::General),
 
         // === Solver ===
         ConfigParam("sp.coordUseTriangle", "Use Triangle Mode",
@@ -822,12 +771,6 @@ std::vector<ConfigParam> StylusPipeline::GetConfigSchema() const {
         // === Behavior ===
         ConfigParam("sp.edgeCoorPostEnabled", "Enable Edge Coordinate Process",
             ConfigParam::Bool, const_cast<bool*>(&m_edgeCoorPost.enabled), Cat::Behavior),
-        ConfigParam("sp.elcEnabled", "Enable Edge Lift Corrector",
-            ConfigParam::Bool, const_cast<bool*>(&m_elcEnabled), Cat::Behavior),
-        ConfigParam("sp.elcEdgeMarginCells", "Edge Lift Margin Cells",
-            ConfigParam::Float, const_cast<float*>(&m_edgeLiftCorrector.edgeMarginCells), 0.0f, 4.0f, Cat::Behavior),
-        ConfigParam("sp.elcJumpThreshold", "Edge Lift Jump Threshold",
-            ConfigParam::Float, const_cast<float*>(&m_edgeLiftCorrector.jumpThreshold), 0.0f, 4096.0f, Cat::Behavior),
         ConfigParam("sp.crEnabled", "Enable TX2 Coor Reviser",
             ConfigParam::Bool, const_cast<bool*>(&m_coorReviser.enabled), Cat::Behavior),
         ConfigParam("sp.crTiltMultX", "CoorRevise Tilt Mult X",
@@ -852,77 +795,20 @@ std::vector<ConfigParam> StylusPipeline::GetConfigSchema() const {
             ConfigParam::Int, const_cast<int*>(&m_coorReviser.tiltJitterDeg), 0, 10, Cat::Behavior),
         ConfigParam("sp.crKeepLast", "CoorRevise Keep Last On Invalid",
             ConfigParam::Bool, const_cast<bool*>(&m_coorReviser.keepLastOnInvalid), Cat::Behavior),
-        ConfigParam("sp.exitSmoothEnabled", "Pen Exit Smooth",
-            ConfigParam::Bool, const_cast<bool*>(&m_noiseGate.exitSmoothEnabled), Cat::Behavior),
 
         // === Output ===
         ConfigParam("sp.pressPolyEnabled", "Polynomial Mapping",
             ConfigParam::Bool, const_cast<bool*>(&m_pressureSolver.polyEnabled), Cat::Output),
-        ConfigParam("sp.pressIirQ8", "IIR Weight (Q8)",
-            ConfigParam::Int, const_cast<int*>(&m_pressureSolver.iirWeightQ8), 16, 255, Cat::Output),
         ConfigParam("sp.pressSeg1Th", "Seg1 Threshold",
             ConfigParam::Int, const_cast<int*>(&m_pressureSolver.seg1Threshold), 0, 50, Cat::Output),
         ConfigParam("sp.pressSeg2Th", "Seg2 Threshold",
             ConfigParam::Int, const_cast<int*>(&m_pressureSolver.seg2Threshold), 50, 500, Cat::Output),
         ConfigParam("sp.pressGain", "Gain %",
             ConfigParam::Int, const_cast<int*>(&m_pressureSolver.gainPercent), 10, 500, Cat::Output),
-        ConfigParam("sp.pressTailFrames", "Tail Frames",
-            ConfigParam::Int, const_cast<int*>(&m_pressureSolver.tailFrames), 0, 20, Cat::Output),
-        ConfigParam("sp.pressTailMin", "Tail Min",
-            ConfigParam::Int, const_cast<int*>(&m_pressureSolver.tailMin), 0, 100, Cat::Output),
-        ConfigParam("sp.pressTailDecay", "Tail Decay Rate",
-            ConfigParam::Int, const_cast<int*>(&m_pressureSolver.tailDecay), 1, 200, Cat::Output),
-        ConfigParam("sp.slaveHdrBtnOffset", "Button Byte Offset",
-            ConfigParam::Int, const_cast<int*>(&m_slaveHdrBtnOffset), 0, 6, Cat::Output),
-        ConfigParam("sp.sigSuppressEnabled", "Signal Suppress Enabled",
-            ConfigParam::Bool, const_cast<bool*>(&m_pressureSolver.signalSuppressEnabled), Cat::Output),
-        ConfigParam("sp.sigSuppressEnter", "Signal Suppress Enter Thr",
-            ConfigParam::Int, const_cast<int*>(&m_pressureSolver.signalSuppressEnter), 10, 2000, Cat::Output),
-        ConfigParam("sp.sigSuppressExit", "Signal Suppress Exit Thr",
-            ConfigParam::Int, const_cast<int*>(&m_pressureSolver.signalSuppressExit), 10, 3000, Cat::Output),
-        ConfigParam("sp.edgeSigSuppressEnabled", "Edge Signal Suppress Enabled",
-            ConfigParam::Bool, const_cast<bool*>(&m_pressureSolver.edgeSignalSuppressEnabled), Cat::Output),
-        ConfigParam("sp.edgeSigSuppressEnter", "Edge Signal Suppress Enter Thr",
-            ConfigParam::Int, const_cast<int*>(&m_pressureSolver.edgeSignalSuppressEnter), 10, 5000, Cat::Output),
-        ConfigParam("sp.edgeSigSuppressExit", "Edge Signal Suppress Exit Thr",
-            ConfigParam::Int, const_cast<int*>(&m_pressureSolver.edgeSignalSuppressExit), 10, 5000, Cat::Output),
-        ConfigParam("sp.noPressEnabled", "NoPressInk Enabled",
-            ConfigParam::Bool, const_cast<bool*>(&m_noPressInkGate.enabled), Cat::Output),
-        ConfigParam("sp.noPressBaseTh", "NoPress Base Threshold",
-            ConfigParam::Int, const_cast<int*>(&m_noPressInkGate.baseThreshold), 0, 20000, Cat::Output),
-        ConfigParam("sp.noPressEnterRatio", "NoPress Enter Ratio",
-            ConfigParam::Int, const_cast<int*>(&m_noPressInkGate.enterRatioPercent), 1, 200, Cat::Output),
-        ConfigParam("sp.noPressExitRatio", "NoPress Exit Ratio",
-            ConfigParam::Int, const_cast<int*>(&m_noPressInkGate.exitRatioPercent), 1, 200, Cat::Output),
-        ConfigParam("sp.noPressTiltDeadzone", "NoPress Tilt Deadzone",
-            ConfigParam::Int, const_cast<int*>(&m_noPressInkGate.tiltDeadzone), 0, 20000, Cat::Output),
-        ConfigParam("sp.noPressTiltCap", "NoPress Tilt Cap",
-            ConfigParam::Int, const_cast<int*>(&m_noPressInkGate.tiltCap), 0, 20000, Cat::Output),
-        ConfigParam("sp.noPressTiltScale", "NoPress Tilt Scale %",
-            ConfigParam::Int, const_cast<int*>(&m_noPressInkGate.tiltScalePercent), 0, 200, Cat::Output),
-        ConfigParam("sp.noPressDebounceEnter", "NoPress Enter Debounce",
-            ConfigParam::Int, const_cast<int*>(&m_noPressInkGate.enterDebounceFrames), 1, 10, Cat::Output),
-        ConfigParam("sp.noPressDebounceExit", "NoPress Exit Debounce",
-            ConfigParam::Int, const_cast<int*>(&m_noPressInkGate.exitDebounceFrames), 1, 10, Cat::Output),
-        ConfigParam("sp.noPressSyntheticMin", "NoPress Synthetic Min",
-            ConfigParam::Int, const_cast<int*>(&m_noPressInkGate.syntheticMinPressure), 1, 100, Cat::Output),
 
         // === Filter Mode ===
         ConfigParam("sp.filterMode", "Filter Mode (0=IIR 1=1Euro 2=Off)",
             ConfigParam::Int, const_cast<int*>(&m_filterMode), 0, 2, Cat::Filter),
-
-        // === 1-Euro Filter ===
-        ConfigParam("sp.1eur.minCutoff", "1Euro MinCutoff",
-            ConfigParam::Float, const_cast<float*>(&m_oneEuroFilter.minCutoffF),
-            0.01f, 20.0f, Cat::Filter),
-        ConfigParam("sp.1eur.beta", "1Euro Beta",
-            ConfigParam::Float, const_cast<float*>(&m_oneEuroFilter.betaF),
-            0.0001f, 2.0f, Cat::Filter),
-        ConfigParam("sp.1eur.dCutoff", "1Euro DCutoff",
-            ConfigParam::Float, const_cast<float*>(&m_oneEuroFilter.dCutoffF),
-            0.1f, 10.0f, Cat::Filter),
-        ConfigParam("sp.1eur.sampleRate", "1Euro SampleRate",
-            ConfigParam::Int, const_cast<int*>(&m_oneEuroFilter.sampleRate), 60, 480, Cat::Filter),
     };
 }
 
@@ -932,7 +818,6 @@ std::vector<ConfigParam> StylusPipeline::GetConfigSchema() const {
 void StylusPipeline::SaveConfig(std::ostream& out) const {
     out << "sp.enableSlaveChecksum=" << m_enableSlaveChecksum << "\n";
     out << "sp.emitPacketWhenInvalid=" << m_emitPacketWhenInvalid << "\n";
-    out << "sp.buttonReleaseHold=" << m_buttonReleaseHoldFrames << "\n";
     out << "sp.coordUseTriangle=" << m_coordSolver.useTriangle << "\n";
     out << "sp.triEdgeSecondaryBlend=" << m_coordSolver.triEdgeSecondaryBlend << "\n";
     out << "sp.triEdgeDim1Ratio=" << m_coordSolver.triEdgeDim1.ratio << "\n";
@@ -989,51 +874,22 @@ void StylusPipeline::SaveConfig(std::ostream& out) const {
     out << "sp.crKeepLast=" << m_coorReviser.keepLastOnInvalid << "\n";
     // Edge
     out << "sp.edgeCoorPostEnabled=" << m_edgeCoorPost.enabled << "\n";
-    out << "sp.elcEnabled=" << m_elcEnabled << "\n";
-    out << "sp.elcEdgeMarginCells=" << m_edgeLiftCorrector.edgeMarginCells << "\n";
-    out << "sp.elcJumpThreshold=" << m_edgeLiftCorrector.jumpThreshold << "\n";
     // Noise
     out << "sp.hpp3NoiseEnabled=" << m_noiseGate.noisePostEnabled << "\n";
     out << "sp.hpp3JumpTh=" << m_noiseGate.coorJumpThreshold << "\n";
     out << "sp.recheckEnabled=" << m_noiseGate.recheckEnabled << "\n";
     out << "sp.recheckThBase=" << m_recheckThBase << "\n";
     out << "sp.recheckThMulti=" << m_recheckThMulti << "\n";
-    out << "sp.exitSmoothEnabled=" << m_noiseGate.exitSmoothEnabled << "\n";
     out << "sp.cmfEnabled=" << m_cmfFilter.enabled << "\n";
     out << "sp.cmfWindowSize=" << m_cmfFilter.windowSize << "\n";
     out << "sp.tpPatternEnabled=" << m_tpPatternCompEnabled << "\n";
     // Pressure
     out << "sp.pressPolyEnabled=" << m_pressureSolver.polyEnabled << "\n";
-    out << "sp.pressIirQ8=" << m_pressureSolver.iirWeightQ8 << "\n";
     out << "sp.pressSeg1Th=" << m_pressureSolver.seg1Threshold << "\n";
     out << "sp.pressSeg2Th=" << m_pressureSolver.seg2Threshold << "\n";
     out << "sp.pressGain=" << m_pressureSolver.gainPercent << "\n";
-    out << "sp.pressTailFrames=" << m_pressureSolver.tailFrames << "\n";
-    out << "sp.pressTailMin=" << m_pressureSolver.tailMin << "\n";
-    out << "sp.pressTailDecay=" << m_pressureSolver.tailDecay << "\n";
-    out << "sp.slaveHdrBtnOffset=" << m_slaveHdrBtnOffset << "\n";
-    out << "sp.sigSuppressEnabled=" << m_pressureSolver.signalSuppressEnabled << "\n";
-    out << "sp.sigSuppressEnter=" << m_pressureSolver.signalSuppressEnter << "\n";
-    out << "sp.sigSuppressExit=" << m_pressureSolver.signalSuppressExit << "\n";
-    out << "sp.edgeSigSuppressEnabled=" << m_pressureSolver.edgeSignalSuppressEnabled << "\n";
-    out << "sp.edgeSigSuppressEnter=" << m_pressureSolver.edgeSignalSuppressEnter << "\n";
-    out << "sp.edgeSigSuppressExit=" << m_pressureSolver.edgeSignalSuppressExit << "\n";
-    out << "sp.noPressEnabled=" << (m_noPressInkGate.enabled ? "1" : "0") << "\n";
-    out << "sp.noPressBaseTh=" << m_noPressInkGate.baseThreshold << "\n";
-    out << "sp.noPressEnterRatio=" << m_noPressInkGate.enterRatioPercent << "\n";
-    out << "sp.noPressExitRatio=" << m_noPressInkGate.exitRatioPercent << "\n";
-    out << "sp.noPressTiltDeadzone=" << m_noPressInkGate.tiltDeadzone << "\n";
-    out << "sp.noPressTiltCap=" << m_noPressInkGate.tiltCap << "\n";
-    out << "sp.noPressTiltScale=" << m_noPressInkGate.tiltScalePercent << "\n";
-    out << "sp.noPressDebounceEnter=" << m_noPressInkGate.enterDebounceFrames << "\n";
-    out << "sp.noPressDebounceExit=" << m_noPressInkGate.exitDebounceFrames << "\n";
-    out << "sp.noPressSyntheticMin=" << m_noPressInkGate.syntheticMinPressure << "\n";
     // Filter mode
     out << "sp.filterMode=" << m_filterMode << "\n";
-    out << "sp.1eur.minCutoff=" << m_oneEuroFilter.minCutoffF << "\n";
-    out << "sp.1eur.beta=" << m_oneEuroFilter.betaF << "\n";
-    out << "sp.1eur.dCutoff=" << m_oneEuroFilter.dCutoffF << "\n";
-    out << "sp.1eur.sampleRate=" << m_oneEuroFilter.sampleRate << "\n";
 }
 
 // ══════════════════════════════════════════════
@@ -1052,7 +908,6 @@ void StylusPipeline::LoadConfig(
 
     if (key == "sp.enableSlaveChecksum") m_enableSlaveChecksum = toBool(value);
     else if (key == "sp.emitPacketWhenInvalid") m_emitPacketWhenInvalid = toBool(value);
-    else if (key == "sp.buttonReleaseHold") m_buttonReleaseHoldFrames = toInt(value);
     else if (key == "sp.coordUseTriangle") m_coordSolver.useTriangle = toBool(value);
     else if (key == "sp.triEdgeSecondaryBlend" || key == "sp.coordEdgeCompBit3") m_coordSolver.triEdgeSecondaryBlend = toBool(value);
     else if (key == "sp.triEdgeDim1Ratio") m_coordSolver.triEdgeDim1.ratio = std::clamp(toInt(value), 0, 1000);
@@ -1109,51 +964,22 @@ void StylusPipeline::LoadConfig(
     else if (key == "sp.crKeepLast") m_coorReviser.keepLastOnInvalid = toBool(value);
     // Edge
     else if (key == "sp.edgeCoorPostEnabled") m_edgeCoorPost.enabled = toBool(value);
-    else if (key == "sp.elcEnabled") m_elcEnabled = toBool(value);
-    else if (key == "sp.elcEdgeMarginCells") m_edgeLiftCorrector.edgeMarginCells = std::clamp(toFloat(value), 0.0f, 4.0f);
-    else if (key == "sp.elcJumpThreshold") m_edgeLiftCorrector.jumpThreshold = std::clamp(toFloat(value), 0.0f, 4096.0f);
     // Noise
     else if (key == "sp.hpp3NoiseEnabled") m_noiseGate.noisePostEnabled = toBool(value);
     else if (key == "sp.hpp3JumpTh") m_noiseGate.coorJumpThreshold = toFloat(value);
     else if (key == "sp.recheckEnabled") m_noiseGate.recheckEnabled = toBool(value);
     else if (key == "sp.recheckThBase") m_recheckThBase = toInt(value);
     else if (key == "sp.recheckThMulti") m_recheckThMulti = toInt(value);
-    else if (key == "sp.exitSmoothEnabled") m_noiseGate.exitSmoothEnabled = toBool(value);
     else if (key == "sp.cmfEnabled") m_cmfFilter.enabled = toBool(value);
     else if (key == "sp.cmfWindowSize") m_cmfFilter.windowSize = toInt(value);
     else if (key == "sp.tpPatternEnabled") m_tpPatternCompEnabled = toBool(value);
     // Pressure
     else if (key == "sp.pressPolyEnabled") m_pressureSolver.polyEnabled = toBool(value);
-    else if (key == "sp.pressIirQ8") m_pressureSolver.iirWeightQ8 = std::clamp(toInt(value), 16, 255);
     else if (key == "sp.pressSeg1Th") m_pressureSolver.seg1Threshold = toInt(value);
     else if (key == "sp.pressSeg2Th") m_pressureSolver.seg2Threshold = toInt(value);
     else if (key == "sp.pressGain") m_pressureSolver.gainPercent = toInt(value);
-    else if (key == "sp.pressTailFrames") m_pressureSolver.tailFrames = toInt(value);
-    else if (key == "sp.pressTailMin") m_pressureSolver.tailMin = toInt(value);
-    else if (key == "sp.pressTailDecay") m_pressureSolver.tailDecay = toInt(value);
-    else if (key == "sp.slaveHdrBtnOffset") m_slaveHdrBtnOffset = toInt(value);
-    else if (key == "sp.sigSuppressEnabled") m_pressureSolver.signalSuppressEnabled = toBool(value);
-    else if (key == "sp.sigSuppressEnter") m_pressureSolver.signalSuppressEnter = toInt(value);
-    else if (key == "sp.sigSuppressExit") m_pressureSolver.signalSuppressExit = toInt(value);
-    else if (key == "sp.edgeSigSuppressEnabled") m_pressureSolver.edgeSignalSuppressEnabled = toBool(value);
-    else if (key == "sp.edgeSigSuppressEnter") m_pressureSolver.edgeSignalSuppressEnter = toInt(value);
-    else if (key == "sp.edgeSigSuppressExit") m_pressureSolver.edgeSignalSuppressExit = toInt(value);
-    else if (key == "sp.noPressEnabled") m_noPressInkGate.enabled = toBool(value);
-    else if (key == "sp.noPressBaseTh") m_noPressInkGate.baseThreshold = toInt(value);
-    else if (key == "sp.noPressEnterRatio") m_noPressInkGate.enterRatioPercent = toInt(value);
-    else if (key == "sp.noPressExitRatio") m_noPressInkGate.exitRatioPercent = toInt(value);
-    else if (key == "sp.noPressTiltDeadzone") m_noPressInkGate.tiltDeadzone = toInt(value);
-    else if (key == "sp.noPressTiltCap") m_noPressInkGate.tiltCap = toInt(value);
-    else if (key == "sp.noPressTiltScale") m_noPressInkGate.tiltScalePercent = toInt(value);
-    else if (key == "sp.noPressDebounceEnter") m_noPressInkGate.enterDebounceFrames = toInt(value);
-    else if (key == "sp.noPressDebounceExit") m_noPressInkGate.exitDebounceFrames = toInt(value);
-    else if (key == "sp.noPressSyntheticMin") m_noPressInkGate.syntheticMinPressure = toInt(value);
     // Filter mode
     else if (key == "sp.filterMode") m_filterMode = toInt(value);
-    else if (key == "sp.1eur.minCutoff") m_oneEuroFilter.minCutoffF = toFloat(value);
-    else if (key == "sp.1eur.beta") m_oneEuroFilter.betaF = toFloat(value);
-    else if (key == "sp.1eur.dCutoff") m_oneEuroFilter.dCutoffF = toFloat(value);
-    else if (key == "sp.1eur.sampleRate") m_oneEuroFilter.sampleRate = toInt(value);
 }
 
 } // namespace Solvers
