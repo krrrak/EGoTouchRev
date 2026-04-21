@@ -7,27 +7,29 @@
 #include "IpcPipeServer.h"
 #include "SharedFrameBuffer.h"
 #include "ConfigSync.h"
+#include "SolverTypes.h"
 
 #include "GuiLogSink.h"
 #include "Logger.h"
 #include "IpcProtocol.h"
 
-#include <fstream>
-#include <string>
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+
 #include <algorithm>
-#include <array>
 #include <cctype>
-#include <cmath>
 #include <cstring>
-#include <ctime>
+#include <fstream>
 #include <filesystem>
 #include <iomanip>
+#include <mutex>
 #include <optional>
 #include <sstream>
+#include <string>
 #include <string_view>
-
-// Engine Pipeline Processors
-#include "TouchSolver/TouchPipeline.h"
+#include <ctime>
 
 namespace Service {
 
@@ -79,6 +81,35 @@ enum class DebugDerivedSourceIndex : int16_t {
 
 constexpr uint8_t ToFieldBit(ServiceConfigField field) {
     return static_cast<uint8_t>(1u << static_cast<uint8_t>(field));
+}
+
+constexpr uint8_t ToPersistedFieldBits() {
+    return Ipc::ToBits(Ipc::ServiceConfigFieldWire::Mode) |
+           Ipc::ToBits(Ipc::ServiceConfigFieldWire::AutoMode) |
+           Ipc::ToBits(Ipc::ServiceConfigFieldWire::StylusVhfEnabled);
+}
+
+constexpr uint8_t ToWireServiceMode(ServiceMode mode) {
+    switch (mode) {
+    case ServiceMode::Full:
+        return static_cast<uint8_t>(Ipc::ServiceModeWire::Full);
+    case ServiceMode::TouchOnly:
+        return static_cast<uint8_t>(Ipc::ServiceModeWire::TouchOnly);
+    }
+    return static_cast<uint8_t>(Ipc::ServiceModeWire::Full);
+}
+
+bool TryParseWireServiceMode(uint8_t wireValue, ServiceMode& out) {
+    switch (static_cast<Ipc::ServiceModeWire>(wireValue)) {
+    case Ipc::ServiceModeWire::Full:
+        out = ServiceMode::Full;
+        return true;
+    case Ipc::ServiceModeWire::TouchOnly:
+        out = ServiceMode::TouchOnly;
+        return true;
+    default:
+        return false;
+    }
 }
 
 uint64_t EncodeU32(uint32_t value) {
@@ -140,6 +171,25 @@ bool ParseIniKeyValue(std::string_view line, std::string& key, std::string& valu
     key = TrimCopy(line.substr(0, eq));
     value = TrimCopy(line.substr(eq + 1));
     return !key.empty();
+}
+
+bool HasIniSection(const std::string& configPath, std::string_view sectionName) {
+    std::ifstream cfg(configPath);
+    if (!cfg.is_open()) {
+        return false;
+    }
+
+    std::string line;
+    while (std::getline(cfg, line)) {
+        const std::string trimmed = TrimCopy(line);
+        if (trimmed.empty() || trimmed[0] == ';' || trimmed[0] == '#') continue;
+        if (trimmed.front() != '[' || trimmed.back() != ']') continue;
+        const std::string current = TrimCopy(std::string_view(trimmed).substr(1, trimmed.size() - 2));
+        if (current == sectionName) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool IsLegacyTouchSection(const std::string& section) {
@@ -226,8 +276,7 @@ bool WriteCanonicalConfig(const std::string& configPath,
                           ServiceMode mode,
                           bool autoMode,
                           bool stylusVhfEnabled,
-                          const Solvers::TouchPipeline& touchPipe,
-                          const Solvers::StylusPipeline& stylusPipe) {
+                          const DeviceRuntime& runtime) {
     std::ofstream out(configPath, std::ios::trunc);
     if (!out.is_open()) return false;
 
@@ -237,13 +286,45 @@ bool WriteCanonicalConfig(const std::string& configPath,
     out << "stylus_vhf_enabled=" << (stylusVhfEnabled ? "1" : "0") << "\n\n";
 
     out << "[TouchPipeline]\n";
-    touchPipe.SaveConfig(out);
+    runtime.SavePipelineConfig(out);
     out << "\n";
 
     out << "[StylusPipeline]\n";
-    stylusPipe.SaveConfig(out);
+    runtime.SaveStylusPipelineConfig(out);
     out << "\n";
     return true;
+}
+
+RuntimePolicyEvent TranslateSystemStateEvent(const Host::SystemStateEvent& event) {
+    RuntimePolicyEvent translated{};
+    translated.timestamp = event.timestamp;
+    translated.rawIndex = event.raw_index;
+
+    switch (event.type) {
+    case Host::SystemStateEventType::DisplayOn:
+        translated.type = RuntimePolicyEvent::Type::DisplayOn;
+        break;
+    case Host::SystemStateEventType::DisplayOff:
+        translated.type = RuntimePolicyEvent::Type::DisplayOff;
+        break;
+    case Host::SystemStateEventType::LidOn:
+        translated.type = RuntimePolicyEvent::Type::LidOn;
+        break;
+    case Host::SystemStateEventType::LidOff:
+        translated.type = RuntimePolicyEvent::Type::LidOff;
+        break;
+    case Host::SystemStateEventType::Shutdown:
+        translated.type = RuntimePolicyEvent::Type::Shutdown;
+        break;
+    case Host::SystemStateEventType::ResumeAutomatic:
+        translated.type = RuntimePolicyEvent::Type::ResumeAutomatic;
+        break;
+    default:
+        translated.type = RuntimePolicyEvent::Type::Unknown;
+        break;
+    }
+
+    return translated;
 }
 
 } // namespace
@@ -294,8 +375,7 @@ ServiceHost::ServiceConfigState ServiceHost::ParseServiceConfig(const std::strin
 void ServiceHost::ApplyServiceConfigToRuntime(const ServiceConfigState& config) {
     if (!m_deviceRuntime) return;
 
-    m_deviceRuntime->SetAutoMode(config.autoMode);
-    m_deviceRuntime->SetStylusVhfEnabled(config.stylusVhfEnabled);
+    m_deviceRuntime->ApplyServicePolicy(config.autoMode, config.stylusVhfEnabled);
 }
 
 ServiceHost::ReloadServiceConfigResult ServiceHost::HandleReloadServiceConfig(
@@ -318,10 +398,6 @@ ServiceHost::ReloadServiceConfigResult ServiceHost::HandleReloadServiceConfig(
 
     if (autoModeChanged) {
         result.changedFields |= ToFieldBit(ServiceConfigField::AutoMode);
-        if (m_deviceRuntime) {
-            m_deviceRuntime->SetAutoMode(reloadedConfig.autoMode);
-            result.appliedFields |= ToFieldBit(ServiceConfigField::AutoMode);
-        }
         LOG_INFO("Service", __func__, "IPC",
                  "[Service].auto_mode reloaded to {} (immediate apply).",
                  reloadedConfig.autoMode ? 1 : 0);
@@ -329,13 +405,16 @@ ServiceHost::ReloadServiceConfigResult ServiceHost::HandleReloadServiceConfig(
 
     if (stylusVhfChanged) {
         result.changedFields |= ToFieldBit(ServiceConfigField::StylusVhfEnabled);
-        if (m_deviceRuntime) {
-            m_deviceRuntime->SetStylusVhfEnabled(reloadedConfig.stylusVhfEnabled);
-            result.appliedFields |= ToFieldBit(ServiceConfigField::StylusVhfEnabled);
-        }
         LOG_INFO("Service", __func__, "IPC",
                  "[Service].stylus_vhf_enabled reloaded to {} (immediate apply).",
                  reloadedConfig.stylusVhfEnabled ? 1 : 0);
+    }
+
+    if (m_deviceRuntime && (autoModeChanged || stylusVhfChanged)) {
+        m_deviceRuntime->ApplyServicePolicy(reloadedConfig.autoMode, reloadedConfig.stylusVhfEnabled);
+        result.appliedFields |= static_cast<uint8_t>(
+            (autoModeChanged ? ToFieldBit(ServiceConfigField::AutoMode) : 0u) |
+            (stylusVhfChanged ? ToFieldBit(ServiceConfigField::StylusVhfEnabled) : 0u));
     }
 
     m_configState = reloadedConfig;
@@ -363,7 +442,7 @@ void ServiceHost::StartSystemStateMonitor() {
     const bool monitorOk = m_impl->m_sysMonitor->Start(
         [this](const Host::SystemStateEvent& ev) {
             LOG_INFO("Service", __func__, "Event", "System event: type={}", Host::ToString(ev.type));
-            m_deviceRuntime->IngestSystemEvent(ev);
+            m_deviceRuntime->IngestPolicyEvent(TranslateSystemStateEvent(ev));
         });
 
     if (!monitorOk) {
@@ -430,7 +509,7 @@ void ServiceHost::StartPenSubsystem() {
     m_impl->m_penEventBridge->SetEventCallback(
         [this](const Himax::Pen::PenEvent& ev) {
             if (m_deviceRuntime) {
-                m_deviceRuntime->OnPenEvent(ev);
+                m_deviceRuntime->IngestPenEvent(ev);
             }
         });
     m_impl->m_penEventBridge->Start();
@@ -443,7 +522,7 @@ void ServiceHost::StartPenSubsystem() {
     m_impl->m_penPressureReader->SetPressureCallback(
         [this](uint16_t press) {
             if (m_deviceRuntime) {
-                m_deviceRuntime->SetBtMcuPressure(press);
+                m_deviceRuntime->IngestBtMcuPressure(press);
             }
         });
     m_impl->m_penPressureReader->Start();
@@ -542,10 +621,11 @@ void ServiceHost::Stop() {
 }
 
 // ── Shared config loader ────────────────────────────────────────────
-static LoadPipelineConfigResult LoadPipelineConfig(
+template <typename TouchLoader, typename StylusLoader>
+LoadPipelineConfigResult LoadPipelineConfig(
     const std::string& configPath,
-    Solvers::TouchPipeline& touchPipe,
-    Solvers::StylusPipeline* stylusPipe = nullptr)
+    TouchLoader&& loadTouch,
+    StylusLoader&& loadStylus)
 {
     LoadPipelineConfigResult result;
     std::ifstream in(configPath);
@@ -566,19 +646,19 @@ static LoadPipelineConfigResult LoadPipelineConfig(
         if (!ParseIniKeyValue(trimmed, key, val)) continue;
 
         if (section == "TouchPipeline") {
-            touchPipe.LoadConfig(key, val);
+            loadTouch(key, val);
             result.touchLoaded = true;
             continue;
         }
-        if (stylusPipe && section == "StylusPipeline") {
-            stylusPipe->LoadConfig(key, val);
+        if (section == "StylusPipeline") {
+            loadStylus(key, val);
             result.stylusLoaded = true;
             continue;
         }
         if (IsLegacyTouchSection(section)) {
             const auto mappedKey = MapLegacyTouchKey(section, key);
             if (!mappedKey.has_value()) continue;
-            touchPipe.LoadConfig(*mappedKey, val);
+            loadTouch(*mappedKey, val);
             result.touchLoaded = true;
             result.migrated = true;
         }
@@ -865,12 +945,16 @@ void ServiceHost::BuildDebugSchema() {
 void ServiceHost::BuildDefaultPipeline(const std::string& configPath) {
     // TouchPipeline is self-contained: no processor registration needed.
     // Just load config.
-    auto& tp = m_deviceRuntime->GetPipeline();
-    auto& sp = m_deviceRuntime->GetStylusPipeline();
+    auto loadTouch = [this](const std::string& key, const std::string& value) {
+        m_deviceRuntime->LoadPipelineConfig(key, value);
+    };
+    auto loadStylus = [this](const std::string& key, const std::string& value) {
+        m_deviceRuntime->LoadStylusPipelineConfig(key, value);
+    };
     LOG_INFO("Service", __func__, "Boot", "TouchPipeline initialized (linear orchestrator).");
 
     // Load saved config
-    const auto loadResult = LoadPipelineConfig(configPath, tp, &sp);
+    const auto loadResult = LoadPipelineConfig(configPath, loadTouch, loadStylus);
     if (!loadResult.fileOpened) {
         LOG_WARN("Service", __func__, "Boot", "Config file not found: {}", configPath);
         return;
@@ -879,7 +963,7 @@ void ServiceHost::BuildDefaultPipeline(const std::string& configPath) {
     if (loadResult.migrated) {
         std::string backupPath;
         if (BackupConfigFile(configPath, backupPath)) {
-            if (WriteCanonicalConfig(configPath, m_configState.mode, m_configState.autoMode, m_configState.stylusVhfEnabled, tp, sp)) {
+            if (WriteCanonicalConfig(configPath, m_configState.mode, m_configState.autoMode, m_configState.stylusVhfEnabled, *m_deviceRuntime)) {
                 LOG_INFO("Service", __func__, "Boot",
                          "Migrated legacy pipeline config from {} and rewrote canonical sections. Backup: {}",
                          configPath, backupPath);
@@ -917,15 +1001,19 @@ void ServiceHost::HandleIpcEnterDebugMode(Ipc::IpcResponse& resp) {
                     m_impl->m_latestDebugFrame = f;
                     m_impl->m_hasLatestDebugFrame = true;
                 }
-                m_impl->m_frameWriter.Write(f);
+                Ipc::SharedFrameData sharedFrame{};
+                Ipc::PopulateSharedFrameDataFromSolverFrame(sharedFrame, f);
+                m_impl->m_frameWriter.Write(sharedFrame);
             });
         m_impl->m_debugMode = true;
-        resp.success = true;
+        Ipc::MarkSuccess(resp);
         LOG_INFO("Service", __func__, "IPC", "Entered debug mode.");
     } else {
+        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidState);
         LOG_ERROR("Service", __func__, "IPC", "EnterDebugMode rejected: shared memory not available.");
     }
 #else
+    Ipc::MarkFailure(resp, Ipc::IpcStatusCode::UnsupportedCommand);
     LOG_WARN("Service", __func__, "IPC", "EnterDebugMode not available in release build.");
 #endif
 }
@@ -941,30 +1029,112 @@ void ServiceHost::HandleIpcExitDebugMode(Ipc::IpcResponse& resp) {
     m_impl->m_debugMode = false;
 #endif
 
-    resp.success = true;
+    Ipc::MarkSuccess(resp);
     LOG_INFO("Service", __func__, "IPC", "Exited debug mode.");
+}
+
+void ServiceHost::HandleIpcGetConfigSnapshot(Ipc::IpcResponse& resp) {
+    Ipc::ConfigSnapshotWire snapshot{};
+    snapshot.definedFields = ToPersistedFieldBits();
+    snapshot.desiredMode = ToWireServiceMode(m_configState.mode);
+    snapshot.activeMode = ToWireServiceMode(m_runtimeMode);
+    snapshot.autoMode = m_configState.autoMode ? 1 : 0;
+    snapshot.stylusVhfEnabled = m_configState.stylusVhfEnabled ? 1 : 0;
+
+    std::memcpy(resp.data, &snapshot, sizeof(snapshot));
+    resp.dataLen = static_cast<uint16_t>(sizeof(snapshot));
+    Ipc::MarkSuccess(resp);
+}
+
+void ServiceHost::HandleIpcApplyConfigPatch(const Ipc::IpcRequest& req, Ipc::IpcResponse& resp) {
+    if (!m_deviceRuntime) {
+        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidState);
+        return;
+    }
+    if (req.paramLen < sizeof(Ipc::ApplyConfigPatchRequestWire)) {
+        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidRequest);
+        return;
+    }
+
+    Ipc::ApplyConfigPatchRequestWire patch{};
+    std::memcpy(&patch, req.param, sizeof(patch));
+    if (patch.wireVersion != Ipc::kIpcProtocolVersion) {
+        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidRequest);
+        return;
+    }
+
+    ServiceConfigState desired = m_configState;
+    if (Ipc::HasField(patch.fieldMask, Ipc::ServiceConfigFieldWire::Mode)) {
+        if (!TryParseWireServiceMode(patch.desiredMode, desired.mode)) {
+            Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidRequest);
+            return;
+        }
+    }
+    if (Ipc::HasField(patch.fieldMask, Ipc::ServiceConfigFieldWire::AutoMode)) {
+        desired.autoMode = patch.autoMode != 0;
+    }
+    if (Ipc::HasField(patch.fieldMask, Ipc::ServiceConfigFieldWire::StylusVhfEnabled)) {
+        desired.stylusVhfEnabled = patch.stylusVhfEnabled != 0;
+    }
+
+    const auto reloadState = HandleReloadServiceConfig(desired);
+
+    Ipc::ConfigMutationResultWire result{};
+    result.changedFields = reloadState.changedFields;
+    result.appliedFields = reloadState.appliedFields;
+    result.restartRequiredFields = reloadState.restartRequiredFields;
+
+    std::memcpy(resp.data, &result, sizeof(result));
+    resp.dataLen = static_cast<uint16_t>(sizeof(result));
+    Ipc::MarkSuccess(resp);
+}
+
+void ServiceHost::HandleIpcPersistConfig(Ipc::IpcResponse& resp) {
+    if (!m_deviceRuntime) {
+        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidState);
+        return;
+    }
+
+    if (!WriteCanonicalConfig(kConfigPath, m_configState.mode, m_configState.autoMode, m_configState.stylusVhfEnabled, *m_deviceRuntime)) {
+        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InternalError);
+        return;
+    }
+
+    Ipc::PersistConfigResponseWire result{};
+    result.persistedFields = ToPersistedFieldBits();
+    std::memcpy(resp.data, &result, sizeof(result));
+    resp.dataLen = static_cast<uint16_t>(sizeof(result));
+    Ipc::MarkSuccess(resp);
+    LOG_INFO("Service", __func__, "IPC", "Canonical config persisted to {}.", kConfigPath);
 }
 
 void ServiceHost::HandleIpcReloadConfig(Ipc::IpcResponse& resp) {
     if (!m_deviceRuntime) {
+        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidState);
         return;
     }
 
-    auto& tp = m_deviceRuntime->GetPipeline();
-    auto& sp = m_deviceRuntime->GetStylusPipeline();
-    const auto loadResult = LoadPipelineConfig(kConfigPath, tp, &sp);
+    auto loadTouch = [this](const std::string& key, const std::string& value) {
+        m_deviceRuntime->LoadPipelineConfig(key, value);
+    };
+    auto loadStylus = [this](const std::string& key, const std::string& value) {
+        m_deviceRuntime->LoadStylusPipelineConfig(key, value);
+    };
+    const auto loadResult = LoadPipelineConfig(kConfigPath, loadTouch, loadStylus);
     if (!loadResult.fileOpened) {
         LOG_WARN("Service", __func__, "IPC", "ReloadConfig failed: config file not found: {}", kConfigPath);
+        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::NotFound);
         return;
     }
 
     const auto reloadedConfig = ParseServiceConfig(kConfigPath);
     const auto reloadState = HandleReloadServiceConfig(reloadedConfig);
+    const bool missingCanonicalServiceSection = !HasIniSection(kConfigPath, "Service");
 
-    if (loadResult.migrated) {
+    if (loadResult.migrated || missingCanonicalServiceSection) {
         std::string backupPath;
         if (BackupConfigFile(kConfigPath, backupPath)) {
-            if (WriteCanonicalConfig(kConfigPath, m_configState.mode, m_configState.autoMode, m_configState.stylusVhfEnabled, tp, sp)) {
+            if (WriteCanonicalConfig(kConfigPath, m_configState.mode, m_configState.autoMode, m_configState.stylusVhfEnabled, *m_deviceRuntime)) {
                 LOG_INFO("Service", __func__, "IPC",
                          "Reloaded legacy config from {} and rewrote canonical sections. Backup: {}",
                          kConfigPath, backupPath);
@@ -996,24 +1166,17 @@ void ServiceHost::HandleIpcReloadConfig(Ipc::IpcResponse& resp) {
                  static_cast<unsigned int>(reloadState.restartRequiredFields));
     }
 
-    resp.success = true;
-    resp.dataLen = 3;
-    resp.data[0] = reloadState.changedFields;
-    resp.data[1] = reloadState.appliedFields;
-    resp.data[2] = reloadState.restartRequiredFields;
+    Ipc::ReloadConfigSummaryWire summary{};
+    summary.changedFields = reloadState.changedFields;
+    summary.appliedFields = reloadState.appliedFields;
+    summary.restartRequiredFields = reloadState.restartRequiredFields;
+    std::memcpy(resp.data, &summary, sizeof(summary));
+    resp.dataLen = static_cast<uint16_t>(sizeof(summary));
+    Ipc::MarkSuccess(resp);
 }
 
 void ServiceHost::HandleIpcSaveConfig(Ipc::IpcResponse& resp) {
-    if (!m_deviceRuntime) {
-        return;
-    }
-
-    auto& tp = m_deviceRuntime->GetPipeline();
-    auto& sp = m_deviceRuntime->GetStylusPipeline();
-    if (WriteCanonicalConfig(kConfigPath, m_configState.mode, m_configState.autoMode, m_configState.stylusVhfEnabled, tp, sp)) {
-        resp.success = true;
-        LOG_INFO("Service", __func__, "IPC", "Config saved to {}.", kConfigPath);
-    }
+    HandleIpcPersistConfig(resp);
 }
 
 void ServiceHost::HandleIpcGetLogs(Ipc::IpcResponse& resp) {
@@ -1164,42 +1327,57 @@ Ipc::IpcResponse ServiceHost::HandleIpcCommand(const Ipc::IpcRequest& req) {
 
     case Ipc::IpcCommand::AfeCommand:
         if (req.paramLen >= 2 && m_deviceRuntime) {
-            command cmd{
-                .type = static_cast<AFE_Command>(req.param[0]),
-                .param = req.param[1],
-            };
-            m_deviceRuntime->SubmitCommand(cmd, CommandSource::External, "IPC AFE");
-            resp.success = true;
+            resp.success = m_deviceRuntime->SubmitExternalAfeCommand(
+                static_cast<AFE_Command>(req.param[0]), req.param[1]);
         }
         break;
 
     case Ipc::IpcCommand::StartRuntime:
         if (m_deviceRuntime) {
-            if (m_deviceRuntime->IsRunning()) {
+            switch (m_deviceRuntime->RequestStart()) {
+            case DeviceRuntime::StartRequestResult::Started:
+                resp.success = true;
+                LOG_INFO("Service", __func__, "IPC", "StartRuntime accepted: runtime started.");
+                break;
+            case DeviceRuntime::StartRequestResult::AlreadyRunning:
                 resp.success = true;
                 LOG_INFO("Service", __func__, "IPC", "StartRuntime accepted: runtime already running (idempotent no-op).");
-            } else {
-                resp.success = m_deviceRuntime->Start();
-                if (resp.success) {
-                    LOG_INFO("Service", __func__, "IPC", "StartRuntime accepted: runtime started.");
-                } else {
-                    LOG_WARN("Service", __func__, "IPC", "StartRuntime failed: runtime did not start.");
-                }
+                break;
+            case DeviceRuntime::StartRequestResult::Failed:
+            default:
+                resp.success = false;
+                LOG_WARN("Service", __func__, "IPC", "StartRuntime failed: runtime did not start.");
+                break;
             }
         }
         break;
 
     case Ipc::IpcCommand::StopRuntime:
         if (m_deviceRuntime) {
-            if (!m_deviceRuntime->IsRunning()) {
-                resp.success = true;
-                LOG_INFO("Service", __func__, "IPC", "StopRuntime accepted: runtime already stopped (idempotent no-op).");
-            } else {
-                m_deviceRuntime->Stop();
+            switch (m_deviceRuntime->RequestStop()) {
+            case DeviceRuntime::StopRequestResult::Stopped:
                 resp.success = true;
                 LOG_INFO("Service", __func__, "IPC", "StopRuntime accepted: runtime stopped.");
+                break;
+            case DeviceRuntime::StopRequestResult::AlreadyStopped:
+            default:
+                resp.success = true;
+                LOG_INFO("Service", __func__, "IPC", "StopRuntime accepted: runtime already stopped (idempotent no-op).");
+                break;
             }
         }
+        break;
+
+    case Ipc::IpcCommand::GetConfigSnapshot:
+        HandleIpcGetConfigSnapshot(resp);
+        break;
+
+    case Ipc::IpcCommand::ApplyConfigPatch:
+        HandleIpcApplyConfigPatch(req, resp);
+        break;
+
+    case Ipc::IpcCommand::PersistConfig:
+        HandleIpcPersistConfig(resp);
         break;
 
     case Ipc::IpcCommand::ReloadConfig:
@@ -1212,14 +1390,14 @@ Ipc::IpcResponse ServiceHost::HandleIpcCommand(const Ipc::IpcRequest& req) {
 
     case Ipc::IpcCommand::SetVhfEnabled:
         if (m_deviceRuntime && req.paramLen >= 1) {
-            m_deviceRuntime->GetVhfReporter().SetEnabled(req.param[0] != 0);
+            m_deviceRuntime->SetVhfEnabled(req.param[0] != 0);
             resp.success = true;
         }
         break;
 
     case Ipc::IpcCommand::SetVhfTranspose:
         if (m_deviceRuntime && req.paramLen >= 1) {
-            m_deviceRuntime->GetVhfReporter().SetTransposeEnabled(req.param[0] != 0);
+            m_deviceRuntime->SetVhfTransposeEnabled(req.param[0] != 0);
             resp.success = true;
         }
         break;

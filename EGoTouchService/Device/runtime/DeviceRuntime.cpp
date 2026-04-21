@@ -2,7 +2,13 @@
 #include "SolverTypes.h"
 #include "Logger.h"
 
+#include <chrono>
+#include <cstdio>
 #include <format>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <utility>
 
 namespace {
 constexpr std::size_t kMaxHistoryItems = 512;
@@ -27,6 +33,18 @@ const char* ToString(CommandSource s) noexcept {
     case CommandSource::External:     return "External";
     case CommandSource::SystemPolicy: return "SystemPolicy";
     default:                          return "Unknown";
+    }
+}
+
+const char* ToString(RuntimePolicyEvent::Type type) noexcept {
+    switch (type) {
+    case RuntimePolicyEvent::Type::DisplayOn:        return "DisplayOn";
+    case RuntimePolicyEvent::Type::DisplayOff:       return "DisplayOff";
+    case RuntimePolicyEvent::Type::LidOn:            return "LidOn";
+    case RuntimePolicyEvent::Type::LidOff:           return "LidOff";
+    case RuntimePolicyEvent::Type::Shutdown:         return "Shutdown";
+    case RuntimePolicyEvent::Type::ResumeAutomatic:  return "ResumeAutomatic";
+    default:                                         return "Unknown";
     }
 }
 
@@ -60,6 +78,26 @@ void DeviceRuntime::Stop() {
     m_lastNote = "Runtime stopped";
 }
 
+DeviceRuntime::StartRequestResult DeviceRuntime::RequestStart() {
+    if (IsRunning()) {
+        return StartRequestResult::AlreadyRunning;
+    }
+    return Start() ? StartRequestResult::Started : StartRequestResult::Failed;
+}
+
+DeviceRuntime::StopRequestResult DeviceRuntime::RequestStop() {
+    if (!IsRunning()) {
+        return StopRequestResult::AlreadyStopped;
+    }
+    Stop();
+    return StopRequestResult::Stopped;
+}
+
+void DeviceRuntime::ApplyServicePolicy(bool autoMode, bool stylusVhfEnabled) {
+    SetAutoMode(autoMode);
+    SetStylusVhfEnabled(stylusVhfEnabled);
+}
+
 bool DeviceRuntime::IsShutdownRequested() const {
     return m_stopReason.load() == StopReason::Shutdown;
 }
@@ -71,7 +109,47 @@ void DeviceRuntime::SetFramePushCallback(DeviceRuntime::FramePushCallback cb) {
 }
 #endif
 
+void DeviceRuntime::LoadPipelineConfig(const std::string& key, const std::string& value) {
+    m_touchPipeline.LoadConfig(key, value);
+}
+
+void DeviceRuntime::LoadStylusPipelineConfig(const std::string& key, const std::string& value) {
+    m_stylusPipeline.LoadConfig(key, value);
+}
+
+void DeviceRuntime::SavePipelineConfig(std::ostream& out) const {
+    m_touchPipeline.SaveConfig(out);
+}
+
+void DeviceRuntime::SaveStylusPipelineConfig(std::ostream& out) const {
+    m_stylusPipeline.SaveConfig(out);
+}
+
+void DeviceRuntime::SetVhfEnabled(bool enabled) {
+    m_vhfReporter.SetEnabled(enabled);
+}
+
+void DeviceRuntime::SetVhfTransposeEnabled(bool enabled) {
+    m_vhfReporter.SetTransposeEnabled(enabled);
+}
+
+void DeviceRuntime::IngestBtMcuPressure(uint16_t p) {
+    m_stylusPipeline.SetBtMcuPressure(p);
+}
+
 // --------------- 命令注入 ---------------
+
+bool DeviceRuntime::SubmitExternalAfeCommand(AFE_Command type, uint8_t param) {
+    if (!m_running.load(std::memory_order_acquire)) {
+        return false;
+    }
+
+    command cmd{};
+    cmd.type = type;
+    cmd.param = param;
+    SubmitCommand(cmd, CommandSource::External, "IPC AFE");
+    return true;
+}
 
 uint64_t DeviceRuntime::SubmitCommand(
         command cmd, CommandSource src, const char* reason) {
@@ -88,43 +166,47 @@ uint64_t DeviceRuntime::SubmitCommand(
     return qc.id;
 }
 
-void DeviceRuntime::IngestSystemEvent(
-        const Host::SystemStateEvent& ev) {
+void DeviceRuntime::IngestPolicyEvent(
+        const RuntimePolicyEvent& ev) {
     const auto now = std::chrono::steady_clock::now();
     {
         std::lock_guard<std::mutex> lk(m_mu);
-        int key = static_cast<int>(ev.type);
+        const int key = static_cast<int>(ev.type);
         auto it = m_lastEventByType.find(key);
         if (it != m_lastEventByType.end() &&
             now - it->second < kEventDebounce) return;
         m_lastEventByType[key] = now;
     }
-    using ET = Host::SystemStateEventType;
+
+    using EventType = RuntimePolicyEvent::Type;
     switch (ev.type) {
-    case ET::DisplayOff:
-    case ET::LidOff:
-        LOG_INFO("Runtime", __func__, "Policy", "Sleep event ({}), requesting suspend.", Host::ToString(ev.type));
+    case EventType::DisplayOff:
+    case EventType::LidOff:
+        LOG_INFO("Runtime", __func__, "Policy", "Sleep event ({}), requesting suspend.", ToString(ev.type));
         m_chip.CancelPendingFrameRead();  // abort any blocking GetFrame NOW
         m_stopReason.store(StopReason::ScreenOff);
         break;
-    case ET::DisplayOn:
-    case ET::LidOn:
-    case ET::ResumeAutomatic:
-        LOG_INFO("Runtime", __func__, "Policy", "Wake event ({}), attempting resume.", Host::ToString(ev.type));
+    case EventType::DisplayOn:
+    case EventType::LidOn:
+    case EventType::ResumeAutomatic:
+        LOG_INFO("Runtime", __func__, "Policy", "Wake event ({}), attempting resume.", ToString(ev.type));
         // suspend 状态下直接恢复，无需重建线程
         if (m_state.load() == workerState::suspend) {
             SetState(workerState::ready);
             LOG_INFO("Runtime", __func__, "Policy", "Resumed from suspend -> ready (zero-cost wakeup).");
-        } else {
+        } else if (IsRunning()) {
             Stop();
             Start();
+        } else {
+            LOG_INFO("Runtime", __func__, "Policy", "Wake event ignored because runtime is stopped.");
         }
         break;
-    case ET::Shutdown:
+    case EventType::Shutdown:
         LOG_INFO("Runtime", __func__, "Policy", "Shutdown event, requesting termination.");
         m_stopReason.store(StopReason::Shutdown);
         break;
-    default: break;
+    default:
+        break;
     }
 }
 
@@ -312,7 +394,7 @@ void DeviceRuntime::OnStreaming() {
 
 // --------------- MCU 事件路由 ---------------
 
-void DeviceRuntime::OnPenEvent(const Himax::Pen::PenEvent& ev) {
+void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent& ev) {
     using EC = Himax::Pen::PenUsbEventCode;
     switch (ev.code) {
 

@@ -22,10 +22,7 @@ bool ServiceProxy::Connect() {
         LOG_ERROR("App", __func__, "IPC", "Failed to open shared memory (Service not running?).");
         return false;
     }
-    // 2. Open config dirty flag
-    m_configDirty.Open();
-
-    // 3. Connect pipe to Service
+    // 2. Connect pipe to Service
     if (!m_client.Connect(3000)) {
         LOG_ERROR("App", __func__, "IPC", "Pipe connection failed.");
         m_frameReader.Close();
@@ -39,6 +36,8 @@ bool ServiceProxy::Connect() {
         m_frameReader.Close();
         return false;
     }
+
+    LoadConfig();
 
     // 4.1 Pull dynamic debug schema (best effort)
     if (!RefreshDynamicDebugSchema()) {
@@ -96,7 +95,6 @@ void ServiceProxy::Disconnect() {
         m_client.Disconnect();
     }
     m_frameReader.Close();
-    m_configDirty.Close();
     m_fps.store(0);
     m_slaveFps.store(0);
     LOG_INFO("App", __func__, "IPC", "Disconnected.");

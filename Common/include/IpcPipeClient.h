@@ -33,6 +33,9 @@ public:
     IpcResponse StopRuntime();
     IpcResponse ReloadConfig();
     IpcResponse SaveConfig();
+    IpcResponse GetConfigSnapshot();
+    IpcResponse ApplyConfigPatch(const ApplyConfigPatchRequestWire& patch);
+    IpcResponse PersistConfig();
 
 private:
     HANDLE m_pipe = INVALID_HANDLE_VALUE;

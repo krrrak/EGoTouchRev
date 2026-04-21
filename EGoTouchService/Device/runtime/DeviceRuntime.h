@@ -6,6 +6,7 @@
 
 #include <deque>
 #include <expected>
+#include <iosfwd>
 #include <mutex>
 
 #include <string>
@@ -16,7 +17,6 @@
 #include "btmcu/PenUsbTypes.h"
 
 #include "himax/HimaxChip.h"
-#include "SystemStateEvent.h"
 #include "TouchSolver/TouchPipeline.h"
 #include "vhf/VhfReporter.h"
 #include "StylusSolver/StylusPipeline.h"
@@ -49,6 +49,31 @@ enum class CommandSource : uint8_t {
 };
 
 const char* ToString(CommandSource s) noexcept;
+
+class RuntimePolicyEvent {
+public:
+    enum class Type : uint8_t {
+        Unknown = 0,
+        DisplayOn,
+        DisplayOff,
+        LidOn,
+        LidOff,
+        Shutdown,
+        ResumeAutomatic,
+    };
+
+    enum class Source : uint8_t {
+        HostSystemState = 0,
+    };
+
+    Type type = Type::Unknown;
+    Source source = Source::HostSystemState;
+    std::chrono::system_clock::time_point timestamp{};
+    uint32_t rawIndex = 0;
+};
+
+const char* ToString(RuntimePolicyEvent::Type type) noexcept;
+
 // --------------- 审计日志 ---------------
 
 struct HistoryEntry {
@@ -88,6 +113,17 @@ struct RuntimePenState {
 
 class DeviceRuntime {
 public:
+    enum class StartRequestResult : uint8_t {
+        Started = 0,
+        AlreadyRunning,
+        Failed,
+    };
+
+    enum class StopRequestResult : uint8_t {
+        Stopped = 0,
+        AlreadyStopped,
+    };
+
     DeviceRuntime(const std::wstring& master,
                   const std::wstring& slave,
                   const std::wstring& interrupt);
@@ -97,6 +133,8 @@ public:
 
     bool Start();
     void Stop();
+    StartRequestResult RequestStart();
+    StopRequestResult RequestStop();
     bool IsShutdownRequested() const;
     bool IsRunning() const { return m_running.load(); }
     bool IsSuspended() const { return m_state.load() == workerState::suspend; }
@@ -109,16 +147,18 @@ public:
     // 单独的 Stylus VHF 输出开关
     void SetStylusVhfEnabled(bool v) { m_stylusVhfEnabled.store(v); }
     bool IsStylusVhfEnabled() const { return m_stylusVhfEnabled.load(); }
+    void ApplyServicePolicy(bool autoMode, bool stylusVhfEnabled);
 
-    // Pipeline / VHF 配置 — 仅在 Start() 前调用
-    Solvers::TouchPipeline& GetTouchPipeline() { return m_touchPipeline; }
-    // Legacy alias
-    Solvers::TouchPipeline& GetPipeline() { return m_touchPipeline; }
-    Solvers::StylusPipeline& GetStylusPipeline() { return m_stylusPipeline; }
-    VhfReporter& GetVhfReporter() { return m_vhfReporter; }
+    // Pipeline/VHF façade methods for Phase 0 contract freeze.
+    void LoadPipelineConfig(const std::string& key, const std::string& value);
+    void LoadStylusPipelineConfig(const std::string& key, const std::string& value);
+    void SavePipelineConfig(std::ostream& out) const;
+    void SaveStylusPipelineConfig(std::ostream& out) const;
+    void SetVhfEnabled(bool enabled);
+    void SetVhfTransposeEnabled(bool enabled);
 
     /// 注入 BT MCU 压感值（由 PenBridge 线程写入，StylusPipeline 帧内读取）
-    void SetBtMcuPressure(uint16_t p) { m_stylusPipeline.SetBtMcuPressure(p); }
+    void IngestBtMcuPressure(uint16_t p);
 
     // Frame push callback for IPC (called after pipeline+VHF in worker loop)
     using FramePushCallback = std::function<void(const Solvers::HeatmapFrame&)>;
@@ -126,7 +166,8 @@ public:
     void SetFramePushCallback(FramePushCallback cb);
 #endif
 
-    void IngestSystemEvent(const Host::SystemStateEvent& ev);
+    void IngestPolicyEvent(const RuntimePolicyEvent& ev);
+    bool SubmitExternalAfeCommand(AFE_Command type, uint8_t param);
     uint64_t SubmitCommand(command cmd, CommandSource src,
                            const char* reason = "");
 
@@ -134,8 +175,8 @@ public:
     std::vector<HistoryEntry> GetHistory(std::size_t n = 200) const;
     void ClearHistory();
 
-    /// MCU 事件 → AFE 命令分派（从 ServiceHost 迁移到设备层）
-    void OnPenEvent(const Himax::Pen::PenEvent& ev);
+    /// MCU 事件 ingress（runtime 内部完成状态/AFE 命令分派）
+    void IngestPenEvent(const Himax::Pen::PenEvent& ev);
 
 private:
     ThreadResult WorkerMain();

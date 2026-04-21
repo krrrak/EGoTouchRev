@@ -92,7 +92,6 @@ public:
     // Config sync
     void SaveConfig();
     void LoadConfig();
-    void NotifyConfigDirty();
 
     // VHF control (forwarded to Service via IPC)
     bool SetVhfEnabled(bool enabled);
@@ -109,11 +108,13 @@ public:
     bool IsDvrExporting() const { return m_dvrExporting.load(); }
 
     // Global Service config (UI mirrors)
-    bool IsSrvModeFull() const { return m_srvModeFull; }
+    // NOTE: IsSrvModeFull() returns desired mode (config target), not runtime active mode.
+    bool IsSrvModeFull() const { return m_srvDesiredModeFull.load(std::memory_order_relaxed); }
+    bool IsSrvActiveModeFull() const { return m_srvActiveModeFull.load(std::memory_order_relaxed); }
     void SetSrvModeFull(bool full);
-    bool IsSrvStylusVhfEnabled() const { return m_srvStylusVhfEnabled; }
+    bool IsSrvStylusVhfEnabled() const { return m_srvStylusVhfEnabled.load(std::memory_order_relaxed); }
     void SetSrvStylusVhfEnabled(bool enabled);
-    bool IsSrvAutoMode() const { return m_srvAutoMode; }
+    bool IsSrvAutoMode() const { return m_srvAutoMode.load(std::memory_order_relaxed); }
     void SetSrvAutoMode(bool enabled);
 
     // PenBridge status (polled from Service)
@@ -145,7 +146,6 @@ private:
 
     Ipc::IpcPipeClient    m_client;
     Ipc::SharedFrameReader m_frameReader;
-    Ipc::ConfigDirtyFlag  m_configDirty;
     Solvers::TouchPipeline m_pipeline;
     Solvers::StylusPipeline m_stylusPipeline;
 
@@ -208,9 +208,10 @@ private:
     std::atomic<int> m_slaveFps{0};
 
     // Global Service config mirrors
-    bool m_srvModeFull = true;
-    bool m_srvAutoMode = true;
-    bool m_srvStylusVhfEnabled = true;
+    std::atomic<bool> m_srvDesiredModeFull{true};
+    std::atomic<bool> m_srvActiveModeFull{true};
+    std::atomic<bool> m_srvAutoMode{true};
+    std::atomic<bool> m_srvStylusVhfEnabled{true};
 };
 
 } // namespace App

@@ -5,11 +5,17 @@
 
 namespace Ipc {
 
+constexpr uint16_t kIpcProtocolVersion = 2;
+
 constexpr const wchar_t* kPipeName = L"\\\\.\\pipe\\EGoTouchControl";
 // IPC-related global events
 constexpr const wchar_t* kLogReadyEventName = L"Global\\EGoTouchLogReady";
 constexpr const wchar_t* kPenReadyEventName = L"Global\\EGoTouchPenStatusReady";
 
+// NOTE:
+// - ReloadConfig / SaveConfig remain for transition compatibility.
+// - GetConfigSnapshot / ApplyConfigPatch / PersistConfig are the Phase 0
+//   canonical config-control commands.
 enum class IpcCommand : uint8_t {
     Ping = 0,
     // Debug mode: App tells Service to open shared memory and start pushing
@@ -23,9 +29,13 @@ enum class IpcCommand : uint8_t {
     // VHF
     SetVhfEnabled    = 30,
     SetVhfTranspose  = 31,
-    // Config
+    // Config (legacy compatibility)
     ReloadConfig   = 40,  // Re-read config.ini; response data may include ReloadConfigSummaryWire
-    SaveConfig     = 41,  // Service saves current params to config.ini
+    SaveConfig     = 41,  // Legacy alias for PersistConfig
+    // Config (Phase 0 canonical control path)
+    GetConfigSnapshot = 42,
+    ApplyConfigPatch  = 43,
+    PersistConfig     = 44,
     // Logs
     GetLogs        = 50,  // App requests recent log lines from Service
     // PenBridge (BT MCU)
@@ -33,6 +43,72 @@ enum class IpcCommand : uint8_t {
     // Dynamic debug metadata + values
     GetDebugSchema   = 61,
     GetDebugSnapshot = 62,
+};
+
+enum class IpcStatusCode : uint8_t {
+    Ok = 0,
+    UnsupportedCommand = 1,
+    InvalidRequest = 2,
+    InvalidState = 3,
+    NotFound = 4,
+    PermissionDenied = 5,
+    InternalError = 6,
+};
+
+enum class ServiceModeWire : uint8_t {
+    Full = 0,
+    TouchOnly = 1,
+};
+
+enum class ServiceConfigFieldWire : uint8_t {
+    None = 0,
+    Mode = 1u << 0,
+    AutoMode = 1u << 1,
+    StylusVhfEnabled = 1u << 2,
+};
+
+constexpr uint8_t ToBits(ServiceConfigFieldWire field) noexcept {
+    return static_cast<uint8_t>(field);
+}
+
+constexpr bool HasField(uint8_t fieldMask, ServiceConfigFieldWire field) noexcept {
+    return (fieldMask & ToBits(field)) != 0;
+}
+
+struct ConfigSnapshotWire {
+    uint16_t wireVersion = kIpcProtocolVersion;
+    uint8_t definedFields =
+        ToBits(ServiceConfigFieldWire::Mode) |
+        ToBits(ServiceConfigFieldWire::AutoMode) |
+        ToBits(ServiceConfigFieldWire::StylusVhfEnabled);
+    uint8_t desiredMode = static_cast<uint8_t>(ServiceModeWire::Full);
+    uint8_t activeMode = static_cast<uint8_t>(ServiceModeWire::Full);
+    uint8_t autoMode = 1;
+    uint8_t stylusVhfEnabled = 1;
+    uint8_t _reserved0 = 0;
+};
+
+struct ApplyConfigPatchRequestWire {
+    uint16_t wireVersion = kIpcProtocolVersion;
+    uint8_t fieldMask = 0;
+    uint8_t desiredMode = static_cast<uint8_t>(ServiceModeWire::Full);
+    uint8_t autoMode = 1;
+    uint8_t stylusVhfEnabled = 1;
+    uint8_t _reserved0 = 0;
+};
+
+struct ConfigMutationResultWire {
+    uint16_t wireVersion = kIpcProtocolVersion;
+    uint8_t changedFields = 0;
+    uint8_t appliedFields = 0;
+    uint8_t restartRequiredFields = 0;
+    uint8_t _reserved0 = 0;
+};
+
+struct PersistConfigResponseWire {
+    uint16_t wireVersion = kIpcProtocolVersion;
+    uint8_t persistedFields = 0;
+    uint8_t _reserved0 = 0;
 };
 
 enum class DebugValueType : uint8_t {
@@ -145,6 +221,7 @@ struct DebugSnapshotValueWire {
     uint64_t rawValue = 0;
 };
 
+// Legacy response wire for ReloadConfig. Keep the 3-byte layout for transition compatibility.
 struct ReloadConfigSummaryWire {
     // Bit layout (LSB-first):
     // bit0: [Service].mode
@@ -162,9 +239,20 @@ struct IpcRequest {
 };
 
 struct IpcResponse {
+    IpcStatusCode status = IpcStatusCode::InternalError;
     bool     success = false;
     uint16_t dataLen = 0;
     uint8_t  data[4096]{};
 };
+
+inline void MarkSuccess(IpcResponse& resp) noexcept {
+    resp.success = true;
+    resp.status = IpcStatusCode::Ok;
+}
+
+inline void MarkFailure(IpcResponse& resp, IpcStatusCode status) noexcept {
+    resp.success = false;
+    resp.status = status;
+}
 
 } // namespace Ipc
