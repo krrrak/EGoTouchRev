@@ -99,4 +99,22 @@ IpcResponse IpcPipeClient::SaveConfig() {
     return Send(req);
 }
 
+IpcResponse IpcPipeClient::GetConfigSnapshot() {
+    IpcRequest req{}; req.command = IpcCommand::GetConfigSnapshot;
+    return Send(req);
+}
+
+IpcResponse IpcPipeClient::ApplyConfigPatch(const ApplyConfigPatchRequestWire& patch) {
+    IpcRequest req{};
+    req.command = IpcCommand::ApplyConfigPatch;
+    req.paramLen = static_cast<uint16_t>(sizeof(patch));
+    std::memcpy(req.param, &patch, sizeof(patch));
+    return Send(req);
+}
+
+IpcResponse IpcPipeClient::PersistConfig() {
+    IpcRequest req{}; req.command = IpcCommand::PersistConfig;
+    return Send(req);
+}
+
 } // namespace Ipc
