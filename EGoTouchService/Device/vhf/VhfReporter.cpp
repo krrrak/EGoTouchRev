@@ -1,4 +1,5 @@
 #include "VhfReporter.h"
+#include "VhfReporterStylusPacketHelper.h"
 #include "Logger.h"
 
 #include <Windows.h>
@@ -164,12 +165,12 @@ VhfReporter::~VhfReporter() { Close(); }
 
 void VhfReporter::SetStylusPacketSensorRows(int rows) {
     std::lock_guard<std::mutex> lk(m_mu);
-    m_stylusPackets.sensorRows = std::max(rows, 1);
+    m_stylusSensorRows = std::max(rows, 1);
 }
 
 void VhfReporter::SetStylusPacketSensorCols(int cols) {
     std::lock_guard<std::mutex> lk(m_mu);
-    m_stylusPackets.sensorCols = std::max(cols, 1);
+    m_stylusSensorCols = std::max(cols, 1);
 }
 
 void VhfReporter::SetStylusPacketEmitWhenInvalid(bool v) {
@@ -198,20 +199,17 @@ bool VhfReporter::UpdateTouchState(bool hasTouch) {
 }
 
 void VhfReporter::BuildStylusPacket(Solvers::HeatmapFrame& frame) {
-    Solvers::PacketBuilder builder;
-    bool emitWhenInvalid = true;
+    VhfStylusPacket::Config config;
     {
         std::lock_guard<std::mutex> lk(m_mu);
-        builder = m_stylusPackets;
-        emitWhenInvalid = m_emitStylusPacketWhenInvalid;
+        config.sensorRows = m_stylusSensorRows;
+        config.sensorCols = m_stylusSensorCols;
+        config.emitWhenInvalid = m_emitStylusPacketWhenInvalid;
     }
 
-    frame.stylus.packet = builder.Build(
-        frame.stylus,
-        frame.stylus.packetRoute,
-        emitWhenInvalid);
+    frame.stylus.packet = VhfStylusPacket::Build(frame.stylus, config);
     frame.stylus.diag.vhfPenState =
-        frame.stylus.packet.valid ? frame.stylus.packet.bytes[1] : 0;
+        VhfStylusPacket::ExtractPenState(frame.stylus.packet);
 }
 
 // ── 主入口 (legacy) ──

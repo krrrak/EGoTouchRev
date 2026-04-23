@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <mutex>
 
-#include "StylusSolver/PacketBuilder.hpp"
 #include "SolverTypes.h"
 
 #ifndef _WINDOWS_
@@ -15,7 +14,7 @@
 #endif
 
 /// VhfReporter — 负责将 Pipeline 输出的 TouchPacket /
-/// StylusPacket 通过 VHF HID 注入器驱动写入系统。
+/// stylus output contract 通过 VHF HID 注入器驱动写入系统。
 /// 入口：Dispatch(HeatmapFrame&)  —— Worker 一行调用。
 class VhfReporter {
 public:
@@ -77,8 +76,10 @@ private:
     std::atomic<bool> m_hadTouchLastFrame{false};
     std::atomic<uint8_t> m_eraserState{0};
 
+    int m_stylusSensorRows = 40;
+    int m_stylusSensorCols = 60;
+
     mutable std::mutex m_mu;
-    Solvers::PacketBuilder m_stylusPackets{};
     bool m_emitStylusPacketWhenInvalid = true;
     HANDLE m_handle = INVALID_HANDLE_VALUE;
     std::chrono::steady_clock::time_point m_nextOpenAttempt{};
