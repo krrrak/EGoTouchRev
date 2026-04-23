@@ -7,6 +7,8 @@ namespace Solvers {
 
 namespace {
 
+using StylusDiagnostics = StylusFrameData::StylusDiagnostics;
+
 inline void SnapshotBtPressure(StylusFrameData& stylus,
                                const Asa::BtPressureSample& sample) {
     stylus.SnapshotBtInput(sample.pressure, sample.seq, sample.hasSample);
@@ -16,6 +18,51 @@ inline void SyncStylusContract(StylusFrameData& stylus,
                                const Asa::BtPressureSample& sample) {
     SnapshotBtPressure(stylus, sample);
     stylus.SyncContractFromLegacyFields();
+}
+
+inline StylusDiagnostics BuildDiagnostics(const StylusFrameState& state,
+                                          const Asa::PenStateMachine& penStateMachine,
+                                          const Asa::LinearFilter& linearFilter,
+                                          uint16_t signalRatio,
+                                          bool cmfEnabled,
+                                          const Asa::CoorReviser& coorReviser) {
+    StylusDiagnostics diag{};
+    diag.anchorRow = state.parse.gridData.tx1.anchorRow;
+    diag.anchorCol = state.parse.gridData.tx1.anchorCol;
+    diag.rawDim1 = state.tx1.globalCoor.dim1;
+    diag.rawDim2 = state.tx1.globalCoor.dim2;
+    diag.finalDim1 = state.output.finalCoor.dim1;
+    diag.finalDim2 = state.output.finalCoor.dim2;
+    diag.centerOff = static_cast<float>(state.anchorCenterOffset * Asa::kCoorUnit);
+    diag.pointX = static_cast<float>(state.output.finalCoor.dim1);
+    diag.pointY = static_cast<float>(state.output.finalCoor.dim2);
+    diag.valid = state.output.finalCoor.valid;
+    diag.speedInstant = penStateMachine.GetInstantSpeed();
+    diag.speedShortAvg = penStateMachine.GetSmoothedSpeed();
+    diag.iirCoef = static_cast<float>(state.lifecycle.iirCoef);
+    diag.isHover = (state.lifecycle.mappedPressure == 0);
+    diag.isEdge = state.signal.dim1EdgeActive || state.signal.dim2EdgeActive;
+    diag.tiltDiffX = static_cast<float>(coorReviser.GetLastTiltX());
+    diag.tiltDiffY = static_cast<float>(coorReviser.GetLastTiltY());
+    diag.peakSignal = state.signal.maxRawPeak;
+    diag.rawPressure = state.lifecycle.btSample.pressure;
+    diag.mappedPressure = state.lifecycle.mappedPressure;
+    diag.btSeq = state.lifecycle.btSeq;
+    diag.predictedAgeFrames =
+        static_cast<uint8_t>(std::clamp(state.lifecycle.predictedAgeFrames, 0, 0xFF));
+    diag.pressureIsReal = state.lifecycle.pressureIsReal;
+    diag.vhfPenState = state.stylus.diag.vhfPenState;
+    diag.linearFilterState = static_cast<uint8_t>(linearFilter.GetMode());
+    diag.signalRatio = signalRatio;
+    diag.cmfEnabled = cmfEnabled;
+    diag.coorReviserActive = coorReviser.enabled;
+    diag.coorRevDeltaX = static_cast<float>(coorReviser.GetLastReviseX());
+    diag.coorRevDeltaY = static_cast<float>(coorReviser.GetLastReviseY());
+    diag.penLifecycle = static_cast<uint8_t>(penStateMachine.GetState());
+    diag.wasInking = state.lifecycle.tipSwitchActive;
+    diag.avg3PtDim1 = state.output.postCoor.dim1;
+    diag.avg3PtDim2 = state.output.postCoor.dim2;
+    return diag;
 }
 
 } // namespace
@@ -70,19 +117,17 @@ public:
         return Finalize(state.stylus);
     }
 
-    template <typename DiagnosticsLike>
     inline bool FinalizeWithDiagnostics(StylusFrameState& state,
-                                        const DiagnosticsLike& diagnostics) const {
+                                        const StylusDiagnostics& diagnostics) const {
         const bool valid = Finalize(state);
 #if EGOTOUCH_DIAG
-        state.stylus.diag = diagnostics.GetLastDiagnostics();
+        state.stylus.diag = diagnostics;
 #endif
         return valid;
     }
 
-    template <typename DiagnosticsLike>
     inline bool FinalizeTerminalWithDiagnostics(StylusFrameState& state,
-                                                const DiagnosticsLike& diagnostics) {
+                                                const StylusDiagnostics& diagnostics) {
         CommitTerminal(state);
         return FinalizeWithDiagnostics(state, diagnostics);
     }
@@ -99,17 +144,16 @@ public:
         CommitFinal(state.stylus);
     }
 
-    template <typename DiagnosticsLike>
     inline bool FinalizeFinalWithDiagnostics(StylusFrameState& state,
-                                             const DiagnosticsLike& diagnostics) {
+                                             const StylusDiagnostics& diagnostics) {
         CommitFinal(state);
         return FinalizeWithDiagnostics(state, diagnostics);
     }
 
-    template <typename EdgePostT, typename DiagnosticsLike>
+    template <typename EdgePostT>
     inline bool FinalizeFinalWithDiagnostics(StylusFrameState& state,
                                              const EdgePostT& edgePost,
-                                             const DiagnosticsLike& diagnostics) {
+                                             const StylusDiagnostics& diagnostics) {
         CommitFinal(state, edgePost);
         return FinalizeWithDiagnostics(state, diagnostics);
     }
@@ -226,7 +270,7 @@ const StylusFrameData& StylusPipeline::GetLastResult() const {
 }
 
 const StylusPipeline::DbgCoordBreakdown& StylusPipeline::GetDebugCoord() const {
-    return m_diagnostics.GetLastDiagnostics();
+    return m_debugCoord;
 }
 
 bool StylusPipeline::Process(HeatmapFrame& frame) {
@@ -237,7 +281,7 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
     m_postProcessor.sensorDimCols = m_sensorCols;
 
     m_output->BeginFrame(state);
-    m_diagnostics.Reset();
+    m_debugCoord = {};
     state.lifecycle.btSample = btSnapshot;
     SnapshotBtPressure(state.stylus, btSnapshot);
 
@@ -275,7 +319,7 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
         (void)m_penStateMachine.Process(evidence);
         Asa::StylusStateController::ApplyTerminalStylusStateMirrors(state, m_penStateMachine);
         SyncStylusContract(state.stylus, btSnapshot);
-        return m_output->FinalizeTerminalWithDiagnostics(state, m_diagnostics);
+        return m_output->FinalizeTerminalWithDiagnostics(state, m_debugCoord);
     }
 
     state.lifecycle.previouslyWriting =
@@ -300,7 +344,7 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
 
     if (state.flow.reusedCommittedFrame && m_output->ReuseCommittedFrame(state)) {
         SyncStylusContract(state.stylus, btSnapshot);
-        return m_output->FinalizeWithDiagnostics(state, m_diagnostics);
+        return m_output->FinalizeWithDiagnostics(state, m_debugCoord);
     }
 
     m_signalAnalyzer.Process(
@@ -324,19 +368,17 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
         m_noiseGate,
         *m_output);
 
-#if EGOTOUCH_DIAG
-    m_diagnostics.Process(
+    m_debugCoord = BuildDiagnostics(
         state,
         m_penStateMachine,
         m_linearFilter,
         m_signalRatioTracker.GetAvgRatio(),
         m_cmfFilter.enabled,
         m_coorReviser);
-#endif
     m_coordFilter.Process(state.stylus);
     m_outputGate.Process(state.stylus);
     SyncStylusContract(state.stylus, btSnapshot);
-    return m_output->FinalizeFinalWithDiagnostics(state, m_edgeCoorPost, m_diagnostics);
+    return m_output->FinalizeFinalWithDiagnostics(state, m_edgeCoorPost, m_debugCoord);
 }
 
 std::vector<ConfigParam> StylusPipeline::GetConfigSchema() const {

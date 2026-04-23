@@ -15,7 +15,6 @@
 #include "PipelineUtils.hpp"
 #include "PressureSolver.hpp"
 #include "SolverTypes.h"
-#include "StylusDiagnosticsWriter.hpp"
 #include "StylusFrameParser.hpp"
 #include "StylusOutputGate.hpp"
 #include "StylusSignalAnalyzer.hpp"
@@ -107,7 +106,7 @@ private:
     int m_anchorCenterOffset = 4;
     bool m_emitPacketWhenInvalid = true;
     std::unique_ptr<OutputState> m_output;
-    StylusDiagnosticsWriter m_diagnostics;
+    DbgCoordBreakdown m_debugCoord{};
 };
 
 } // namespace Solvers
