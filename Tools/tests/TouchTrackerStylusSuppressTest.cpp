@@ -29,7 +29,7 @@ struct StylusSpec {
     uint16_t pressure = 0;
     uint16_t signalX = 0;
     uint16_t signalY = 0;
-    uint8_t animState = 0;
+    bool tipDown = false;
 };
 
 struct TrackerHarness {
@@ -50,14 +50,17 @@ struct TrackerHarness {
             frame.contacts.push_back(contact);
         }
 
-        frame.stylus.point.valid = stylus.valid;
-        frame.stylus.point.x = stylus.x * 1024.0f;
-        frame.stylus.point.y = stylus.y * 1024.0f;
-        frame.stylus.pressure = stylus.pressure;
-        frame.stylus.signalX = stylus.signalX;
-        frame.stylus.signalY = stylus.signalY;
-        frame.stylus.maxRawPeak = std::max(stylus.signalX, stylus.signalY);
-        frame.stylus.animState = stylus.animState;
+        frame.stylus.output.valid = stylus.valid;
+        frame.stylus.output.inRange = stylus.valid;
+        frame.stylus.output.tipDown = stylus.tipDown;
+        frame.stylus.output.pressure = stylus.pressure;
+        frame.stylus.output.point.valid = stylus.valid;
+        frame.stylus.output.point.x = stylus.x * 1024.0f;
+        frame.stylus.output.point.y = stylus.y * 1024.0f;
+        frame.stylus.output.point.pressure = stylus.pressure;
+        frame.stylus.interop.signalX = stylus.signalX;
+        frame.stylus.interop.signalY = stylus.signalY;
+        frame.stylus.interop.maxRawPeak = std::max(stylus.signalX, stylus.signalY);
 
         tracker.Process(frame);
         return frame;
@@ -70,7 +73,7 @@ StylusSpec MakeStylusSpec(bool valid,
                           uint16_t pressure,
                           uint16_t signalX,
                           uint16_t signalY,
-                          uint8_t animState) {
+                          bool tipDown) {
     StylusSpec stylus;
     stylus.valid = valid;
     stylus.x = x;
@@ -78,7 +81,7 @@ StylusSpec MakeStylusSpec(bool valid,
     stylus.pressure = pressure;
     stylus.signalX = signalX;
     stylus.signalY = signalY;
-    stylus.animState = animState;
+    stylus.tipDown = tipDown;
     return stylus;
 }
 
@@ -96,31 +99,31 @@ void Require(bool condition, const char* message) {
 
 void TestWeakTouchNearStylusIsSuppressedUsingStylusCoordinates() {
     TrackerHarness harness;
-    const StylusSpec stylus = MakeStylusSpec(true, 12.5f, 7.75f, 180, 500, 2200, 2);
+    const StylusSpec stylus = MakeStylusSpec(true, 12.5f, 7.75f, 180, 500, 2200, true);
     const auto frame = harness.Run({
         ContactSpec{12.5f, 7.75f, 3, 160, 0.8f}
     }, stylus);
 
     Require(frame.contacts.empty(), "weak overlap contact should be locally suppressed");
-    Require(frame.stylus.touchSuppressActive, "stylus suppress flag should be active");
-    Require(frame.stylus.recheckOverlap, "stylus overlap flag should be set");
-    Require(frame.stylus.touchSuppressFrames > 0, "suppress hold should be armed");
+    Require(frame.stylus.interop.touchSuppressActive, "stylus suppress flag should be active");
+    Require(frame.stylus.interop.recheckOverlap, "stylus overlap flag should be set");
+    Require(frame.stylus.interop.touchSuppressFrames > 0, "suppress hold should be armed");
 }
 
-void TestZeroPressureWritingStillSuppressesWeakOverlapTouch() {
+void TestZeroPressureInteropSignalStillSuppressesWeakOverlapTouch() {
     TrackerHarness harness;
-    const StylusSpec stylus = MakeStylusSpec(true, 12.5f, 7.75f, 0, 500, 2200, 2);
+    const StylusSpec stylus = MakeStylusSpec(true, 12.5f, 7.75f, 0, 500, 2200, false);
     const auto frame = harness.Run({
         ContactSpec{12.55f, 7.80f, 3, 160, 0.8f}
     }, stylus);
 
-    Require(frame.contacts.empty(), "writing animState should suppress weak overlap even at zero pressure");
-    Require(frame.stylus.touchSuppressActive, "touch suppress should stay active when animState indicates writing");
+    Require(frame.contacts.empty(), "strong interop signal should suppress weak overlap even at zero pressure");
+    Require(frame.stylus.interop.touchSuppressActive, "touch suppress should stay active from interop evidence");
 }
 
 void TestStrongTouchNearStylusIsPreserved() {
     TrackerHarness harness;
-    const StylusSpec stylus = MakeStylusSpec(true, 18.0f, 12.0f, 160, 700, 2100, 2);
+    const StylusSpec stylus = MakeStylusSpec(true, 18.0f, 12.0f, 160, 700, 2100, true);
     const auto frame = harness.Run({
         ContactSpec{18.1f, 12.1f, 18, 7200, 3.2f}
     }, stylus);
@@ -132,20 +135,20 @@ void TestStrongTouchNearStylusIsPreserved() {
 
 void TestFarTouchIsNotMisSuppressed() {
     TrackerHarness harness;
-    const StylusSpec stylus = MakeStylusSpec(true, 8.0f, 8.0f, 140, 600, 2000, 2);
+    const StylusSpec stylus = MakeStylusSpec(true, 8.0f, 8.0f, 140, 600, 2000, true);
     const auto frame = harness.Run({
         ContactSpec{24.0f, 20.0f, 10, 1200, 1.9f}
     }, stylus);
 
     const auto visible = VisibleContacts(frame);
     Require(visible.size() == 1, "far touch should remain visible");
-    Require(!frame.stylus.recheckOverlap, "far touch should not look overlapped with stylus");
+    Require(!frame.stylus.interop.recheckOverlap, "far touch should not look overlapped with stylus");
 }
 
 void TestAftKeepsSuppressingRecentWeakTouchAfterStylusLeaves() {
     TrackerHarness harness;
 
-    const auto seed = harness.Run({}, MakeStylusSpec(true, 10.0f, 10.0f, 200, 640, 2400, 2));
+    const auto seed = harness.Run({}, MakeStylusSpec(true, 10.0f, 10.0f, 200, 640, 2400, true));
     Require(seed.contacts.empty(), "seed stylus frame should not create contacts");
 
     const auto aftFrame = harness.Run({
@@ -168,7 +171,7 @@ void TestAftKeepsSuppressingRecentWeakTouchAfterStylusLeaves() {
 int main() {
     try {
         TestWeakTouchNearStylusIsSuppressedUsingStylusCoordinates();
-        TestZeroPressureWritingStillSuppressesWeakOverlapTouch();
+        TestZeroPressureInteropSignalStillSuppressesWeakOverlapTouch();
         TestStrongTouchNearStylusIsPreserved();
         TestFarTouchIsNotMisSuppressed();
         TestAftKeepsSuppressingRecentWeakTouchAfterStylusLeaves();
