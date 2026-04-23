@@ -19,7 +19,6 @@ using Asa::GridPeakDetector;
 using Asa::PressureSolver;
 using Solvers::HeatmapFrame;
 using Solvers::StylusFrameData;
-using Solvers::StylusPacketRoute;
 using Solvers::StylusPipeline;
 
 constexpr size_t kMasterBytes = 5063;
@@ -390,8 +389,6 @@ void TestStylusPipelinePredictedPressureProjectsBtInputContract() {
     Require(!release.output.valid, "release frame should clear output validity");
     Require(!release.output.tipDown, "release frame should clear tip-down output");
     Require(release.output.pressure == 0, "release frame should close pressure output");
-    Require(release.packetRoute == StylusPacketRoute::InvalidZeroState,
-            "release frame should preserve invalid-zero route for VHF");
 
     const auto hoverFrame = RunFrame(pipeline, raw, 220, 24, false);
     const auto hover = ContractView(hoverFrame);
@@ -448,7 +445,7 @@ void TestStylusPipelineRealZeroDropsPressureButKeepsTipDownWhenTx1StillDown() {
 #endif
 }
 
-void TestStylusPipelineInvalidZeroStateClearsOutputWithoutBuildingPacket() {
+void TestStylusPipelineInvalidZeroStateClearsOutput() {
     StylusPipeline pipeline;
     pipeline.LoadConfig("sp.filterMode", "2");
 
@@ -470,13 +467,9 @@ void TestStylusPipelineInvalidZeroStateClearsOutputWithoutBuildingPacket() {
             "invalid-zero frame should clear tip-down output");
     Require(stylus.output.pressure == 0,
             "invalid-zero frame should clear output pressure");
-    Require(stylus.packetRoute == StylusPacketRoute::InvalidZeroState,
-            "invalid-zero frame should preserve route for VHF");
-    Require(!stylus.packet.valid,
-            "solver should not build stylus packets on invalid-zero path");
 }
 
-void TestStylusPipelineShortFrameClearsPreviousOutputWithoutPacketBuild() {
+void TestStylusPipelineShortFrameClearsPreviousOutput() {
     StylusPipeline pipeline;
 
     const auto validRaw = BuildCombinedStylusFrame(
@@ -506,10 +499,6 @@ void TestStylusPipelineShortFrameClearsPreviousOutputWithoutPacketBuild() {
             "short frame should clear output point pressure");
     Require(!stylus.output.tipDown,
             "short frame should clear tip-down output");
-    Require(stylus.packetRoute == StylusPacketRoute::ParseFailure13,
-            "short frame should preserve parse-failure route for VHF");
-    Require(!stylus.packet.valid,
-            "short frame should not build a stylus packet inside the solver");
 }
 
 void TestStylusPipelineInvalidPathProjectsFailureStage() {
@@ -772,7 +761,7 @@ void TestStylusPipelineLegacyAliasRoundTripKeepsCanonicalKey() {
     Require(!foundAlias, "schema should not expose legacy alias key");
 }
 
-void TestStylusPipelineProcessReturnsTrueWithoutPacketBuild() {
+void TestStylusPipelineProcessReturnsTrueWithoutSolvedOutput() {
     StylusPipeline pipeline;
     const auto raw = BuildCombinedStylusFrame(0x00FF, 0x00FF, {}, 0, 0, {});
 
@@ -784,13 +773,9 @@ void TestStylusPipelineProcessReturnsTrueWithoutPacketBuild() {
     const auto stylus = ContractView(frame);
 
     Require(processed,
-            "Process should still report success even when no packet is built");
+            "Process should still report success even without a solved stylus output");
     Require(!stylus.output.valid,
             "Process success should not imply a valid stylus output");
-    Require(stylus.packetRoute == StylusPacketRoute::InvalidZeroState,
-            "Process should still preserve VHF route classification");
-    Require(!stylus.packet.valid,
-            "Process should not report packet validity as its success signal");
 }
 
 } // namespace
@@ -810,8 +795,8 @@ int main() {
         TestStylusPipelineWeakSignalKeepsSolvedPointButStaysOutOfTipDown();
         TestStylusPipelinePredictedPressureProjectsBtInputContract();
         TestStylusPipelineRealZeroDropsPressureButKeepsTipDownWhenTx1StillDown();
-        TestStylusPipelineInvalidZeroStateClearsOutputWithoutBuildingPacket();
-        TestStylusPipelineShortFrameClearsPreviousOutputWithoutPacketBuild();
+        TestStylusPipelineInvalidZeroStateClearsOutput();
+        TestStylusPipelineShortFrameClearsPreviousOutput();
         TestStylusPipelineInvalidPathProjectsFailureStage();
         TestStylusPipelineConfigRoundTrip();
         TestGridPeakDetectorNoPeak();
@@ -821,7 +806,7 @@ int main() {
         TestGridPeakDetectorNeighborSumAndTieBreak();
         TestGridPeakDetectorProjectionRadius();
         TestStylusPipelineLegacyAliasRoundTripKeepsCanonicalKey();
-        TestStylusPipelineProcessReturnsTrueWithoutPacketBuild();
+        TestStylusPipelineProcessReturnsTrueWithoutSolvedOutput();
         std::cout << "[TEST] Stylus fast ink tests passed.\n";
         return 0;
     } catch (const std::exception& ex) {
