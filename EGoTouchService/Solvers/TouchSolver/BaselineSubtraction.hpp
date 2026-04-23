@@ -2,6 +2,7 @@
 // ── TouchPipeline Module: BaselineSubtraction ──
 // Header-only. Converted from Preprocessing/BaselineSubtraction.{h,cpp}.
 
+#include "NeonCompat.h"
 #include "SolverTypes.h"
 #include <cstddef>
 #include <cstdint>

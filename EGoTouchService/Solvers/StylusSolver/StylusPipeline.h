@@ -5,6 +5,7 @@
 #include "CommonModeFilter.hpp"
 #include "ConfigSchema.h"
 #include "CoordinateSolver.hpp"
+#include "StylusCoordinateFilter.hpp"
 #include "CoorPostProcessor.hpp"
 #include "CoorReviser.hpp"
 #include "GridPeakDetector.hpp"
@@ -15,7 +16,8 @@
 #include "PressureSolver.hpp"
 #include "SolverTypes.h"
 #include "StylusDiagnosticsWriter.hpp"
-#include "StylusInputParser.hpp"
+#include "StylusFrameParser.hpp"
+#include "StylusOutputGate.hpp"
 #include "StylusSignalAnalyzer.hpp"
 #include "StylusStateController.hpp"
 
@@ -68,7 +70,7 @@ public:
     }
 
     // Parse
-    Asa::StylusInputParser m_inputParser;
+    Asa::StylusFrameParser m_frameParser;
 
     // Conditioning
     Asa::CommonModeFilter m_cmfFilter;
@@ -82,12 +84,14 @@ public:
     Asa::PressureSolver m_pressureSolver;
     Asa::PenStateMachine m_penStateMachine;
     Asa::StylusStateController m_penState;
+    Asa::StylusOutputGate m_outputGate;
     Asa::BtPressBuffer m_btPressBuf;
     Asa::NoiseGate m_noiseGate;
     Asa::SignalRatioTracker m_signalRatioTracker;
 
     // Post
     Asa::LinearFilter m_linearFilter;
+    Asa::StylusCoordinateFilter m_coordFilter;
     Asa::CoorReviser m_coorReviser;
     Asa::CoorPostProcessor m_postProcessor;
     Asa::EdgeCoorPost m_edgeCoorPost;

@@ -3,6 +3,7 @@
 // Header-only. Converted from Preprocessing/CMFProcessor.{h,cpp}.
 // Common Mode Filter: removes global row/column shift noise.
 
+#include "NeonCompat.h"
 #include "SolverTypes.h"
 #include <algorithm>
 #include <cstdint>

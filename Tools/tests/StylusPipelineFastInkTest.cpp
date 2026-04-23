@@ -667,17 +667,17 @@ void TestStylusPipelineRealZeroDropsPressureButKeepsWritingWhenTx1StillDown() {
 #endif
 }
 
-void TestStylusPipelineParseFailPacketLength13() {
+void TestStylusPipelineNoSignalFullFrameUsesInvalidZeroStateRoute() {
     StylusPipeline pipeline;
     pipeline.LoadConfig("sp.filterMode", "2");
 
     std::vector<uint8_t> raw(kMasterBytes + kSlaveFrameBytes, 0xFF);
     const auto result = RunFrame(pipeline, raw, 100);
 
-    Require(result.packetRoute == Solvers::StylusPacketRoute::ParseFailure13,
-            "Parse-fail path should preserve parse-failure packet route for VHF");
+    Require(result.packetRoute == Solvers::StylusPacketRoute::InvalidZeroState,
+            "Full-length no-signal frame should preserve invalid-zero-state route for VHF");
     Require(!result.packet.valid,
-            "Parse-fail path should no longer build a packet inside the pipeline");
+            "No-signal path should no longer build a packet inside the pipeline");
 }
 
 void TestStylusPipelineShortFrameDoesNotLeakState() {
@@ -776,8 +776,8 @@ void TestStylusPipelineProcessReturnsTrueWithoutPacketBuild() {
 
     const bool processed = pipeline.Process(frame);
     Require(processed, "Process should still report successful finalize without packet construction");
-    Require(frame.stylus.packetRoute == Solvers::StylusPacketRoute::ParseFailure13,
-            "Process should still classify parse-failure routes for VHF");
+    Require(frame.stylus.packetRoute == Solvers::StylusPacketRoute::InvalidZeroState,
+            "Process should still classify no-signal routes for VHF");
     Require(!frame.stylus.packet.valid,
             "Process should not report packet validity as its success signal");
 }
@@ -813,7 +813,7 @@ int main() {
         TestStylusPipelinePeakMetrics();
         TestStylusPipelineUsesPredictedIntermediatePressure();
         TestStylusPipelineRealZeroDropsPressureButKeepsWritingWhenTx1StillDown();
-        TestStylusPipelineParseFailPacketLength13();
+        TestStylusPipelineNoSignalFullFrameUsesInvalidZeroStateRoute();
         TestStylusPipelineShortFrameDoesNotLeakState();
         TestStylusPipelineInvalidPathUpdatesBlockedBtSeq();
         TestStylusPipelineNoSignalFrameClearsCommittedOutputState();

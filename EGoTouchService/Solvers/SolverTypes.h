@@ -123,7 +123,121 @@ enum class StylusPacketRoute : uint8_t {
     ParseFailure13,
 };
 
+struct StylusBtInputSnapshot {
+    uint16_t pressure = 0;
+    uint32_t seq = 0;
+    bool hasSample = false;
+};
+
+struct StylusInputSnapshot {
+    bool slaveValid = false;
+    bool checksumOk = false;
+    uint8_t slaveWordOffset = 0;
+    uint16_t checksum16 = 0;
+    bool tx1BlockValid = false;
+    bool tx2BlockValid = false;
+    uint32_t status = 0;
+    StylusBtInputSnapshot btSample{};
+};
+
+struct StylusOutputState {
+    bool valid = false;
+    bool inRange = false;
+    bool tipDown = false;
+    uint16_t pressure = 0;
+    float confidence = 0.0f;
+    uint8_t pipelineStage = 0;
+    StylusSolvePoint point{};
+};
+
+struct StylusTouchInterop {
+    bool recheckEnabled = false;
+    bool recheckPassed = true;
+    bool recheckOverlap = false;
+    uint16_t recheckThreshold = 0;
+    uint16_t recheckThresholdMulti = 0;
+    bool touchNullLike = false;
+    bool touchSuppressActive = false;
+    uint8_t touchSuppressFrames = 0;
+    uint16_t signalX = 0;
+    uint16_t signalY = 0;
+    uint16_t maxRawPeak = 0;
+};
+
+struct StylusDebugFrame {
+    struct ParseSnapshot {
+        bool slaveValid = false;
+        bool checksumOk = false;
+        uint32_t status = 0;
+        uint8_t pipelineStage = 0;
+    };
+
+    // Transitional debug payload. The next stages will split this further by phase.
+    struct StylusDiagnostics {
+        // Stage 1: Coordinate solver
+        uint16_t anchorRow = 0;
+        uint16_t anchorCol = 0;
+        int32_t  rawDim1   = 0;
+        int32_t  rawDim2   = 0;
+        int32_t  finalDim1 = 0;
+        int32_t  finalDim2 = 0;
+        float    centerOff = 0.f;
+        float    pointX    = 0.f;
+        float    pointY    = 0.f;
+        bool     valid     = false;
+        // Stage 2: Post-processing metrics
+        float    speedInstant  = 0.f;
+        float    speedShortAvg = 0.f;
+        float    speedFullAvg  = 0.f;
+        float    iirCoef       = 0.f;
+        bool     isHover       = false;
+        bool     isEdge        = false;
+        // Stage 3: Tilt
+        float    tiltDiffX  = 0.f;
+        float    tiltDiffY  = 0.f;
+        // Stage 4: Pressure / Signal
+        uint16_t peakSignal     = 0;
+        uint16_t rawPressure    = 0;
+        uint16_t mappedPressure = 0;
+        uint32_t btSeq          = 0;
+        uint8_t  predictedAgeFrames = 0;
+        bool     pressureIsReal = false;
+        // Stage 5: VHF state
+        uint8_t  vhfPenState      = 0;
+        uint8_t  linearFilterState = 0;
+        // Stage 6: P3/P4 Extended diagnostics
+        uint16_t signalRatio       = 0;
+        bool     exitSmoothed      = false;
+        bool     cmfEnabled        = false;
+        bool     coorReviserActive = false;
+        float    coorRevDeltaX     = 0.f;
+        float    coorRevDeltaY     = 0.f;
+        bool     tiltAnomalyDamped = false;
+        bool     sigSuppressActive = false;
+        uint8_t  penLifecycle      = 0;
+        bool     wasInking         = false;
+        int32_t  avg3PtDim1        = 0;
+        int32_t  avg3PtDim2        = 0;
+    };
+
+    ParseSnapshot parse{};
+    StylusDiagnostics coord{};
+};
+
 struct StylusFrameData {
+    using StylusDiagnostics = StylusDebugFrame::StylusDiagnostics;
+
+    // New touch-mirror contract. The current rollout keeps legacy flat mirrors
+    // below so the migration can stay buildable while downstream code moves.
+    StylusInputSnapshot input{};
+    StylusOutputState output{};
+    StylusTouchInterop interop{};
+#if EGOTOUCH_DIAG
+    StylusDebugFrame debug{};
+#endif
+
+    // Legacy compatibility mirrors. These are transitional and will be removed
+    // after VHF/TouchTracker/tests finish switching to input/output/interop.
     bool slaveValid = false;
     bool checksumOk = false;
     uint8_t slaveWordOffset = 0;
@@ -180,55 +294,86 @@ struct StylusFrameData {
     // 0=ok, 1=slaveParseFail, 2=tx1Invalid, 3=noPeak, 4=coordFail, 5=noiseReject
     uint8_t pipelineStage = 0;
 
-    // ── Pipeline Diagnostics (shared POD struct, single-copy from StylusPipeline) ──
-    // Layout matches StylusPipeline::DbgCoordBreakdown exactly.
-    struct StylusDiagnostics {
-        // Stage 1: Coordinate solver
-        uint16_t anchorRow = 0;
-        uint16_t anchorCol = 0;
-        int32_t  rawDim1   = 0;
-        int32_t  rawDim2   = 0;
-        int32_t  finalDim1 = 0;
-        int32_t  finalDim2 = 0;
-        float    centerOff = 0.f;
-        float    pointX    = 0.f;
-        float    pointY    = 0.f;
-        bool     valid     = false;
-        // Stage 2: Post-processing metrics
-        float    speedInstant  = 0.f;
-        float    speedShortAvg = 0.f;
-        float    speedFullAvg  = 0.f;
-        float    iirCoef       = 0.f;
-        bool     isHover       = false;
-        bool     isEdge        = false;
-        // Stage 3: Tilt
-        float    tiltDiffX  = 0.f;
-        float    tiltDiffY  = 0.f;
-        // Stage 4: Pressure / Signal
-        uint16_t peakSignal     = 0;
-        uint16_t rawPressure    = 0;
-        uint16_t mappedPressure = 0;
-        uint32_t btSeq          = 0;
-        uint8_t  predictedAgeFrames = 0;
-        bool     pressureIsReal = false;
-        // Stage 5: VHF state
-        uint8_t  vhfPenState      = 0;
-        uint8_t  linearFilterState = 0;
-        // Stage 6: P3/P4 Extended diagnostics
-        uint16_t signalRatio       = 0;
-        bool     exitSmoothed      = false;
-        bool     cmfEnabled        = false;
-        bool     coorReviserActive = false;
-        float    coorRevDeltaX     = 0.f;
-        float    coorRevDeltaY     = 0.f;
-        bool     tiltAnomalyDamped = false;
-        bool     sigSuppressActive = false;
-        uint8_t  penLifecycle      = 0;
-        bool     wasInking         = false;
-        int32_t  avg3PtDim1        = 0;
-        int32_t  avg3PtDim2        = 0;
-    };
     StylusDiagnostics diag{};
+
+    inline void SnapshotBtInput(uint16_t btPressure, uint32_t btSeq, bool hasBtSample) {
+        input.btSample.pressure = btPressure;
+        input.btSample.seq = btSeq;
+        input.btSample.hasSample = hasBtSample;
+    }
+
+    inline void SyncContractFromLegacyFields() {
+        input.slaveValid = slaveValid;
+        input.checksumOk = checksumOk;
+        input.slaveWordOffset = slaveWordOffset;
+        input.checksum16 = checksum16;
+        input.tx1BlockValid = tx1BlockValid;
+        input.tx2BlockValid = tx2BlockValid;
+        input.status = status;
+
+        output.valid = point.valid;
+        output.inRange = point.valid;
+        output.tipDown = tipSwitchActive || pressure > 0;
+        output.pressure = pressure;
+        output.confidence = point.confidence;
+        output.pipelineStage = pipelineStage;
+        output.point = point;
+        output.point.valid = output.valid;
+        output.point.pressure = pressure;
+
+        interop.recheckEnabled = recheckEnabled;
+        interop.recheckPassed = recheckPassed;
+        interop.recheckOverlap = recheckOverlap;
+        interop.recheckThreshold = recheckThreshold;
+        interop.recheckThresholdMulti = recheckThresholdMulti;
+        interop.touchNullLike = touchNullLike;
+        interop.touchSuppressActive = touchSuppressActive;
+        interop.touchSuppressFrames = touchSuppressFrames;
+        interop.signalX = signalX;
+        interop.signalY = signalY;
+        interop.maxRawPeak = maxRawPeak;
+
+#if EGOTOUCH_DIAG
+        debug.parse.slaveValid = slaveValid;
+        debug.parse.checksumOk = checksumOk;
+        debug.parse.status = status;
+        debug.parse.pipelineStage = pipelineStage;
+        debug.coord = diag;
+#endif
+    }
+
+    inline void SyncLegacyFieldsFromContract() {
+        slaveValid = input.slaveValid;
+        checksumOk = input.checksumOk;
+        slaveWordOffset = input.slaveWordOffset;
+        checksum16 = input.checksum16;
+        tx1BlockValid = input.tx1BlockValid;
+        tx2BlockValid = input.tx2BlockValid;
+        status = input.status;
+
+        pressure = output.pressure;
+        tipSwitchActive = output.tipDown;
+        point = output.point;
+        point.valid = output.valid;
+        point.pressure = output.pressure;
+        pipelineStage = output.pipelineStage;
+
+        recheckEnabled = interop.recheckEnabled;
+        recheckPassed = interop.recheckPassed;
+        recheckOverlap = interop.recheckOverlap;
+        recheckThreshold = interop.recheckThreshold;
+        recheckThresholdMulti = interop.recheckThresholdMulti;
+        touchNullLike = interop.touchNullLike;
+        touchSuppressActive = interop.touchSuppressActive;
+        touchSuppressFrames = interop.touchSuppressFrames;
+        signalX = interop.signalX;
+        signalY = interop.signalY;
+        maxRawPeak = interop.maxRawPeak;
+
+#if EGOTOUCH_DIAG
+        diag = debug.coord;
+#endif
+    }
 };
 
 // 整个管线中流转的帧结构体

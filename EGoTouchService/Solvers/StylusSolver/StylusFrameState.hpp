@@ -97,7 +97,7 @@ struct StylusLifecycleState {
     int jitterStrength = 0;
 };
 
-struct StylusOutputState {
+struct StylusPipelineOutputState {
     Asa::AsaCoorResult postCoor{};
     Asa::AsaCoorResult finalCoor{};
     int16_t tiltX = 0;
@@ -124,7 +124,7 @@ struct StylusFrameState {
     StylusProjectionState tx2{};
     StylusSignalState signal{};
     StylusLifecycleState lifecycle{};
-    StylusOutputState output{};
+    StylusPipelineOutputState output{};
 };
 
 } // namespace Solvers

@@ -5,6 +5,21 @@
 
 namespace Solvers {
 
+namespace {
+
+inline void SnapshotBtPressure(StylusFrameData& stylus,
+                               const Asa::BtPressureSample& sample) {
+    stylus.SnapshotBtInput(sample.pressure, sample.seq, sample.hasSample);
+}
+
+inline void SyncStylusContract(StylusFrameData& stylus,
+                               const Asa::BtPressureSample& sample) {
+    SnapshotBtPressure(stylus, sample);
+    stylus.SyncContractFromLegacyFields();
+}
+
+} // namespace
+
 class StylusPipeline::OutputState {
 public:
     inline void BeginFrame(StylusFrameData& frame) {
@@ -216,14 +231,17 @@ const StylusPipeline::DbgCoordBreakdown& StylusPipeline::GetDebugCoord() const {
 
 bool StylusPipeline::Process(HeatmapFrame& frame) {
     StylusFrameState state(frame, m_sensorRows, m_sensorCols, m_anchorCenterOffset);
+    const auto btSnapshot = m_btPressBuf.ReadLatest();
 
     m_postProcessor.sensorDimRows = m_sensorRows;
     m_postProcessor.sensorDimCols = m_sensorCols;
 
     m_output->BeginFrame(state);
     m_diagnostics.Reset();
+    state.lifecycle.btSample = btSnapshot;
+    SnapshotBtPressure(state.stylus, btSnapshot);
 
-    m_inputParser.Process(state);
+    m_frameParser.Process(state);
 
     if (!state.flow.terminal) {
         m_cmfFilter.Process(state);
@@ -249,17 +267,17 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
         }
 
         m_penState.ResetFallback(
-            m_btPressBuf.ReadLatest().seq,
+            btSnapshot.seq,
             m_pressureSolver,
             m_penStateMachine);
         Asa::PenFrameEvidence evidence{};
         evidence.noSignal = true;
         (void)m_penStateMachine.Process(evidence);
         Asa::StylusStateController::ApplyTerminalStylusStateMirrors(state, m_penStateMachine);
+        SyncStylusContract(state.stylus, btSnapshot);
         return m_output->FinalizeTerminalWithDiagnostics(state, m_diagnostics);
     }
 
-    state.lifecycle.btSample = m_btPressBuf.ReadLatest();
     state.lifecycle.previouslyWriting =
         (m_penStateMachine.GetState() == Asa::PenStateMachine::State::Writing);
 
@@ -281,6 +299,7 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
     }
 
     if (state.flow.reusedCommittedFrame && m_output->ReuseCommittedFrame(state)) {
+        SyncStylusContract(state.stylus, btSnapshot);
         return m_output->FinalizeWithDiagnostics(state, m_diagnostics);
     }
 
@@ -314,6 +333,9 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
         m_cmfFilter.enabled,
         m_coorReviser);
 #endif
+    m_coordFilter.Process(state.stylus);
+    m_outputGate.Process(state.stylus);
+    SyncStylusContract(state.stylus, btSnapshot);
     return m_output->FinalizeFinalWithDiagnostics(state, m_edgeCoorPost, m_diagnostics);
 }
 
@@ -321,7 +343,7 @@ std::vector<ConfigParam> StylusPipeline::GetConfigSchema() const {
     using Cat = ConfigParam::Category;
     return {
         ConfigParam("sp.enableSlaveChecksum", "Enable Slave Checksum",
-            ConfigParam::Bool, const_cast<bool*>(&m_inputParser.enableSlaveChecksum), Cat::General),
+            ConfigParam::Bool, const_cast<bool*>(&m_frameParser.enableSlaveChecksum), Cat::General),
         ConfigParam("sp.emitPacketWhenInvalid", "Emit Packet When Invalid",
             ConfigParam::Bool, const_cast<bool*>(&m_emitPacketWhenInvalid), Cat::General),
 
@@ -468,7 +490,7 @@ std::vector<ConfigParam> StylusPipeline::GetConfigSchema() const {
 }
 
 void StylusPipeline::SaveConfig(std::ostream& out) const {
-    out << "sp.enableSlaveChecksum=" << m_inputParser.enableSlaveChecksum << "\n";
+    out << "sp.enableSlaveChecksum=" << m_frameParser.enableSlaveChecksum << "\n";
     out << "sp.emitPacketWhenInvalid=" << m_emitPacketWhenInvalid << "\n";
     out << "sp.coordUseTriangle=" << m_coordSolver.useTriangle << "\n";
     out << "sp.triEdgeSecondaryBlend=" << m_coordSolver.triEdgeSecondaryBlend << "\n";
@@ -547,7 +569,7 @@ void StylusPipeline::LoadConfig(const std::string& key, const std::string& value
         try { return std::stof(v); } catch (...) { return 0.0f; }
     };
 
-    if (key == "sp.enableSlaveChecksum") m_inputParser.enableSlaveChecksum = toBool(value);
+    if (key == "sp.enableSlaveChecksum") m_frameParser.enableSlaveChecksum = toBool(value);
     else if (key == "sp.emitPacketWhenInvalid") m_emitPacketWhenInvalid = toBool(value);
     else if (key == "sp.coordUseTriangle") m_coordSolver.useTriangle = toBool(value);
     else if (key == "sp.triEdgeSecondaryBlend" || key == "sp.coordEdgeCompBit3") m_coordSolver.triEdgeSecondaryBlend = toBool(value);
