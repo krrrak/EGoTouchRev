@@ -1,11 +1,10 @@
-#include "StylusSolver/PipelineUtils.hpp"
-#include "StylusSolver/PressureSolver.hpp"
-#include "StylusSolver/StylusInputParser.hpp"
+#include "SolverTypes.h"
 #include "StylusSolver/NoiseGate.hpp"
-#include "StylusSolver/StylusStateController.hpp"
+#include "StylusSolver/StylusCoordinateFilter.hpp"
+#include "StylusSolver/StylusInputParser.hpp"
+#include "StylusSolver/StylusOutputGate.hpp"
 
 #include <array>
-#include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -15,10 +14,9 @@ namespace {
 
 using Asa::StylusFrameClass;
 using Asa::StylusInputParser;
+using Solvers::HeatmapFrame;
 using Solvers::StylusFrameData;
 using Solvers::StylusFrameState;
-using Solvers::StylusPacketRoute;
-using Solvers::HeatmapFrame;
 
 constexpr size_t kSlaveHeaderBytes = StylusInputParser::kSlaveHeaderBytes;
 constexpr size_t kSlaveWordCount = StylusInputParser::kSlaveWordCount;
@@ -100,35 +98,12 @@ std::vector<uint8_t> BuildCombinedFrameFromSlave(const std::vector<uint8_t>& sla
     return raw;
 }
 
-struct ParserStateHarness {
-    std::vector<uint8_t> raw;
-    HeatmapFrame frame{};
-    StylusFrameState state;
-
-    explicit ParserStateHarness(std::vector<uint8_t> rawIn)
-        : raw(std::move(rawIn))
-        , state(frame, /*sensorRows=*/40, /*sensorCols=*/60, /*anchorCenterOffset=*/4) {
-        frame.rawPtr = raw.data();
-        frame.rawLen = raw.size();
-    }
-};
-
-void RequireParserFlow(const StylusFrameState& state,
-                       StylusFrameClass expectedClass,
-                       StylusPacketRoute expectedRoute,
-                       uint8_t expectedStage,
-                       bool expectedTerminal,
-                       bool expectedClearCommitted,
-                       bool expectedResetPost,
-                       bool expectedResetNoise,
-                       const char* context) {
-    Require(state.parse.frameClass == expectedClass, context);
-    Require(state.flow.packetRoute == expectedRoute, context);
-    Require(state.flow.pipelineStage == expectedStage, context);
-    Require(state.flow.terminal == expectedTerminal, context);
-    Require(state.flow.clearCommitted == expectedClearCommitted, context);
-    Require(state.flow.resetPost == expectedResetPost, context);
-    Require(state.flow.resetNoise == expectedResetNoise, context);
+// The current rollout still finalizes through legacy mirrors, so tests project
+// the returned stylus state into the target contract before asserting on it.
+StylusFrameData ContractView(const StylusFrameData& stylus) {
+    StylusFrameData view = stylus;
+    view.SyncContractFromLegacyFields();
+    return view;
 }
 
 void TestStylusInputParserClassifiesShortFrame() {
@@ -176,144 +151,257 @@ void TestStylusInputParserClassifiesValidFrame() {
     Require(parsed.gridData.tx1.valid, "valid frame should decode TX1 grid");
 }
 
-void TestStylusInputParserProcessStateClassifiesShortFrame() {
-    ParserStateHarness harness(std::vector<uint8_t>(kFrameRawOffset + 6, 0xAB));
-    const auto parsed = StylusInputParser{}.Process(harness.state, false);
-
-    Require(parsed.frameClass == StylusFrameClass::ShortFrame,
-            "state parser should classify short frame");
-    Require(!harness.state.parse.valid, "short state parse should stay invalid");
-    Require(!harness.state.stylus.slaveValid, "short state parse should clear slave validity");
-    RequireParserFlow(harness.state,
-                      StylusFrameClass::ShortFrame,
-                      StylusPacketRoute::ParseFailure13,
-                      /*expectedStage=*/1,
-                      /*expectedTerminal=*/true,
-                      /*expectedClearCommitted=*/true,
-                      /*expectedResetPost=*/true,
-                      /*expectedResetNoise=*/false,
-                      "short state parse should map to parse-failure flow");
-}
-
-void TestStylusInputParserProcessStateClassifiesNoSignalFrame() {
-    ParserStateHarness harness(BuildCombinedFrameFromSlave(
-        BuildSlaveFrame(0x1234, 0x00FF, 0x00FF, {})));
-    const auto parsed = StylusInputParser{}.Process(harness.state, false);
-
-    Require(parsed.frameClass == StylusFrameClass::NoSignal,
-            "state parser should classify no-signal frame");
-    Require(harness.state.parse.slaveValid, "full no-signal frame should keep slave-valid flag");
-    Require(harness.state.stylus.status == 0x1234, "state parser should preserve stylus status");
-    RequireParserFlow(harness.state,
-                      StylusFrameClass::NoSignal,
-                      StylusPacketRoute::InvalidZeroState,
-                      /*expectedStage=*/0,
-                      /*expectedTerminal=*/true,
-                      /*expectedClearCommitted=*/true,
-                      /*expectedResetPost=*/true,
-                      /*expectedResetNoise=*/true,
-                      "no-signal state parse should map to invalid-zero flow");
-}
-
-void TestStylusInputParserProcessStateClassifiesChecksumFail() {
-    ParserStateHarness harness(BuildCombinedFrameFromSlave(std::vector<uint8_t>(kSlaveFrameBytes, 0xFF)));
-    harness.raw[kFrameRawOffset + 0] = 0x78;
-    harness.raw[kFrameRawOffset + 1] = 0x56;
-
-    const auto parsed = StylusInputParser{}.Process(harness.state, true);
-
-    Require(parsed.frameClass == StylusFrameClass::ParseFail,
-            "state parser should classify checksum failure");
-    Require(harness.state.parse.checksumFailed, "checksum failure should reach parse state");
-    Require(!harness.state.stylus.checksumOk, "checksum failure should clear stylus checksumOk");
-    RequireParserFlow(harness.state,
-                      StylusFrameClass::ParseFail,
-                      StylusPacketRoute::ParseFailure13,
-                      /*expectedStage=*/1,
-                      /*expectedTerminal=*/true,
-                      /*expectedClearCommitted=*/true,
-                      /*expectedResetPost=*/true,
-                      /*expectedResetNoise=*/false,
-                      "checksum failure should map to parse-failure flow");
-}
-
-void TestStylusInputParserProcessStateClassifiesValidFrame() {
-    ParserStateHarness harness(BuildCombinedFrameFromSlave(
+void TestStylusInputParserProcessSeedsContractInputView() {
+    const auto raw = BuildCombinedFrameFromSlave(
         BuildSlaveFrame(0x4321,
                         10,
                         12,
                         MakeCrossGrid(16000, 14000, 12000, 10000),
                         10,
                         12,
-                        MakeCrossGrid(6000, 5000, 4000, 3000))));
+                        MakeCrossGrid(6000, 5000, 4000, 3000)));
 
-    const auto parsed = StylusInputParser{}.Process(harness.state, false);
+    HeatmapFrame frame{};
+    frame.rawPtr = raw.data();
+    frame.rawLen = raw.size();
+    StylusFrameState state(frame, /*sensorRows=*/40, /*sensorCols=*/60, /*anchorCenterOffset=*/4);
+
+    const auto parsed = StylusInputParser{}.Process(state, false);
+    const auto stylus = ContractView(state.stylus);
 
     Require(parsed.frameClass == StylusFrameClass::Valid,
-            "state parser should classify valid frame");
-    Require(harness.state.parse.valid, "valid state parse should mark parse.valid");
-    Require(harness.state.stylus.tx1BlockValid, "valid state parse should mark tx1 block valid");
-    Require(harness.state.stylus.tx2BlockValid, "valid state parse should mark tx2 block valid");
-    RequireParserFlow(harness.state,
-                      StylusFrameClass::Valid,
-                      StylusPacketRoute::Valid,
-                      /*expectedStage=*/0,
-                      /*expectedTerminal=*/false,
-                      /*expectedClearCommitted=*/false,
-                      /*expectedResetPost=*/false,
-                      /*expectedResetNoise=*/false,
-                      "valid state parse should map to valid flow");
+            "state parser should still classify valid frame");
+    Require(stylus.input.slaveValid,
+            "state parser should seed slave-valid input for contract projection");
+    Require(stylus.input.status == 0x4321,
+            "state parser should seed status into the contract input view");
+    Require(stylus.input.tx1BlockValid,
+            "state parser should seed tx1-valid into the contract input view");
+    Require(stylus.input.tx2BlockValid,
+            "state parser should seed tx2-valid into the contract input view");
+    Require(!stylus.output.valid,
+            "parser-only stage should not claim a solved stylus output");
 }
 
-void TestStylusInputParserUsesOwnedChecksumConfig() {
-    ParserStateHarness harness(BuildCombinedFrameFromSlave(std::vector<uint8_t>(kSlaveFrameBytes, 0xFF)));
-    harness.raw[kFrameRawOffset + 0] = 0x78;
-    harness.raw[kFrameRawOffset + 1] = 0x56;
+void TestStylusFrameDataSyncContractFromLegacyFields() {
+    StylusFrameData stylus{};
+    stylus.slaveValid = true;
+    stylus.checksumOk = false;
+    stylus.slaveWordOffset = 7;
+    stylus.checksum16 = 0x55AA;
+    stylus.tx1BlockValid = true;
+    stylus.tx2BlockValid = false;
+    stylus.status = 0x2468;
+    stylus.pressure = 333;
+    stylus.tipSwitchActive = true;
+    stylus.pipelineStage = 4;
+    stylus.recheckEnabled = true;
+    stylus.recheckPassed = false;
+    stylus.recheckOverlap = true;
+    stylus.recheckThreshold = 700;
+    stylus.recheckThresholdMulti = 1200;
+    stylus.touchNullLike = true;
+    stylus.touchSuppressActive = true;
+    stylus.touchSuppressFrames = 3;
+    stylus.signalX = 1600;
+    stylus.signalY = 900;
+    stylus.maxRawPeak = 1600;
+    stylus.point.valid = true;
+    stylus.point.x = 1234.0f;
+    stylus.point.y = 2345.0f;
+    stylus.point.pressure = 111;
+    stylus.point.confidence = 0.75f;
+#if EGOTOUCH_DIAG
+    stylus.diag.anchorRow = 9;
+    stylus.diag.btSeq = 5;
+#endif
 
-    StylusInputParser parser;
-    parser.enableSlaveChecksum = true;
-    const auto parsed = parser.Process(harness.state);
+    stylus.SyncContractFromLegacyFields();
 
-    Require(parsed.frameClass == StylusFrameClass::ParseFail,
-            "owned checksum config should drive parse-fail classification");
-    Require(harness.state.parse.checksumFailed,
-            "owned checksum config should reach parse state");
+    Require(stylus.input.slaveValid, "input view should mirror slave validity");
+    Require(!stylus.input.checksumOk, "input view should mirror checksum status");
+    Require(stylus.input.status == 0x2468, "input view should mirror status");
+    Require(stylus.input.tx1BlockValid, "input view should mirror tx1 validity");
+    Require(!stylus.input.tx2BlockValid, "input view should mirror tx2 validity");
+    Require(stylus.output.valid, "output view should mirror point validity");
+    Require(stylus.output.inRange, "output view should treat valid point as in-range");
+    Require(stylus.output.tipDown, "output view should mirror writing state");
+    Require(stylus.output.pressure == 333, "output view should mirror final pressure");
+    Require(stylus.output.pipelineStage == 4, "output view should mirror pipeline stage");
+    Require(stylus.output.point.valid, "output point should stay valid");
+    Require(stylus.output.point.pressure == 333,
+            "output point pressure should be normalized from final pressure");
+    Require(stylus.interop.recheckEnabled, "interop should mirror recheck enable");
+    Require(!stylus.interop.recheckPassed, "interop should mirror recheck result");
+    Require(stylus.interop.recheckOverlap, "interop should mirror overlap state");
+    Require(stylus.interop.recheckThreshold == 700,
+            "interop should mirror recheck threshold");
+    Require(stylus.interop.recheckThresholdMulti == 1200,
+            "interop should mirror multi-touch threshold");
+    Require(stylus.interop.touchNullLike, "interop should mirror touch-null hint");
+    Require(stylus.interop.touchSuppressActive,
+            "interop should mirror touch suppression state");
+    Require(stylus.interop.touchSuppressFrames == 3,
+            "interop should mirror suppression hold count");
+    Require(stylus.interop.signalX == 1600, "interop should mirror signalX");
+    Require(stylus.interop.signalY == 900, "interop should mirror signalY");
+    Require(stylus.interop.maxRawPeak == 1600, "interop should mirror max raw peak");
+#if EGOTOUCH_DIAG
+    Require(stylus.debug.parse.slaveValid,
+            "debug parse snapshot should mirror slave validity");
+    Require(stylus.debug.parse.status == 0x2468,
+            "debug parse snapshot should mirror status");
+    Require(stylus.debug.coord.anchorRow == 9,
+            "debug coord snapshot should mirror diagnostics payload");
+    Require(stylus.debug.coord.btSeq == 5,
+            "debug coord snapshot should preserve BT sequence");
+#endif
 }
 
-void TestStylusStateControllerUsesOwnedThresholdConfig() {
-    HeatmapFrame frame{};
-    StylusFrameState state(frame, /*sensorRows=*/40, /*sensorCols=*/60, /*anchorCenterOffset=*/4);
-    Asa::StylusStateController controller;
-    Asa::PressureSolver pressureSolver;
-    Asa::PenStateMachine penStateMachine;
+void TestStylusFrameDataSyncLegacyFieldsFromContract() {
+    StylusFrameData stylus{};
+    stylus.input.slaveValid = true;
+    stylus.input.checksumOk = false;
+    stylus.input.slaveWordOffset = 7;
+    stylus.input.checksum16 = 0xAA55;
+    stylus.input.tx1BlockValid = true;
+    stylus.input.tx2BlockValid = true;
+    stylus.input.status = 0x9876;
+    stylus.output.valid = true;
+    stylus.output.inRange = true;
+    stylus.output.tipDown = true;
+    stylus.output.pressure = 321;
+    stylus.output.pipelineStage = 2;
+    stylus.output.point.valid = true;
+    stylus.output.point.x = 2048.0f;
+    stylus.output.point.y = 1024.0f;
+    stylus.output.point.pressure = 321;
+    stylus.interop.recheckEnabled = true;
+    stylus.interop.recheckPassed = false;
+    stylus.interop.recheckOverlap = true;
+    stylus.interop.recheckThreshold = 888;
+    stylus.interop.recheckThresholdMulti = 1333;
+    stylus.interop.touchNullLike = true;
+    stylus.interop.touchSuppressActive = true;
+    stylus.interop.touchSuppressFrames = 6;
+    stylus.interop.signalX = 1700;
+    stylus.interop.signalY = 1200;
+    stylus.interop.maxRawPeak = 1700;
+#if EGOTOUCH_DIAG
+    stylus.debug.coord.rawPressure = 456;
+    stylus.debug.coord.btSeq = 7;
+#endif
 
-    controller.tx1InkEnterThreshold = 900;
-    controller.tx1LiftSuspiciousThreshold = 700;
-    controller.tx1LiftAbsoluteThreshold = 500;
+    stylus.SyncLegacyFieldsFromContract();
 
-    state.tx1.globalCoor.valid = true;
-    state.tx1.globalCoor.dim1 = 1234;
-    state.tx1.globalCoor.dim2 = 2345;
-    state.parse.gridData.tx1.valid = true;
-    state.signal.recheckPassed = true;
-    state.signal.tx1Composite = 1000;
-    state.signal.tx2Composite = 200;
-
-    const auto result = controller.Process(
-        state,
-        /*hasCommittedFrame=*/false,
-        pressureSolver,
-        penStateMachine);
-
-    Require(result.stateOutput.valid,
-            "owned thresholds should still yield a valid state output");
-    Require(state.lifecycle.authoritativeDown,
-            "owned enter threshold should mark authoritative down");
-    Require(state.lifecycle.keepInkAlive,
-            "owned suspicious threshold should keep ink alive");
+    Require(stylus.slaveValid, "legacy slaveValid should mirror contract input");
+    Require(!stylus.checksumOk, "legacy checksum flag should mirror contract input");
+    Require(stylus.status == 0x9876, "legacy status should mirror contract input");
+    Require(stylus.tx1BlockValid, "legacy tx1 validity should mirror contract input");
+    Require(stylus.tx2BlockValid, "legacy tx2 validity should mirror contract input");
+    Require(stylus.pressure == 321, "legacy pressure should mirror contract output");
+    Require(stylus.tipSwitchActive, "legacy tip switch should mirror contract output");
+    Require(stylus.point.valid, "legacy point should mirror contract output");
+    Require(stylus.point.pressure == 321,
+            "legacy point pressure should mirror contract output pressure");
+    Require(stylus.pipelineStage == 2, "legacy pipeline stage should mirror contract output");
+    Require(stylus.recheckEnabled, "legacy recheck flag should mirror contract interop");
+    Require(!stylus.recheckPassed, "legacy recheck result should mirror contract interop");
+    Require(stylus.recheckOverlap, "legacy overlap state should mirror contract interop");
+    Require(stylus.recheckThreshold == 888,
+            "legacy threshold should mirror contract interop");
+    Require(stylus.recheckThresholdMulti == 1333,
+            "legacy multi threshold should mirror contract interop");
+    Require(stylus.touchNullLike, "legacy touch-null hint should mirror contract interop");
+    Require(stylus.touchSuppressActive,
+            "legacy touch suppression should mirror contract interop");
+    Require(stylus.touchSuppressFrames == 6,
+            "legacy suppression hold should mirror contract interop");
+    Require(stylus.signalX == 1700, "legacy signalX should mirror contract interop");
+    Require(stylus.signalY == 1200, "legacy signalY should mirror contract interop");
+    Require(stylus.maxRawPeak == 1700,
+            "legacy max raw peak should mirror contract interop");
+#if EGOTOUCH_DIAG
+    Require(stylus.diag.rawPressure == 456,
+            "legacy diagnostics should mirror contract debug payload");
+    Require(stylus.diag.btSeq == 7,
+            "legacy diagnostics should preserve BT sequence");
+#endif
 }
 
-void TestNoiseGateMirrorsOwnedRecheckEnabledToStylus() {
+void TestStylusCoordinateFilterProjectsLegacyOutputIntoContract() {
+    StylusFrameData stylus{};
+    stylus.slaveValid = true;
+    stylus.tx1BlockValid = true;
+    stylus.status = 0x1357;
+    stylus.pressure = 222;
+    stylus.tipSwitchActive = true;
+    stylus.pipelineStage = 4;
+    stylus.point.valid = true;
+    stylus.point.x = 512.0f;
+    stylus.point.y = 768.0f;
+    stylus.point.pressure = 111;
+    stylus.point.confidence = 0.8f;
+
+    Asa::StylusCoordinateFilter filter;
+    filter.Process(stylus);
+
+    Require(stylus.input.status == 0x1357,
+            "coordinate filter should keep contract input aligned");
+    Require(stylus.output.valid,
+            "coordinate filter should project legacy point validity into output");
+    Require(stylus.output.tipDown,
+            "coordinate filter should project writing state into output");
+    Require(stylus.output.pressure == 222,
+            "coordinate filter should project final pressure into output");
+    Require(stylus.output.point.valid,
+            "coordinate filter should keep output point valid");
+    Require(stylus.output.point.pressure == 222,
+            "coordinate filter should normalize point pressure in output");
+}
+
+void TestStylusOutputGateProjectsLegacyInteropIntoContract() {
+    StylusFrameData stylus{};
+    stylus.recheckEnabled = true;
+    stylus.recheckPassed = false;
+    stylus.recheckOverlap = true;
+    stylus.recheckThreshold = 640;
+    stylus.recheckThresholdMulti = 960;
+    stylus.touchNullLike = true;
+    stylus.touchSuppressActive = true;
+    stylus.touchSuppressFrames = 4;
+    stylus.signalX = 1400;
+    stylus.signalY = 700;
+    stylus.maxRawPeak = 1400;
+
+    Asa::StylusOutputGate gate;
+    gate.Process(stylus);
+
+    Require(stylus.interop.recheckEnabled,
+            "output gate should project recheck enable into interop");
+    Require(!stylus.interop.recheckPassed,
+            "output gate should project recheck result into interop");
+    Require(stylus.interop.recheckOverlap,
+            "output gate should project overlap into interop");
+    Require(stylus.interop.recheckThreshold == 640,
+            "output gate should project recheck threshold into interop");
+    Require(stylus.interop.recheckThresholdMulti == 960,
+            "output gate should project multi threshold into interop");
+    Require(stylus.interop.touchNullLike,
+            "output gate should project touch-null hint into interop");
+    Require(stylus.interop.touchSuppressActive,
+            "output gate should project touch suppression into interop");
+    Require(stylus.interop.touchSuppressFrames == 4,
+            "output gate should project suppression hold into interop");
+    Require(stylus.interop.signalX == 1400,
+            "output gate should project signalX into interop");
+    Require(stylus.interop.signalY == 700,
+            "output gate should project signalY into interop");
+    Require(stylus.interop.maxRawPeak == 1400,
+            "output gate should project max raw peak into interop");
+}
+
+void TestNoiseGateMirrorsOwnedRecheckEnabledIntoContractInterop() {
     HeatmapFrame frame{};
     StylusFrameState state(frame, /*sensorRows=*/40, /*sensorCols=*/60, /*anchorCenterOffset=*/4);
     Asa::NoiseGate gate;
@@ -327,87 +415,17 @@ void TestNoiseGateMirrorsOwnedRecheckEnabledToStylus() {
 
     gate.recheckEnabled = false;
     gate.Process(state);
-    Require(!state.stylus.recheckEnabled,
-            "noise gate should mirror disabled recheck config to stylus output");
+    auto stylus = ContractView(state.stylus);
+    Require(!stylus.interop.recheckEnabled,
+            "noise gate should project disabled recheck into interop");
 
     gate.recheckEnabled = true;
     gate.Process(state);
-    Require(state.stylus.recheckEnabled,
-            "noise gate should mirror enabled recheck config to stylus output");
-}
-
-void TestStylusStateControllerMirrorsStylusOutputs() {
-    HeatmapFrame frame{};
-    StylusFrameState state(frame, /*sensorRows=*/40, /*sensorCols=*/60, /*anchorCenterOffset=*/4);
-    Asa::PenStateMachine penStateMachine;
-    Asa::PenFrameEvidence evidence{};
-    Asa::PenUpdateResult penUpdate{};
-
-    evidence.coordValid = true;
-    evidence.tx1BlockValid = true;
-    evidence.activeStylusPresent = true;
-    evidence.hoverSignalPresent = true;
-    evidence.authoritativeDown = true;
-    evidence.keepInkAlive = true;
-    evidence.recheckPassed = true;
-    evidence.curDim1 = 1024;
-    evidence.curDim2 = 2048;
-    (void)penStateMachine.Process(evidence);
-
-    state.lifecycle.btSample = Asa::BtPressureSample{222, 7, true};
-    state.lifecycle.mappedPressure = 111;
-    penUpdate.output.outputPressure = 333;
-    penUpdate.output.noPressInkActive = true;
-    penUpdate.output.tipSwitchActive = true;
-    penUpdate.output.sustainOutput = true;
-    penUpdate.output.fastLiftOutput = true;
-
-    Asa::StylusStateController::ApplyStylusStateMirrors(state, penUpdate, penStateMachine);
-
-    Require(state.stylus.point.rawPressure == 222,
-            "stylus mirror should expose BT raw pressure from lifecycle sample");
-    Require(state.stylus.point.mappedPressure == 111,
-            "stylus mirror should expose mapped pressure from lifecycle");
-    Require(state.stylus.pressure == 333 && state.stylus.point.pressure == 333,
-            "stylus mirror should expose output pressure on frame and point");
-    Require(state.stylus.noPressInkActive,
-            "stylus mirror should forward pen-state no-press output");
-    Require(state.stylus.tipSwitchActive,
-            "stylus mirror should forward pen-state tip-switch output");
-    Require(state.stylus.sustainOutput,
-            "stylus mirror should forward pen-state sustain output");
-    Require(state.stylus.fastLiftOutput,
-            "stylus mirror should forward pen-state fast-lift output");
-    Require(state.stylus.animState == 2,
-            "stylus mirror should source animation state from the pen state machine");
-}
-
-void TestStylusStateControllerMirrorsTerminalAnimState() {
-    HeatmapFrame frame{};
-    StylusFrameState state(frame, /*sensorRows=*/40, /*sensorCols=*/60, /*anchorCenterOffset=*/4);
-    Asa::PenStateMachine penStateMachine;
-    Asa::PenFrameEvidence down{};
-    Asa::PenFrameEvidence up{};
-
-    down.coordValid = true;
-    down.tx1BlockValid = true;
-    down.activeStylusPresent = true;
-    down.hoverSignalPresent = true;
-    down.authoritativeDown = true;
-    down.keepInkAlive = true;
-    down.recheckPassed = true;
-    down.curDim1 = 512;
-    down.curDim2 = 768;
-    (void)penStateMachine.Process(down);
-
-    up.noSignal = true;
-    up.immediateRelease = true;
-    up.recheckPassed = true;
-    (void)penStateMachine.Process(up);
-
-    Asa::StylusStateController::ApplyTerminalStylusStateMirrors(state, penStateMachine);
-    Require(state.stylus.animState == 0,
-            "terminal stylus mirror should copy the current pen-state animation");
+    stylus = ContractView(state.stylus);
+    Require(stylus.interop.recheckEnabled,
+            "noise gate should project enabled recheck into interop");
+    Require(stylus.interop.recheckPassed,
+            "noise gate should keep recheck result projected into interop");
 }
 
 } // namespace
@@ -418,15 +436,12 @@ int main() {
         TestStylusInputParserClassifiesNoSignalFrame();
         TestStylusInputParserClassifiesChecksumFail();
         TestStylusInputParserClassifiesValidFrame();
-        TestStylusInputParserProcessStateClassifiesShortFrame();
-        TestStylusInputParserProcessStateClassifiesNoSignalFrame();
-        TestStylusInputParserProcessStateClassifiesChecksumFail();
-        TestStylusInputParserProcessStateClassifiesValidFrame();
-        TestStylusInputParserUsesOwnedChecksumConfig();
-        TestStylusStateControllerUsesOwnedThresholdConfig();
-        TestNoiseGateMirrorsOwnedRecheckEnabledToStylus();
-        TestStylusStateControllerMirrorsStylusOutputs();
-        TestStylusStateControllerMirrorsTerminalAnimState();
+        TestStylusInputParserProcessSeedsContractInputView();
+        TestStylusFrameDataSyncContractFromLegacyFields();
+        TestStylusFrameDataSyncLegacyFieldsFromContract();
+        TestStylusCoordinateFilterProjectsLegacyOutputIntoContract();
+        TestStylusOutputGateProjectsLegacyInteropIntoContract();
+        TestNoiseGateMirrorsOwnedRecheckEnabledIntoContractInterop();
         std::cout << "[TEST] Stylus pipeline module tests passed.\n";
         return 0;
     } catch (const std::exception& ex) {

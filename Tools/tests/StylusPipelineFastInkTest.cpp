@@ -1,32 +1,25 @@
-#include "StylusSolver/NoPressInkGate.hpp"
-#include "StylusSolver/PressureSolver.hpp"
 #include "StylusSolver/BtPressBuffer.hpp"
-#include "StylusSolver/FakePressureDecay.hpp"
 #include "StylusSolver/GridPeakDetector.hpp"
+#include "StylusSolver/PressureSolver.hpp"
 #include "StylusSolver/StylusPipeline.h"
 
 #include <algorithm>
-#include <atomic>
 #include <array>
-#include <chrono>
-#include <cmath>
 #include <cstdint>
 #include <iostream>
-#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace {
 
 using Asa::EdgeSignalInputs;
 using Asa::GridPeakDetector;
-using Asa::NoPressInkGate;
 using Asa::PressureSolver;
 using Solvers::HeatmapFrame;
 using Solvers::StylusFrameData;
+using Solvers::StylusPacketRoute;
 using Solvers::StylusPipeline;
 
 constexpr size_t kMasterBytes = 5063;
@@ -36,18 +29,18 @@ constexpr size_t kSlaveFrameBytes = kSlaveHeaderBytes + kSlaveWordCount * 2;
 constexpr int kGridDim = 9;
 
 void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
-void RequireNear(float actual, float expected, float epsilon, const char* message) {
-    if (std::fabs(actual - expected) > epsilon) {
+    if (!condition) {
         throw std::runtime_error(message);
     }
 }
 
 std::array<uint16_t, kGridDim * kGridDim> MakeCrossGrid(
-    uint16_t center, uint16_t nearAxis, uint16_t diag, uint16_t farAxis,
-    int peakRow = 4, int peakCol = 4) {
+    uint16_t center,
+    uint16_t nearAxis,
+    uint16_t diag,
+    uint16_t farAxis,
+    int peakRow = 4,
+    int peakCol = 4) {
     std::array<uint16_t, kGridDim * kGridDim> grid{};
     auto set = [&](int r, int c, uint16_t v) {
         if (r >= 0 && r < kGridDim && c >= 0 && c < kGridDim) {
@@ -99,12 +92,12 @@ std::vector<uint8_t> BuildCombinedStylusFrame(
     return raw;
 }
 
-StylusFrameData RunFrame(StylusPipeline& pipeline,
-                         const std::vector<uint8_t>& raw,
-                         uint16_t btPressure,
-                         uint64_t timestamp = 0,
-                         bool pushBtPressure = true) {
-    HeatmapFrame frame;
+HeatmapFrame RunFrame(StylusPipeline& pipeline,
+                      const std::vector<uint8_t>& raw,
+                      uint16_t btPressure,
+                      uint64_t timestamp = 0,
+                      bool pushBtPressure = true) {
+    HeatmapFrame frame{};
     frame.rawPtr = raw.data();
     frame.rawLen = raw.size();
     frame.timestamp = timestamp;
@@ -112,18 +105,31 @@ StylusFrameData RunFrame(StylusPipeline& pipeline,
         pipeline.SetBtMcuPressure(btPressure);
     }
     pipeline.Process(frame);
-    return frame.stylus;
+    return frame;
 }
 
 void LoadFromSavedText(StylusPipeline& pipeline, const std::string& saved) {
     std::istringstream in(saved);
     std::string line;
     while (std::getline(in, line)) {
-        if (line.empty()) continue;
+        if (line.empty()) {
+            continue;
+        }
         const size_t eq = line.find('=');
-        if (eq == std::string::npos) continue;
+        if (eq == std::string::npos) {
+            continue;
+        }
         pipeline.LoadConfig(line.substr(0, eq), line.substr(eq + 1));
     }
+}
+
+// The pipeline still finalizes through legacy mirrors in this rollout. These
+// tests normalize the final stylus frame into the target contract before
+// asserting on input/output/interop semantics.
+StylusFrameData ContractView(const HeatmapFrame& frame) {
+    StylusFrameData stylus = frame.stylus;
+    stylus.SyncContractFromLegacyFields();
+    return stylus;
 }
 
 void TestPressureStageSignalSuppressHysteresis() {
@@ -264,189 +270,314 @@ void TestBtPressBufferSeqSnapshot() {
     Require(s2.seq == 2, "second push should advance seq to 2");
 }
 
-void TestFakePressureDecayBasic() {
-    Asa::FakePressureDecay decay;
-    Require(!decay.IsActive(), "initial state should not be active");
-    decay.Init();
-    Require(decay.IsActive(), "after init should be active with AddNum=2");
-    uint16_t p1 = decay.Step(600);
-    Require(p1 == 400, "step1: 2*600/3 = 400");
-    Require(decay.IsActive(), "still active after step1");
-    uint16_t p2 = decay.Step(p1);
-    Require(p2 == 200, "step2: 1*400/2 = 200");
-    Require(!decay.IsActive(), "not active after step2 (AddNum=0)");
-    uint16_t p3 = decay.Step(p2);
-    Require(p3 == 0, "step3 after inactive should return 0");
-}
-
-void TestFakePressureDecayReset() {
-    Asa::FakePressureDecay decay;
-    decay.Init();
-    Require(decay.IsActive(), "should be active after init");
-    decay.Reset();
-    Require(!decay.IsActive(), "should not be active after reset");
-    decay.Init();
-    Require(decay.IsActive(), "should re-init after reset");
-}
-
-void TestNoPressInkGateEnterAndExit() {
-    NoPressInkGate gate;
-    gate.enabled = true;
-
-    const auto r0 = gate.Apply(true, true, false, 0, 10000, 0);
-    Require(!r0.active, "no-press gate should stay inactive");
-
-    const auto r1 = gate.Apply(true, true, false, 0, 10000, 0);
-    Require(!r1.active, "no-press gate should remain inactive");
-
-    const auto r2 = gate.Apply(true, true, false, 120, 20000, 0);
-    Require(!r2.active, "real pressure should not enable no-press gate");
-}
-
-void TestStylusPipelineNoPressSyntheticPressure() {
+void TestStylusPipelineValidFrameProjectsInputOutputAndInteropContract() {
     StylusPipeline pipeline;
-    pipeline.LoadConfig("sp.noPressEnabled", "1");
 
     const auto tx1Grid = MakeCrossGrid(16000, 14000, 12000, 10000);
     const auto tx2Grid = MakeCrossGrid(6000, 5000, 4000, 3000);
     const auto raw = BuildCombinedStylusFrame(10, 10, tx1Grid, 10, 10, tx2Grid);
 
-    const auto f0 = RunFrame(pipeline, raw, 0, 8);
-    Require(f0.point.valid, "strong zero-pressure frame should produce valid coordinates");
-    Require(f0.pressure == 0, "zero BT pressure should produce zero final pressure");
-    Require(!f0.noPressInkActive, "no-press ink should stay inactive");
+    const auto frame = RunFrame(pipeline, raw, 300, 8);
+    const auto stylus = ContractView(frame);
 
-    const auto f1 = RunFrame(pipeline, raw, 64, 16);
-    Require(f1.pressure >= 0, "pressure should remain non-negative");
-    Require(!f1.noPressInkActive, "no-press ink should remain inactive");
-    Require(!f1.sustainOutput, "sustain output should remain disabled");
-    Require(!f1.fastLiftOutput, "fast-lift output should remain disabled");
+    Require(stylus.input.slaveValid, "valid frame should report slave-valid input");
+    Require(stylus.input.tx1BlockValid, "valid frame should report tx1-valid input");
+    Require(stylus.input.tx2BlockValid, "valid frame should report tx2-valid input");
+    Require(stylus.input.btSample.hasSample, "valid frame should snapshot BT input");
+    Require(stylus.input.btSample.pressure == 300,
+            "valid frame should snapshot raw BT pressure");
+    Require(stylus.input.btSample.seq == 1,
+            "first BT push should be visible in the input snapshot");
+    Require(stylus.output.valid, "valid frame should project a valid output");
+    Require(stylus.output.inRange, "valid frame should project in-range output");
+    Require(stylus.output.tipDown, "valid frame should project tip-down output");
+    Require(stylus.output.pressure > 0, "valid frame should output pressure");
+    Require(stylus.output.point.valid, "valid frame should keep a valid output point");
+    Require(stylus.output.point.pressure == stylus.output.pressure,
+            "output point pressure should match output pressure");
+    Require(stylus.interop.signalX == 16000,
+            "contract interop should expose TX1 peak signal");
+    Require(stylus.interop.signalY == 6000,
+            "contract interop should expose TX2 peak signal");
+    Require(stylus.interop.maxRawPeak == 16000,
+            "contract interop should expose max raw peak");
+    Require(stylus.output.point.peakTx1 == 14666,
+            "contract output should keep TX1 composite peak");
+    Require(stylus.output.point.peakTx2 == 6000,
+            "contract output should keep TX2 composite peak");
+#if EGOTOUCH_DIAG
+    Require(stylus.debug.parse.slaveValid,
+            "debug parse snapshot should track valid slave input");
+    Require(stylus.debug.coord.pressureIsReal,
+            "first pushed pressure should be marked real in diagnostics");
+    Require(stylus.debug.coord.btSeq == 1,
+            "debug diagnostics should keep the first BT sequence");
+#endif
 }
 
-void TestStylusPipelineLowSignalKeepsCoordinateButZeroPressureUntilAuthoritativeDown() {
+void TestStylusPipelineWeakSignalKeepsSolvedPointButStaysOutOfTipDown() {
     StylusPipeline pipeline;
 
     const auto weakGrid = MakeCrossGrid(1800, 1400, 900, 600);
     const auto raw = BuildCombinedStylusFrame(12, 12, weakGrid, 12, 12, {});
 
     const auto frame = RunFrame(pipeline, raw, 180, 8);
-    Require(frame.point.valid, "weak-signal frame should still solve coordinates");
-    Require(frame.pressure == 0, "weak-signal frame should not output pressure before authoritative down");
-    Require(!frame.tipSwitchActive, "weak-signal frame should remain out of writing state");
-    Require(!frame.noPressInkActive, "no-press ink should stay inactive");
+    const auto stylus = ContractView(frame);
+
+    Require(stylus.output.valid, "weak-signal frame should still solve a point");
+    Require(stylus.output.inRange, "weak-signal frame should stay in range");
+    Require(!stylus.output.tipDown,
+            "weak-signal frame should not project writing state");
+    Require(stylus.output.pressure == 0,
+            "weak-signal frame should keep pressure closed");
+    Require(stylus.output.point.valid,
+            "weak-signal frame should keep the solved point in output");
+    Require(stylus.output.point.pressure == 0,
+            "weak-signal frame should normalize output point pressure to zero");
+    Require(stylus.input.btSample.pressure == 180,
+            "weak-signal frame should still snapshot BT input");
 }
 
-void TestStylusPipelineFastLiftToNoSignal() {
+void TestStylusPipelinePredictedPressureProjectsBtInputContract() {
     StylusPipeline pipeline;
-    pipeline.LoadConfig("sp.noPressEnabled", "0");
-    pipeline.LoadConfig("sp.sigSuppressEnabled", "0");
     pipeline.LoadConfig("sp.filterMode", "2");
 
-    const auto interiorGrid = MakeCrossGrid(12000, 9000, 7000, 5000, 4, 4);
-    const auto rawInterior = BuildCombinedStylusFrame(10, 10, interiorGrid, 10, 10, {});
+    const auto raw = BuildCombinedStylusFrame(
+        10,
+        10,
+        MakeCrossGrid(12000, 9000, 7000, 5000, 4, 4),
+        10,
+        10,
+        {});
 
-    const auto down = RunFrame(pipeline, rawInterior, 180, 8);
-    Require(down.point.valid, "pen-down frame should be valid");
-    Require(down.pressure > 0, "pen-down frame should report pressure");
-    Require(down.tipSwitchActive, "pen-down frame should assert tip switch");
-    Require(down.animState == 2, "pen-down frame should be in writing state");
+    const auto downFrame = RunFrame(pipeline, raw, 220, 8, true);
+    const auto down = ContractView(downFrame);
+    Require(down.output.valid, "first frame should project valid output");
+    Require(down.output.pressure > 0, "first frame should output pressure");
+    Require(down.output.tipDown, "first frame should project tip-down output");
+    Require(down.input.btSample.seq == 1,
+            "first frame should expose the first BT sequence");
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(35));
-    const auto lift = RunFrame(pipeline, BuildCombinedStylusFrame(0x00FF, 0x00FF, {}, 0, 0, {}), 0, 16);
-    Require(!lift.point.valid, "no-signal lift frame should not keep a valid point");
-    Require(lift.pressure == 0, "no-signal lift frame should drop pressure");
-    Require(!lift.tipSwitchActive, "no-signal lift frame should clear tip switch");
-    Require(!lift.noPressInkActive, "no-signal lift frame should keep no-press inactive");
+    const auto predictedFrame = RunFrame(pipeline, raw, 220, 16, false);
+    const auto predicted = ContractView(predictedFrame);
+    Require(predicted.output.valid, "predicted frame should stay valid");
+    Require(predicted.output.pressure > 0,
+            "predicted frame should keep pressure output");
+    Require(predicted.output.tipDown,
+            "predicted frame should stay in writing output state");
+    Require(predicted.input.btSample.hasSample,
+            "predicted frame should keep the snapped BT sample visible");
+    Require(predicted.input.btSample.seq == 1,
+            "predicted frame should retain the previous BT sequence");
+    Require(predicted.input.btSample.pressure == 220,
+            "predicted frame should retain the previous BT pressure");
+#if EGOTOUCH_DIAG
+    Require(!predicted.debug.coord.pressureIsReal,
+            "predicted frame should mark pressure as synthetic in diagnostics");
+    Require(predicted.debug.coord.btSeq == 1,
+            "predicted frame should keep the previous BT sequence in diagnostics");
+    Require(predicted.debug.coord.predictedAgeFrames >= 1,
+            "predicted frame should increase diagnostic prediction age");
+#endif
+
+    const auto releaseFrame = RunFrame(
+        pipeline,
+        BuildCombinedStylusFrame(0x00FF, 0x00FF, {}, 0, 0, {}),
+        220,
+        20,
+        false);
+    const auto release = ContractView(releaseFrame);
+    Require(!release.output.valid, "release frame should clear output validity");
+    Require(!release.output.tipDown, "release frame should clear tip-down output");
+    Require(release.output.pressure == 0, "release frame should close pressure output");
+    Require(release.packetRoute == StylusPacketRoute::InvalidZeroState,
+            "release frame should preserve invalid-zero route for VHF");
+
+    const auto hoverFrame = RunFrame(pipeline, raw, 220, 24, false);
+    const auto hover = ContractView(hoverFrame);
+    Require(hover.output.valid, "next TX1 frame should solve output again");
+    Require(hover.output.tipDown,
+            "TX1 evidence should still reopen tip-down without a fresh BT sample");
+    Require(hover.output.pressure == 0,
+            "stale BT sample should not reopen pressure output");
+
+    const auto resumedFrame = RunFrame(pipeline, raw, 260, 32, true);
+    const auto resumed = ContractView(resumedFrame);
+    Require(resumed.output.pressure > 0,
+            "fresh BT sample after release should reopen pressure output");
+    Require(resumed.input.btSample.seq >= 2,
+            "fresh BT sample should advance the visible BT sequence");
+#if EGOTOUCH_DIAG
+    Require(resumed.debug.coord.pressureIsReal,
+            "fresh BT sample should restore real-pressure diagnostics");
+    Require(resumed.debug.coord.btSeq >= 2,
+            "fresh BT sample should advance the diagnostic BT sequence");
+#endif
 }
 
-void TestStylusPipelineReleaseRetainsPreviousOutput() {
+void TestStylusPipelineRealZeroDropsPressureButKeepsTipDownWhenTx1StillDown() {
     StylusPipeline pipeline;
-    pipeline.LoadConfig("sp.noPressEnabled", "0");
-    pipeline.LoadConfig("sp.sigSuppressEnabled", "0");
     pipeline.LoadConfig("sp.filterMode", "2");
-    pipeline.LoadConfig("sp.tx1InkEnterTh", "9000");
-    pipeline.LoadConfig("sp.tx1LiftSuspiciousTh", "7000");
-    pipeline.LoadConfig("sp.tx1LiftAbsoluteTh", "4500");
 
-    const auto raw = BuildCombinedStylusFrame(10, 10,
-        MakeCrossGrid(12000, 9000, 7000, 5000, 4, 4), 10, 10, {});
-    const auto suspiciousRaw = BuildCombinedStylusFrame(10, 10,
-        MakeCrossGrid(6500, 6500, 6400, 6300, 4, 4), 10, 10, {});
-    const auto down = RunFrame(pipeline, raw, 220, 8);
-    Require(down.point.valid, "precondition should produce a valid down frame");
-    Require(down.pressure > 0, "precondition should carry pressure");
+    const auto raw = BuildCombinedStylusFrame(
+        10,
+        10,
+        MakeCrossGrid(12000, 9000, 7000, 5000, 4, 4),
+        10,
+        10,
+        {});
 
-    const auto weak = RunFrame(pipeline, suspiciousRaw, 0, 16);
-    Require(!weak.fastLiftOutput, "fast-lift output should stay disabled");
-    Require(!weak.sustainOutput, "sustain output should stay disabled");
-    Require(weak.pressure == down.pressure, "suspicious frame should reuse previous committed pressure");
-    Require(weak.tipSwitchActive == down.tipSwitchActive, "suspicious frame should reuse previous tip state");
+    const auto downFrame = RunFrame(pipeline, raw, 240, 8, true);
+    const auto down = ContractView(downFrame);
+    Require(down.output.tipDown, "down frame should project tip-down output");
+
+    const auto zeroFrame = RunFrame(pipeline, raw, 0, 16, true);
+    const auto zero = ContractView(zeroFrame);
+    Require(zero.output.valid, "real-zero frame should keep the stylus point valid");
+    Require(zero.output.pressure == 0,
+            "real-zero BT sample should drop pressure immediately");
+    Require(zero.output.tipDown,
+            "real-zero BT sample should keep tip-down while TX1 still indicates down");
+    Require(zero.input.btSample.pressure == 0,
+            "real-zero frame should snapshot zero BT pressure");
+    Require(zero.input.btSample.seq >= 2,
+            "real-zero frame should advance BT sequence");
+#if EGOTOUCH_DIAG
+    Require(zero.debug.coord.pressureIsReal,
+            "real-zero frame should still be marked as real in diagnostics");
+#endif
 }
 
-void TestStylusPipelineEdgeFastLiftRetainsCoordinate() {
+void TestStylusPipelineInvalidZeroStateClearsOutputWithoutBuildingPacket() {
     StylusPipeline pipeline;
-    pipeline.LoadConfig("sp.noPressEnabled", "0");
-    pipeline.LoadConfig("sp.sigSuppressEnabled", "0");
     pipeline.LoadConfig("sp.filterMode", "2");
 
-    const auto edgeGrid = MakeCrossGrid(15000, 12000, 9000, 6000, 0, 0);
-    const auto raw = BuildCombinedStylusFrame(0, 0, edgeGrid, 0, 0, {});
-    const auto down = RunFrame(pipeline, raw, 220, 8);
-    Require(down.point.valid, "edge frame should still solve a valid point");
+    const auto frame = RunFrame(
+        pipeline,
+        BuildCombinedStylusFrame(0x00FF, 0x00FF, {}, 0, 0, {}),
+        100,
+        8,
+        true);
+    const auto stylus = ContractView(frame);
 
-    const auto weak = RunFrame(pipeline, raw, 0, 16);
-    Require(!weak.fastLiftOutput, "edge weak-release should not enter fast-lift output");
-    Require(weak.pressure == 0, "edge weak-release should output zero pressure with zero BT input");
+    Require(stylus.input.slaveValid,
+            "full-length no-signal frame should still report slave-valid input");
+    Require(!stylus.output.valid,
+            "invalid-zero frame should clear output validity");
+    Require(!stylus.output.inRange,
+            "invalid-zero frame should clear in-range output");
+    Require(!stylus.output.tipDown,
+            "invalid-zero frame should clear tip-down output");
+    Require(stylus.output.pressure == 0,
+            "invalid-zero frame should clear output pressure");
+    Require(stylus.packetRoute == StylusPacketRoute::InvalidZeroState,
+            "invalid-zero frame should preserve route for VHF");
+    Require(!stylus.packet.valid,
+            "solver should not build stylus packets on invalid-zero path");
+}
+
+void TestStylusPipelineShortFrameClearsPreviousOutputWithoutPacketBuild() {
+    StylusPipeline pipeline;
+
+    const auto validRaw = BuildCombinedStylusFrame(
+        10,
+        10,
+        MakeCrossGrid(12000, 9000, 7000, 5000, 4, 4),
+        10,
+        10,
+        {});
+    const auto validFrame = RunFrame(pipeline, validRaw, 240, 8, true);
+    const auto valid = ContractView(validFrame);
+    Require(valid.output.valid, "precondition should project valid output");
+    Require(valid.output.pressure > 0, "precondition should project pressure");
+    Require(valid.output.tipDown, "precondition should project tip-down output");
+
+    const std::vector<uint8_t> shortRaw(10, 0);
+    const auto shortFrame = RunFrame(pipeline, shortRaw, 240, 16, false);
+    const auto stylus = ContractView(shortFrame);
+
+    Require(!stylus.input.slaveValid,
+            "short frame should clear slave-valid input");
+    Require(!stylus.output.valid,
+            "short frame should clear output validity");
+    Require(stylus.output.pressure == 0,
+            "short frame should clear output pressure");
+    Require(stylus.output.point.pressure == 0,
+            "short frame should clear output point pressure");
+    Require(!stylus.output.tipDown,
+            "short frame should clear tip-down output");
+    Require(stylus.packetRoute == StylusPacketRoute::ParseFailure13,
+            "short frame should preserve parse-failure route for VHF");
+    Require(!stylus.packet.valid,
+            "short frame should not build a stylus packet inside the solver");
+}
+
+void TestStylusPipelineInvalidPathProjectsFailureStage() {
+    StylusPipeline pipeline;
+
+    std::array<uint16_t, kGridDim * kGridDim> flatGrid{};
+    flatGrid.fill(100);
+    const auto rawNoPeak = BuildCombinedStylusFrame(10, 10, flatGrid, 10, 10, {});
+
+    const auto frame = RunFrame(pipeline, rawNoPeak, 500, 8, true);
+    const auto stylus = ContractView(frame);
+    Require(!stylus.output.valid, "no-peak frame should not project valid output");
+    Require(stylus.output.pipelineStage == 3,
+            "contract output should expose peak-detection failure stage");
 }
 
 void TestStylusPipelineConfigRoundTrip() {
     StylusPipeline pipeline;
+    pipeline.LoadConfig("sp.enableSlaveChecksum", "1");
+    pipeline.LoadConfig("sp.emitPacketWhenInvalid", "0");
+    pipeline.LoadConfig("sp.recheckEnabled", "0");
     pipeline.LoadConfig("sp.recheckThBase", "888");
     pipeline.LoadConfig("sp.recheckThMulti", "1333");
     pipeline.LoadConfig("sp.tx1InkEnterTh", "9000");
     pipeline.LoadConfig("sp.tx1LiftSuspiciousTh", "7000");
     pipeline.LoadConfig("sp.tx1LiftAbsoluteTh", "4500");
-    pipeline.LoadConfig("sp.edgeSigSuppressEnabled", "1");
-    pipeline.LoadConfig("sp.edgeSigSuppressEnter", "1444");
-    pipeline.LoadConfig("sp.edgeSigSuppressExit", "3555");
+    pipeline.LoadConfig("sp.cmfEnabled", "0");
+    pipeline.LoadConfig("sp.cmfWindowSize", "5");
+    pipeline.LoadConfig("sp.pressPolyEnabled", "0");
+    pipeline.LoadConfig("sp.pressGain", "177");
+    pipeline.LoadConfig("sp.filterMode", "2");
+
     pipeline.LoadConfig("sp.noPressEnabled", "1");
     pipeline.LoadConfig("sp.noPressBaseTh", "9999");
-    pipeline.LoadConfig("sp.noPressEnterRatio", "95");
-    pipeline.LoadConfig("sp.noPressExitRatio", "28");
-    pipeline.LoadConfig("sp.noPressTiltDeadzone", "901");
-    pipeline.LoadConfig("sp.noPressTiltCap", "12345");
-    pipeline.LoadConfig("sp.noPressTiltScale", "33");
-    pipeline.LoadConfig("sp.noPressDebounceEnter", "3");
-    pipeline.LoadConfig("sp.noPressDebounceExit", "4");
     pipeline.LoadConfig("sp.noPressSyntheticMin", "12");
-    pipeline.LoadConfig("sp.btMapMode", "2");
     pipeline.LoadConfig("sp.sigSuppressEnabled", "1");
-    pipeline.LoadConfig("sp.sigSuppressEnter", "2222");
-    pipeline.LoadConfig("sp.sigSuppressExit", "3333");
+    pipeline.LoadConfig("sp.edgeSigSuppressEnter", "1444");
+    pipeline.LoadConfig("sp.btMapMode", "2");
     pipeline.LoadConfig("sp.pressIirQ8", "77");
 
     std::ostringstream out;
     pipeline.SaveConfig(out);
     const std::string saved = out.str();
 
+    Require(saved.find("sp.enableSlaveChecksum=1") != std::string::npos,
+            "saved config should include checksum toggle");
+    Require(saved.find("sp.emitPacketWhenInvalid=0") != std::string::npos,
+            "saved config should include VHF packet emission toggle");
+    Require(saved.find("sp.recheckEnabled=0") != std::string::npos,
+            "saved config should include recheck toggle");
     Require(saved.find("sp.recheckThBase=888") != std::string::npos,
             "saved config should include recheck base threshold");
     Require(saved.find("sp.recheckThMulti=1333") != std::string::npos,
             "saved config should include recheck multi threshold");
     Require(saved.find("sp.tx1InkEnterTh=9000") != std::string::npos,
-            "saved config should include tx1 ink enter threshold");
-    Require(saved.find("sp.tx1LiftSuspiciousTh=7000") != std::string::npos,
-            "saved config should include tx1 suspicious lift threshold");
-    Require(saved.find("sp.tx1LiftAbsoluteTh=4500") != std::string::npos,
-            "saved config should include tx1 absolute lift threshold");
-    Require(saved.find("sp.edgeSigSuppressEnter=") == std::string::npos,
-            "saved config should not include deprecated edge suppress keys");
+            "saved config should include TX1 enter threshold");
+    Require(saved.find("sp.pressGain=177") != std::string::npos,
+            "saved config should include active pressure gain");
     Require(saved.find("sp.noPressBaseTh=") == std::string::npos,
-            "saved config should not include deprecated no-press keys");
+            "saved config should not emit deprecated no-press keys");
+    Require(saved.find("sp.sigSuppressEnabled=") == std::string::npos,
+            "saved config should not emit deprecated suppress keys");
+    Require(saved.find("sp.edgeSigSuppressEnter=") == std::string::npos,
+            "saved config should not emit deprecated edge-suppress keys");
     Require(saved.find("sp.btMapMode=") == std::string::npos,
-            "saved config should not include deprecated bt map mode key");
+            "saved config should not emit deprecated BT-map mode");
     Require(saved.find("sp.pressIirQ8=") == std::string::npos,
-            "saved config should not include deprecated pressure iir key");
+            "saved config should not emit deprecated pressure IIR key");
 
     StylusPipeline loaded;
     LoadFromSavedText(loaded, saved);
@@ -454,34 +585,53 @@ void TestStylusPipelineConfigRoundTrip() {
     std::ostringstream outLoaded;
     loaded.SaveConfig(outLoaded);
     const std::string savedLoaded = outLoaded.str();
-    Require(savedLoaded.find("sp.recheckThBase=888") != std::string::npos,
-            "loaded config should preserve recheck base threshold");
-    Require(savedLoaded.find("sp.edgeSigSuppressExit=") == std::string::npos,
-            "loaded config should not emit deprecated edge suppress keys");
+    Require(savedLoaded.find("sp.emitPacketWhenInvalid=0") != std::string::npos,
+            "loaded config should preserve VHF packet emission toggle");
+    Require(savedLoaded.find("sp.recheckEnabled=0") != std::string::npos,
+            "loaded config should preserve recheck toggle");
+    Require(savedLoaded.find("sp.pressGain=177") != std::string::npos,
+            "loaded config should preserve active pressure gain");
     Require(savedLoaded.find("sp.noPressSyntheticMin=") == std::string::npos,
-            "loaded config should not emit deprecated no-press keys");
+            "loaded config should not re-emit deprecated no-press keys");
     Require(savedLoaded.find("sp.sigSuppressEnabled=") == std::string::npos,
-            "loaded config should not emit deprecated suppress keys");
+            "loaded config should not re-emit deprecated suppress keys");
+    Require(savedLoaded.find("sp.edgeSigSuppressEnter=") == std::string::npos,
+            "loaded config should not re-emit deprecated edge-suppress keys");
+    Require(savedLoaded.find("sp.btMapMode=") == std::string::npos,
+            "loaded config should not re-emit deprecated BT-map mode");
     Require(savedLoaded.find("sp.pressIirQ8=") == std::string::npos,
-            "loaded config should not emit deprecated pressure iir key");
+            "loaded config should not re-emit deprecated pressure IIR key");
 
     const auto schema = loaded.GetConfigSchema();
     auto hasKey = [&](const char* key) {
         for (const auto& param : schema) {
-            if (param.key == key) return true;
+            if (param.key == key) {
+                return true;
+            }
         }
         return false;
     };
-    Require(!hasKey("sp.noPressEnabled"), "schema should not expose deprecated no-press keys");
-    Require(!hasKey("sp.noPressBaseTh"), "schema should not expose deprecated no-press threshold");
-    Require(!hasKey("sp.edgeSigSuppressEnter"), "schema should not expose deprecated edge suppress keys");
-    Require(!hasKey("sp.sigSuppressEnabled"), "schema should not expose deprecated suppress keys");
-    Require(!hasKey("sp.btMapMode"), "schema should not expose deprecated bt map mode key");
-    Require(!hasKey("sp.pressIirQ8"), "schema should not expose deprecated pressure iir key");
-    Require(hasKey("sp.recheckThMulti"), "schema should expose recheck multi threshold");
-    Require(hasKey("sp.tx1InkEnterTh"), "schema should expose tx1 ink enter threshold");
-    Require(hasKey("sp.tx1LiftSuspiciousTh"), "schema should expose tx1 suspicious lift threshold");
-    Require(hasKey("sp.tx1LiftAbsoluteTh"), "schema should expose tx1 absolute lift threshold");
+
+    Require(hasKey("sp.enableSlaveChecksum"),
+            "schema should expose checksum toggle");
+    Require(hasKey("sp.emitPacketWhenInvalid"),
+            "schema should expose VHF packet emission toggle");
+    Require(hasKey("sp.recheckEnabled"),
+            "schema should expose recheck toggle");
+    Require(hasKey("sp.recheckThMulti"),
+            "schema should expose recheck multi threshold");
+    Require(hasKey("sp.pressGain"),
+            "schema should expose active pressure gain");
+    Require(!hasKey("sp.noPressEnabled"),
+            "schema should not expose deprecated no-press keys");
+    Require(!hasKey("sp.sigSuppressEnabled"),
+            "schema should not expose deprecated suppress keys");
+    Require(!hasKey("sp.edgeSigSuppressEnter"),
+            "schema should not expose deprecated edge-suppress keys");
+    Require(!hasKey("sp.btMapMode"),
+            "schema should not expose deprecated BT-map mode");
+    Require(!hasKey("sp.pressIirQ8"),
+            "schema should not expose deprecated pressure IIR key");
 }
 
 void TestGridPeakDetectorNoPeak() {
@@ -490,8 +640,10 @@ void TestGridPeakDetectorNoPeak() {
 
     const auto analysis = detector.AnalyzePeakAndProjection(grid);
     Require(!analysis.peak.valid, "empty grid should not produce a peak");
-    Require(analysis.projection.peakIdxDim1 == -1, "empty grid should not produce a dim1 projection peak");
-    Require(analysis.projection.peakIdxDim2 == -1, "empty grid should not produce a dim2 projection peak");
+    Require(analysis.projection.peakIdxDim1 == -1,
+            "empty grid should not produce a dim1 projection peak");
+    Require(analysis.projection.peakIdxDim2 == -1,
+            "empty grid should not produce a dim2 projection peak");
 }
 
 void TestGridPeakDetectorCenterPeakAndProjection() {
@@ -592,147 +744,6 @@ void TestGridPeakDetectorProjectionRadius() {
             "custom projection radius should change projection span");
 }
 
-void TestStylusPipelinePeakMetrics() {
-    StylusPipeline pipeline;
-    pipeline.LoadConfig("sp.noPressEnabled", "0");
-    pipeline.LoadConfig("sp.sigSuppressEnabled", "0");
-
-    const auto tx1Grid = MakeCrossGrid(16000, 14000, 12000, 10000);
-    const auto tx2Grid = MakeCrossGrid(6000, 5000, 4000, 3000);
-    const auto raw = BuildCombinedStylusFrame(10, 10, tx1Grid, 10, 10, tx2Grid);
-
-    const auto frame = RunFrame(pipeline, raw, 300, 8);
-    Require(frame.point.valid, "pipeline should still solve a valid stylus point");
-    Require(frame.signalX == 16000, "TX1 peak signal should match the detector peak");
-    Require(frame.signalY == 6000, "TX2 peak signal should match the detector peak");
-    Require(frame.point.peakTx1 == 14666, "TX1 composite peak should use the pre-CMF projection average");
-    Require(frame.point.peakTx2 == 6000, "TX2 composite peak should mirror TX2 peak signal");
-}
-
-void TestStylusPipelineUsesPredictedIntermediatePressure() {
-    StylusPipeline pipeline;
-    pipeline.LoadConfig("sp.filterMode", "2");
-
-    const auto raw = BuildCombinedStylusFrame(10, 10,
-        MakeCrossGrid(12000, 9000, 7000, 5000, 4, 4), 10, 10, {});
-
-    const auto f0 = RunFrame(pipeline, raw, 220, 8, true);
-    Require(f0.point.valid, "first frame should be valid");
-    Require(f0.pressure > 0, "real BT frame should output pressure");
-#if EGOTOUCH_DIAG
-    Require(f0.diag.pressureIsReal, "first frame should be marked as real pressure");
-    Require(f0.diag.btSeq == 1, "first frame should carry first BT seq");
-#endif
-
-    const auto f1 = RunFrame(pipeline, raw, 220, 16, false);
-    Require(f1.point.valid, "predicted frame should remain valid");
-    Require(f1.pressure > 0, "predicted intermediate frame should keep pressure");
-#if EGOTOUCH_DIAG
-    Require(!f1.diag.pressureIsReal, "intermediate frame without new BT push should be predicted");
-    Require(f1.diag.btSeq == 1, "predicted frame should retain previous BT seq");
-    Require(f1.diag.predictedAgeFrames >= 1, "predicted frame should increase predicted age");
-#endif
-
-    const auto lift = RunFrame(pipeline, BuildCombinedStylusFrame(0x00FF, 0x00FF, {}, 0, 0, {}), 220, 20, false);
-    Require(lift.pressure == 0, "release should close pressure gate immediately");
-    Require(!lift.tipSwitchActive, "release should clear tip switch");
-
-    const auto hoverOnly = RunFrame(pipeline, raw, 220, 24, false);
-    Require(hoverOnly.tipSwitchActive, "TX1 should still allow immediate writing on the next down frame");
-    Require(hoverOnly.pressure == 0, "stale BT sample should not reopen pressure gate");
-
-    const auto f2 = RunFrame(pipeline, raw, 260, 32, true);
-    Require(f2.pressure > 0, "new BT push after release should reopen pressure output");
-#if EGOTOUCH_DIAG
-    Require(f2.diag.pressureIsReal, "new BT push should restore real pressure flag");
-    Require(f2.diag.btSeq >= 2, "new BT push should advance sequence");
-#endif
-}
-
-void TestStylusPipelineRealZeroDropsPressureButKeepsWritingWhenTx1StillDown() {
-    StylusPipeline pipeline;
-    pipeline.LoadConfig("sp.filterMode", "2");
-
-    const auto raw = BuildCombinedStylusFrame(10, 10,
-        MakeCrossGrid(12000, 9000, 7000, 5000, 4, 4), 10, 10, {});
-
-    const auto down = RunFrame(pipeline, raw, 240, 8, true);
-    Require(down.tipSwitchActive, "down frame should assert tip switch");
-
-    const auto up = RunFrame(pipeline, raw, 0, 16, true);
-    Require(up.pressure == 0, "real zero BT sample should drop output pressure immediately");
-    Require(up.tipSwitchActive, "real zero BT sample should keep writing while TX1 still indicates down");
-#if EGOTOUCH_DIAG
-    Require(up.diag.pressureIsReal, "real zero frame should still be marked as real");
-#endif
-}
-
-void TestStylusPipelineNoSignalFullFrameUsesInvalidZeroStateRoute() {
-    StylusPipeline pipeline;
-    pipeline.LoadConfig("sp.filterMode", "2");
-
-    std::vector<uint8_t> raw(kMasterBytes + kSlaveFrameBytes, 0xFF);
-    const auto result = RunFrame(pipeline, raw, 100);
-
-    Require(result.packetRoute == Solvers::StylusPacketRoute::InvalidZeroState,
-            "Full-length no-signal frame should preserve invalid-zero-state route for VHF");
-    Require(!result.packet.valid,
-            "No-signal path should no longer build a packet inside the pipeline");
-}
-
-void TestStylusPipelineShortFrameDoesNotLeakState() {
-    StylusPipeline pipeline;
-
-    const auto validRaw = BuildCombinedStylusFrame(10, 10,
-        MakeCrossGrid(12000, 9000, 7000, 5000, 4, 4), 10, 10, {});
-    const auto validRes = RunFrame(pipeline, validRaw, 240);
-    Require(validRes.point.valid, "First frame should be valid");
-    Require(validRes.pressure > 0, "First frame should produce pressure");
-    Require(validRes.tipSwitchActive, "First frame should assert tip switch");
-
-    std::vector<uint8_t> shortRaw(10, 0);
-    const auto shortRes = RunFrame(pipeline, shortRaw, 240);
-
-    Require(!shortRes.point.valid, "Short frame should not be valid");
-    Require(shortRes.pressure == 0, "Short frame should clear previous pressure");
-    Require(shortRes.point.pressure == 0, "Short frame should clear point pressure");
-    Require(!shortRes.tipSwitchActive, "Short frame should clear previous tip switch state");
-    Require(shortRes.packetRoute == Solvers::StylusPacketRoute::ParseFailure13,
-            "Short frame should preserve parse-failure packet route for VHF");
-    Require(!shortRes.packet.valid,
-            "Short frame should no longer build a packet inside the pipeline");
-}
-
-void TestStylusPipelineInvalidPathUpdatesBlockedBtSeq() {
-    StylusPipeline pipeline;
-
-    std::array<uint16_t, kGridDim * kGridDim> flatGrid{};
-    flatGrid.fill(100);
-    const auto rawNoPeak = BuildCombinedStylusFrame(10, 10, flatGrid, 10, 10, {});
-
-    const auto resNoPeak = RunFrame(pipeline, rawNoPeak, 500);
-    Require(!resNoPeak.point.valid, "Frame should be invalid (no peak)");
-    Require(resNoPeak.pipelineStage == 3, "Should fail at peak detection stage");
-}
-
-void TestStylusPipelineNoSignalFrameClearsCommittedOutputState() {
-    StylusPipeline pipeline;
-    pipeline.LoadConfig("sp.filterMode", "2");
-
-    const auto validRaw = BuildCombinedStylusFrame(10, 10,
-        MakeCrossGrid(12000, 9000, 7000, 5000, 4, 4), 10, 10, {});
-    const auto down = RunFrame(pipeline, validRaw, 240, 8, true);
-    Require(down.point.valid, "Precondition frame should be valid");
-    Require(down.pressure > 0, "Precondition frame should carry pressure");
-    Require(down.tipSwitchActive, "Precondition frame should assert tip switch");
-
-    const auto noSignal = RunFrame(pipeline, BuildCombinedStylusFrame(0x00FF, 0x00FF, {}, 0, 0, {}), 0, 16, true);
-    Require(!noSignal.point.valid, "No-signal frame should invalidate point output");
-    Require(noSignal.pressure == 0, "No-signal frame should clear committed pressure");
-    Require(noSignal.point.pressure == 0, "No-signal frame should clear point pressure");
-    Require(!noSignal.tipSwitchActive, "No-signal frame should clear tip switch");
-}
-
 void TestStylusPipelineLegacyAliasRoundTripKeepsCanonicalKey() {
     StylusPipeline pipeline;
     pipeline.LoadConfig("sp.coordEdgeCompBit3", "1");
@@ -750,35 +761,35 @@ void TestStylusPipelineLegacyAliasRoundTripKeepsCanonicalKey() {
     bool foundCanonical = false;
     bool foundAlias = false;
     for (const auto& param : schema) {
-        if (param.key == "sp.triEdgeSecondaryBlend") foundCanonical = true;
-        if (param.key == "sp.coordEdgeCompBit3") foundAlias = true;
+        if (param.key == "sp.triEdgeSecondaryBlend") {
+            foundCanonical = true;
+        }
+        if (param.key == "sp.coordEdgeCompBit3") {
+            foundAlias = true;
+        }
     }
     Require(foundCanonical, "schema should expose canonical secondary blend key");
     Require(!foundAlias, "schema should not expose legacy alias key");
 }
 
-void TestStylusPipelineNoSignalFrameKeepsNeutralPipelineStage() {
-    StylusPipeline pipeline;
-    pipeline.LoadConfig("sp.filterMode", "2");
-
-    const auto noSignal = RunFrame(pipeline, BuildCombinedStylusFrame(0x00FF, 0x00FF, {}, 0, 0, {}), 0, 16, true);
-    Require(noSignal.pipelineStage == 0,
-            "No-signal frame should keep neutral pipeline stage for diagnostics");
-}
-
 void TestStylusPipelineProcessReturnsTrueWithoutPacketBuild() {
     StylusPipeline pipeline;
-    std::vector<uint8_t> raw(kMasterBytes + kSlaveFrameBytes, 0xFF);
+    const auto raw = BuildCombinedStylusFrame(0x00FF, 0x00FF, {}, 0, 0, {});
 
-    HeatmapFrame frame;
+    HeatmapFrame frame{};
     frame.rawPtr = raw.data();
     frame.rawLen = raw.size();
 
     const bool processed = pipeline.Process(frame);
-    Require(processed, "Process should still report successful finalize without packet construction");
-    Require(frame.stylus.packetRoute == Solvers::StylusPacketRoute::InvalidZeroState,
-            "Process should still classify no-signal routes for VHF");
-    Require(!frame.stylus.packet.valid,
+    const auto stylus = ContractView(frame);
+
+    Require(processed,
+            "Process should still report success even when no packet is built");
+    Require(!stylus.output.valid,
+            "Process success should not imply a valid stylus output");
+    Require(stylus.packetRoute == StylusPacketRoute::InvalidZeroState,
+            "Process should still preserve VHF route classification");
+    Require(!stylus.packet.valid,
             "Process should not report packet validity as its success signal");
 }
 
@@ -795,14 +806,13 @@ int main() {
         TestBtPressBufferInCellMapping();
         TestBtPressBufferReset();
         TestBtPressBufferSeqSnapshot();
-        TestFakePressureDecayBasic();
-        TestFakePressureDecayReset();
-        TestNoPressInkGateEnterAndExit();
-        TestStylusPipelineNoPressSyntheticPressure();
-        TestStylusPipelineLowSignalKeepsCoordinateButZeroPressureUntilAuthoritativeDown();
-        TestStylusPipelineFastLiftToNoSignal();
-        TestStylusPipelineReleaseRetainsPreviousOutput();
-        TestStylusPipelineEdgeFastLiftRetainsCoordinate();
+        TestStylusPipelineValidFrameProjectsInputOutputAndInteropContract();
+        TestStylusPipelineWeakSignalKeepsSolvedPointButStaysOutOfTipDown();
+        TestStylusPipelinePredictedPressureProjectsBtInputContract();
+        TestStylusPipelineRealZeroDropsPressureButKeepsTipDownWhenTx1StillDown();
+        TestStylusPipelineInvalidZeroStateClearsOutputWithoutBuildingPacket();
+        TestStylusPipelineShortFrameClearsPreviousOutputWithoutPacketBuild();
+        TestStylusPipelineInvalidPathProjectsFailureStage();
         TestStylusPipelineConfigRoundTrip();
         TestGridPeakDetectorNoPeak();
         TestGridPeakDetectorCenterPeakAndProjection();
@@ -810,15 +820,7 @@ int main() {
         TestGridPeakDetectorConnectedReject();
         TestGridPeakDetectorNeighborSumAndTieBreak();
         TestGridPeakDetectorProjectionRadius();
-        TestStylusPipelinePeakMetrics();
-        TestStylusPipelineUsesPredictedIntermediatePressure();
-        TestStylusPipelineRealZeroDropsPressureButKeepsWritingWhenTx1StillDown();
-        TestStylusPipelineNoSignalFullFrameUsesInvalidZeroStateRoute();
-        TestStylusPipelineShortFrameDoesNotLeakState();
-        TestStylusPipelineInvalidPathUpdatesBlockedBtSeq();
-        TestStylusPipelineNoSignalFrameClearsCommittedOutputState();
         TestStylusPipelineLegacyAliasRoundTripKeepsCanonicalKey();
-        TestStylusPipelineNoSignalFrameKeepsNeutralPipelineStage();
         TestStylusPipelineProcessReturnsTrueWithoutPacketBuild();
         std::cout << "[TEST] Stylus fast ink tests passed.\n";
         return 0;
