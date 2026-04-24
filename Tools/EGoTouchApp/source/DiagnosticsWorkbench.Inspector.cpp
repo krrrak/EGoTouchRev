@@ -245,16 +245,16 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
             ImGui::Text("  Mode: %s%s",
                 sd.diag.isHover ? "Hover" : "Write",
                 sd.diag.isEdge  ? " + Edge" : "");
-            const char* animLabels[] = {"Leave","Hover","Contact","Lifting"};
-            int ai = std::clamp(static_cast<int>(sd.animState), 0, 3);
-            ImGui::Text("  Lifecycle: %s", animLabels[ai]);
+            const char* lifecycleLabels[] = {"Leave","Hover","Contact","Lifting"};
+            int li = std::clamp(static_cast<int>(sd.diag.penLifecycle), 0, 3);
+            ImGui::Text("  Lifecycle: %s", lifecycleLabels[li]);
 
             ImGui::Separator();
             ImGui::TextColored(ImVec4(0.5f,0.9f,1.0f,1.f), "[P3/P4 Pipeline State]");
             {
                 const char* lcLabels[] = {"Leave","Hover","Contact","Lifting"};
-                int li = std::clamp(static_cast<int>(sd.diag.penLifecycle), 0, 3);
-                ImGui::Text("  Pen Lifecycle: %s", lcLabels[li]);
+                int pi = std::clamp(static_cast<int>(sd.diag.penLifecycle), 0, 3);
+                ImGui::Text("  Pen Lifecycle (diag): %s", lcLabels[pi]);
             }
             ImGui::Text("  Was Inking: %s", sd.diag.wasInking ? "YES" : "no");
             ImGui::Text("  Exit Smoothed: %s", sd.diag.exitSmoothed ? "YES" : "no");

@@ -1125,7 +1125,8 @@ bool WriteFrameCsvFile(const std::filesystem::path& filePath,
         slaveRows.push_back({"PeakRawTx1", std::to_string(frame.stylus.signalX)});
         slaveRows.push_back({"PeakRawTx2", std::to_string(frame.stylus.signalY)});
         slaveRows.push_back({"MaxRawPeak", std::to_string(frame.stylus.maxRawPeak)});
-        slaveRows.push_back({"NoPressInkActive", frame.stylus.noPressInkActive ? "1" : "0"});
+        slaveRows.push_back({"PressureIsReal", frame.stylus.diag.pressureIsReal ? "1" : "0"});
+        slaveRows.push_back({"PredictedAgeFrames", std::to_string(static_cast<unsigned int>(frame.stylus.diag.predictedAgeFrames))});
         slaveRows.push_back({"Pressure", std::to_string(frame.stylus.pressure)});
         slaveRows.push_back({"PointValid", frame.stylus.point.valid ? "1" : "0"});
         slaveRows.push_back({"PointX", std::to_string(frame.stylus.point.x)});
@@ -1148,8 +1149,8 @@ bool WriteFrameCsvFile(const std::filesystem::path& filePath,
         slaveRows.push_back({"TiltY", std::to_string(frame.stylus.point.tiltY)});
         slaveRows.push_back({"TiltMagnitude", std::to_string(frame.stylus.point.tiltMagnitude)});
         slaveRows.push_back({"TiltAzimuthDeg", std::to_string(frame.stylus.point.tiltAzimuthDeg)});
-        slaveRows.push_back({"PacketValid", frame.stylus.packet.valid ? "1" : "0"});
-        slaveRows.push_back({"PacketHex", FormatCsvPacketBytes(frame.stylus.packet.bytes)});
+        slaveRows.push_back({"LegacyPacketValid", frame.stylus.packet.valid ? "1" : "0"});
+        slaveRows.push_back({"LegacyPacketHex", frame.stylus.packet.valid ? FormatCsvPacketBytes(frame.stylus.packet.bytes) : "N/A"});
         ApplyDynamicRows(slaveRows, Ipc::DebugDvrTarget::SlaveSuffix, dynamicSchema, dynamicFrame);
         WriteCsvKeyValueSection(out, "Slave Status", slaveRows);
     }

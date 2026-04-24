@@ -373,7 +373,9 @@ void DiagnosticsWorkbench::DrawSlaveHeatmap() {
         ImGui::Text("Status: 0x%08X", static_cast<unsigned int>(stylus.status));
         ImGui::Text("ASA/DataType: %u / %u", static_cast<unsigned int>(stylus.asaMode), static_cast<unsigned int>(stylus.dataType));
         ImGui::Text("Process Result: %u  Valid: %s", static_cast<unsigned int>(stylus.processResult), stylus.validJudgmentPassed ? "Y" : "N");
-        ImGui::Text("Pipeline Stage: %u  NoPressInk: %s", static_cast<unsigned int>(stylus.pipelineStage), stylus.noPressInkActive ? "Y" : "N");
+        ImGui::Text("Pipeline Stage: %u  Pressure Source: %s",
+                    static_cast<unsigned int>(stylus.pipelineStage),
+                    stylus.diag.pressureIsReal ? "Real(BT)" : "Predicted/Synth");
         ImGui::Text("Recheck: %s / %s / %s", stylus.recheckEnabled ? "Enabled" : "Disabled", stylus.recheckPassed ? "Pass" : "Fail", stylus.recheckOverlap ? "Overlap" : "NoOverlap");
         ImGui::Text("Recheck Threshold: %u", stylus.recheckThreshold);
         ImGui::Text("Touch Suppress: %s  NullLike: %s  Remain: %u", stylus.touchSuppressActive ? "Y" : "N", stylus.touchNullLike ? "Y" : "N", static_cast<unsigned int>(stylus.touchSuppressFrames));
@@ -558,11 +560,13 @@ void DiagnosticsWorkbench::DrawStylusPanel() {
                 static_cast<unsigned int>(stylus.diag.predictedAgeFrames),
                 stylus.diag.pressureIsReal ? "Y" : "N");
 #endif
-    ImGui::Text("Peak TX1/TX2 (Raw): %u / %u  MaxPeak: %u  NoPressInk:%s",
+    ImGui::Text("Peak TX1/TX2 (Raw): %u / %u  MaxPeak: %u",
                 static_cast<unsigned int>(stylus.signalX),
                 static_cast<unsigned int>(stylus.signalY),
-                static_cast<unsigned int>(stylus.maxRawPeak),
-                stylus.noPressInkActive ? "Y" : "N");
+                static_cast<unsigned int>(stylus.maxRawPeak));
+    ImGui::Text("Pressure Source: %s  PredAge=%u",
+                stylus.diag.pressureIsReal ? "Real(BT)" : "Predicted/Synth",
+                static_cast<unsigned int>(stylus.diag.predictedAgeFrames));
 
     if (stylus.point.valid) {
         ImGui::Text("Point: X=%.3f  Y=%.3f  Confidence=%.3f",
@@ -590,20 +594,22 @@ void DiagnosticsWorkbench::DrawStylusPanel() {
         ImGui::TextUnformatted("Point: Invalid");
     }
 
-    if (stylus.packet.valid) {
-        ImGui::Separator();
-        ImGui::Text("Packet (RID=0x%02X, Len=%u):", stylus.packet.reportId, stylus.packet.length);
-        std::ostringstream oss;
-        oss << std::hex << std::setfill('0');
-        for (size_t i = 0; i < stylus.packet.bytes.size(); ++i) {
-            oss << std::setw(2) << static_cast<unsigned int>(stylus.packet.bytes[i]);
-            if (i + 1 < stylus.packet.bytes.size()) {
-                oss << " ";
+    ImGui::Separator();
+    if (ImGui::CollapsingHeader("Legacy Stylus Packet (optional)")) {
+        if (stylus.packet.valid) {
+            ImGui::Text("Packet (RID=0x%02X, Len=%u):", stylus.packet.reportId, stylus.packet.length);
+            std::ostringstream oss;
+            oss << std::hex << std::setfill('0');
+            for (size_t i = 0; i < stylus.packet.bytes.size(); ++i) {
+                oss << std::setw(2) << static_cast<unsigned int>(stylus.packet.bytes[i]);
+                if (i + 1 < stylus.packet.bytes.size()) {
+                    oss << " ";
+                }
             }
+            ImGui::TextUnformatted(oss.str().c_str());
+        } else {
+            ImGui::TextDisabled("Legacy packet unavailable for current frame.");
         }
-        ImGui::TextUnformatted(oss.str().c_str());
-    } else {
-        ImGui::TextUnformatted("Packet: Invalid");
     }
 
     ImGui::End();

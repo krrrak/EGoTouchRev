@@ -250,6 +250,41 @@ inline void CopySharedFrameData(SharedFrameData& dst, const SharedFrameData& src
     std::memcpy(&dst, &src, sizeof(SharedFrameData));
 }
 
+template <typename StylusType>
+inline void PopulateLegacyStylusPacketForSharedFrame(SharedStylusPacket& dst,
+                                                     const StylusType& stylus) {
+    dst = SharedStylusPacket{};
+    if constexpr (requires { stylus.packet.valid; stylus.packet.reportId; stylus.packet.length; stylus.packet.bytes.data(); }) {
+        dst.valid = stylus.packet.valid;
+        dst.reportId = stylus.packet.reportId;
+        dst.length = stylus.packet.length;
+        std::memcpy(dst.bytes, stylus.packet.bytes.data(), sizeof(dst.bytes));
+    }
+}
+
+template <typename StylusType>
+inline void PopulateStylusPacketFromLegacySharedFrame(StylusType& stylus,
+                                                      const SharedStylusPacket& src) {
+    if constexpr (requires { stylus.packet.valid = false; stylus.packet.reportId = uint8_t{}; stylus.packet.length = uint8_t{}; stylus.packet.bytes.data(); }) {
+        stylus.packet.valid = src.valid;
+        stylus.packet.reportId = src.reportId;
+        stylus.packet.length = src.length;
+        std::memcpy(stylus.packet.bytes.data(), src.bytes, sizeof(src.bytes));
+    } else {
+        (void)stylus;
+        (void)src;
+    }
+}
+
+template <typename StylusType>
+inline void ClearLegacyNoPressInkIfPresent(StylusType& stylus) {
+    if constexpr (requires { stylus.noPressInkActive = false; }) {
+        stylus.noPressInkActive = false;
+    } else {
+        (void)stylus;
+    }
+}
+
 template <typename HeatmapFrame>
 inline void PopulateSharedFrameDataFromSolverFrame(SharedFrameData& dst,
                                                    const HeatmapFrame& src) {
@@ -324,10 +359,7 @@ inline void PopulateSharedFrameDataFromSolverFrame(SharedFrameData& dst,
     dstPoint.tx2Y = srcPoint.tx2Y;
     dstPoint.confidence = srcPoint.confidence;
 
-    dst.stylusPacket.valid = src.stylus.packet.valid;
-    dst.stylusPacket.reportId = src.stylus.packet.reportId;
-    dst.stylusPacket.length = src.stylus.packet.length;
-    std::memcpy(dst.stylusPacket.bytes, src.stylus.packet.bytes.data(), sizeof(dst.stylusPacket.bytes));
+    PopulateLegacyStylusPacketForSharedFrame(dst.stylusPacket, src.stylus);
 
     const auto& stylus = src.stylus;
     dst.stylusSlaveValid = stylus.slaveValid;
@@ -361,7 +393,8 @@ inline void PopulateSharedFrameDataFromSolverFrame(SharedFrameData& dst,
     dst.stylusSignalX = stylus.signalX;
     dst.stylusSignalY = stylus.signalY;
     dst.stylusMaxRawPeak = stylus.maxRawPeak;
-    dst.stylusNoPressInk = stylus.noPressInkActive;
+    // Deprecated legacy mirror. Keep ABI field stable, but stop exporting semantics.
+    dst.stylusNoPressInk = false;
     dst.stylusPipelineStage = stylus.pipelineStage;
 
     auto& diag = dst.diag;
@@ -485,10 +518,7 @@ inline void PopulateSolverFrameFromSharedFrameData(HeatmapFrame& out,
     dstPoint.tx2Y = srcPoint.tx2Y;
     dstPoint.confidence = srcPoint.confidence;
 
-    out.stylus.packet.valid = src.stylusPacket.valid;
-    out.stylus.packet.reportId = src.stylusPacket.reportId;
-    out.stylus.packet.length = src.stylusPacket.length;
-    std::memcpy(out.stylus.packet.bytes.data(), src.stylusPacket.bytes, sizeof(src.stylusPacket.bytes));
+    PopulateStylusPacketFromLegacySharedFrame(out.stylus, src.stylusPacket);
 
     auto& stylus = out.stylus;
     stylus.slaveValid = src.stylusSlaveValid;
@@ -522,7 +552,8 @@ inline void PopulateSolverFrameFromSharedFrameData(HeatmapFrame& out,
     stylus.signalX = src.stylusSignalX;
     stylus.signalY = src.stylusSignalY;
     stylus.maxRawPeak = src.stylusMaxRawPeak;
-    stylus.noPressInkActive = src.stylusNoPressInk;
+    // Deprecated legacy mirror. Downstream should use output/interop/debug contract fields.
+    ClearLegacyNoPressInkIfPresent(stylus);
     stylus.pipelineStage = src.stylusPipelineStage;
 
     auto& diag = stylus.diag;

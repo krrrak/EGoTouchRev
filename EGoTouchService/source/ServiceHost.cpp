@@ -776,7 +776,10 @@ uint64_t ServiceHost::EncodeDebugValue(const Solvers::HeatmapFrame& frame,
         case Ipc::DebugStylusSourceIndex::PointY: return EncodeF32(s.point.y);
         case Ipc::DebugStylusSourceIndex::RawPressure: return EncodeU32(s.point.rawPressure);
         case Ipc::DebugStylusSourceIndex::MappedPressure: return EncodeU32(s.point.mappedPressure);
-        case Ipc::DebugStylusSourceIndex::NoPressInkActive: return EncodeBool(s.noPressInkActive);
+        case Ipc::DebugStylusSourceIndex::NoPressInkActive:
+            // Legacy field deprecated: no equivalent contract field available.
+            valid = false;
+            return 0;
         case Ipc::DebugStylusSourceIndex::TouchSuppressActive: return EncodeBool(s.touchSuppressActive);
         case Ipc::DebugStylusSourceIndex::BtSeq: return EncodeU32(s.diag.btSeq);
         case Ipc::DebugStylusSourceIndex::PredictedAgeFrames: return EncodeU32(s.diag.predictedAgeFrames);
