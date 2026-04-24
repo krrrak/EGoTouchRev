@@ -177,13 +177,21 @@ private:
         state.parse.gridData = res.gridData;
 
         auto& stylus = state.stylus;
-        stylus.slaveValid = res.slaveValid;
-        stylus.status = res.status;
-        stylus.checksumOk = !res.checksumFailed;
-        stylus.checksum16 = res.checksumValue;
-        stylus.slaveWordOffset = static_cast<uint8_t>(kSlaveWordOffset);
-        stylus.tx1BlockValid = res.gridData.tx1.valid;
-        stylus.tx2BlockValid = res.gridData.tx2.valid;
+        stylus.input.slaveValid = res.slaveValid;
+        stylus.input.status = res.status;
+        stylus.input.checksumOk = !res.checksumFailed;
+        stylus.input.checksum16 = res.checksumValue;
+        stylus.input.slaveWordOffset = static_cast<uint8_t>(kSlaveWordOffset);
+        stylus.input.tx1BlockValid = res.gridData.tx1.valid;
+        stylus.input.tx2BlockValid = res.gridData.tx2.valid;
+
+        stylus.slaveValid = stylus.input.slaveValid;
+        stylus.status = stylus.input.status;
+        stylus.checksumOk = stylus.input.checksumOk;
+        stylus.checksum16 = stylus.input.checksum16;
+        stylus.slaveWordOffset = stylus.input.slaveWordOffset;
+        stylus.tx1BlockValid = stylus.input.tx1BlockValid;
+        stylus.tx2BlockValid = stylus.input.tx2BlockValid;
 
         ApplyFrameClassToFlow(state.flow, res.frameClass);
     }
@@ -194,8 +202,10 @@ private:
 
         switch (frameClass) {
         case StylusFrameClass::Valid:
-            flow.packetRoute = Solvers::StylusPacketRoute::Valid;
             flow.pipelineStage = 0;
+#if EGOTOUCH_DIAG
+            flow.packetRoute = Solvers::StylusPacketRoute::Valid;
+#endif
             break;
 
         case StylusFrameClass::ShortFrame:
@@ -204,7 +214,9 @@ private:
             flow.resetPost = true;
             flow.resetNoise = false;
             flow.pipelineStage = 1;
+#if EGOTOUCH_DIAG
             flow.packetRoute = Solvers::StylusPacketRoute::ParseFailure13;
+#endif
             break;
 
         case StylusFrameClass::NoSignal:
@@ -213,7 +225,9 @@ private:
             flow.resetPost = true;
             flow.resetNoise = true;
             flow.pipelineStage = 0;
+#if EGOTOUCH_DIAG
             flow.packetRoute = Solvers::StylusPacketRoute::InvalidZeroState;
+#endif
             break;
 
         case StylusFrameClass::ParseFail:
@@ -222,7 +236,9 @@ private:
             flow.resetPost = true;
             flow.resetNoise = false;
             flow.pipelineStage = 1;
+#if EGOTOUCH_DIAG
             flow.packetRoute = Solvers::StylusPacketRoute::ParseFailure13;
+#endif
             break;
 
         case StylusFrameClass::Tx1Missing:
@@ -231,7 +247,9 @@ private:
             flow.resetPost = true;
             flow.resetNoise = true;
             flow.pipelineStage = 2;
+#if EGOTOUCH_DIAG
             flow.packetRoute = Solvers::StylusPacketRoute::InvalidZeroState;
+#endif
             break;
         }
     }

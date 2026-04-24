@@ -9,8 +9,6 @@
 namespace {
 
 using Solvers::HeatmapFrame;
-using Solvers::StylusPacketRoute;
-
 void Require(bool condition, const char* message) {
     if (!condition) {
         throw std::runtime_error(message);
@@ -42,7 +40,6 @@ HeatmapFrame MakeOutputDrivenStylusFrame() {
     frame.stylus.output.point.pressure = frame.stylus.output.pressure;
 
     // Stale legacy mirrors should not affect reporter-side packet assembly.
-    frame.stylus.packetRoute = StylusPacketRoute::InvalidZeroState;
     frame.stylus.point.valid = true;
     frame.stylus.point.x = 1.0f * 1024.0f;
     frame.stylus.point.y = 2.0f * 1024.0f;
@@ -55,7 +52,6 @@ HeatmapFrame MakeOutputDrivenStylusFrame() {
 
 HeatmapFrame MakeInvalidOutputFrameWithStaleLegacyValidData() {
     HeatmapFrame frame{};
-    frame.stylus.packetRoute = StylusPacketRoute::Valid;
     frame.stylus.point.valid = true;
     frame.stylus.point.x = 20.0f * 1024.0f;
     frame.stylus.point.y = 30.0f * 1024.0f;

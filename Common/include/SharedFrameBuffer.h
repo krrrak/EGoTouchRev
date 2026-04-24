@@ -361,23 +361,10 @@ inline void PopulateSharedFrameDataFromSolverFrame(SharedFrameData& dst,
     dst.stylusTx2Valid = stylus.tx2BlockValid;
     dst.stylusStatus = stylus.status;
     dst.stylusPressure = stylus.pressure;
-    dst.stylusAsaMode = stylus.asaMode;
-    dst.stylusDataType = stylus.dataType;
-    dst.stylusProcessResult = stylus.processResult;
-    dst.stylusValidJudgment = stylus.validJudgmentPassed;
     dst.stylusRecheckEnabled = stylus.recheckEnabled;
     dst.stylusRecheckPassed = stylus.recheckPassed;
     dst.stylusRecheckOverlap = stylus.recheckOverlap;
     dst.stylusRecheckThreshold = stylus.recheckThreshold;
-    dst.stylusHpp3NoiseInvalid = stylus.hpp3NoiseInvalid;
-    dst.stylusHpp3NoiseDebounce = stylus.hpp3NoiseDebounce;
-    dst.stylusHpp3Dim1Valid = stylus.hpp3Dim1SignalValid;
-    dst.stylusHpp3Dim2Valid = stylus.hpp3Dim2SignalValid;
-    dst.stylusHpp3WarnX = stylus.hpp3RatioWarnCountX;
-    dst.stylusHpp3WarnY = stylus.hpp3RatioWarnCountY;
-    dst.stylusHpp3AvgX = stylus.hpp3SignalAvgX;
-    dst.stylusHpp3AvgY = stylus.hpp3SignalAvgY;
-    dst.stylusHpp3Samples = stylus.hpp3SignalSampleCount;
     dst.stylusTouchNullLike = stylus.touchNullLike;
     dst.stylusTouchSuppressActive = stylus.touchSuppressActive;
     dst.stylusTouchSuppressFrames = stylus.touchSuppressFrames;
@@ -387,6 +374,36 @@ inline void PopulateSharedFrameDataFromSolverFrame(SharedFrameData& dst,
     // Deprecated legacy mirror. Keep ABI field stable, but stop exporting semantics.
     dst.stylusNoPressInk = false;
     dst.stylusPipelineStage = stylus.pipelineStage;
+
+    if constexpr (requires {
+        stylus.asaMode;
+        stylus.dataType;
+        stylus.processResult;
+        stylus.validJudgmentPassed;
+        stylus.hpp3NoiseInvalid;
+        stylus.hpp3NoiseDebounce;
+        stylus.hpp3Dim1SignalValid;
+        stylus.hpp3Dim2SignalValid;
+        stylus.hpp3RatioWarnCountX;
+        stylus.hpp3RatioWarnCountY;
+        stylus.hpp3SignalAvgX;
+        stylus.hpp3SignalAvgY;
+        stylus.hpp3SignalSampleCount;
+    }) {
+        dst.stylusAsaMode = stylus.asaMode;
+        dst.stylusDataType = stylus.dataType;
+        dst.stylusProcessResult = stylus.processResult;
+        dst.stylusValidJudgment = stylus.validJudgmentPassed;
+        dst.stylusHpp3NoiseInvalid = stylus.hpp3NoiseInvalid;
+        dst.stylusHpp3NoiseDebounce = stylus.hpp3NoiseDebounce;
+        dst.stylusHpp3Dim1Valid = stylus.hpp3Dim1SignalValid;
+        dst.stylusHpp3Dim2Valid = stylus.hpp3Dim2SignalValid;
+        dst.stylusHpp3WarnX = stylus.hpp3RatioWarnCountX;
+        dst.stylusHpp3WarnY = stylus.hpp3RatioWarnCountY;
+        dst.stylusHpp3AvgX = stylus.hpp3SignalAvgX;
+        dst.stylusHpp3AvgY = stylus.hpp3SignalAvgY;
+        dst.stylusHpp3Samples = stylus.hpp3SignalSampleCount;
+    }
 
     auto& diag = dst.diag;
     const auto& srcDiag = stylus.diag;
@@ -520,23 +537,10 @@ inline void PopulateSolverFrameFromSharedFrameData(HeatmapFrame& out,
     stylus.tx2BlockValid = src.stylusTx2Valid;
     stylus.status = src.stylusStatus;
     stylus.pressure = src.stylusPressure;
-    stylus.asaMode = src.stylusAsaMode;
-    stylus.dataType = src.stylusDataType;
-    stylus.processResult = src.stylusProcessResult;
-    stylus.validJudgmentPassed = src.stylusValidJudgment;
     stylus.recheckEnabled = src.stylusRecheckEnabled;
     stylus.recheckPassed = src.stylusRecheckPassed;
     stylus.recheckOverlap = src.stylusRecheckOverlap;
     stylus.recheckThreshold = src.stylusRecheckThreshold;
-    stylus.hpp3NoiseInvalid = src.stylusHpp3NoiseInvalid;
-    stylus.hpp3NoiseDebounce = src.stylusHpp3NoiseDebounce;
-    stylus.hpp3Dim1SignalValid = src.stylusHpp3Dim1Valid;
-    stylus.hpp3Dim2SignalValid = src.stylusHpp3Dim2Valid;
-    stylus.hpp3RatioWarnCountX = src.stylusHpp3WarnX;
-    stylus.hpp3RatioWarnCountY = src.stylusHpp3WarnY;
-    stylus.hpp3SignalAvgX = src.stylusHpp3AvgX;
-    stylus.hpp3SignalAvgY = src.stylusHpp3AvgY;
-    stylus.hpp3SignalSampleCount = src.stylusHpp3Samples;
     stylus.touchNullLike = src.stylusTouchNullLike;
     stylus.touchSuppressActive = src.stylusTouchSuppressActive;
     stylus.touchSuppressFrames = src.stylusTouchSuppressFrames;
@@ -544,6 +548,36 @@ inline void PopulateSolverFrameFromSharedFrameData(HeatmapFrame& out,
     stylus.signalY = src.stylusSignalY;
     stylus.maxRawPeak = src.stylusMaxRawPeak;
     stylus.pipelineStage = src.stylusPipelineStage;
+
+    if constexpr (requires {
+        stylus.asaMode = uint8_t{};
+        stylus.dataType = uint8_t{};
+        stylus.processResult = uint8_t{};
+        stylus.validJudgmentPassed = false;
+        stylus.hpp3NoiseInvalid = false;
+        stylus.hpp3NoiseDebounce = false;
+        stylus.hpp3Dim1SignalValid = false;
+        stylus.hpp3Dim2SignalValid = false;
+        stylus.hpp3RatioWarnCountX = uint8_t{};
+        stylus.hpp3RatioWarnCountY = uint8_t{};
+        stylus.hpp3SignalAvgX = uint16_t{};
+        stylus.hpp3SignalAvgY = uint16_t{};
+        stylus.hpp3SignalSampleCount = uint8_t{};
+    }) {
+        stylus.asaMode = src.stylusAsaMode;
+        stylus.dataType = src.stylusDataType;
+        stylus.processResult = src.stylusProcessResult;
+        stylus.validJudgmentPassed = src.stylusValidJudgment;
+        stylus.hpp3NoiseInvalid = src.stylusHpp3NoiseInvalid;
+        stylus.hpp3NoiseDebounce = src.stylusHpp3NoiseDebounce;
+        stylus.hpp3Dim1SignalValid = src.stylusHpp3Dim1Valid;
+        stylus.hpp3Dim2SignalValid = src.stylusHpp3Dim2Valid;
+        stylus.hpp3RatioWarnCountX = src.stylusHpp3WarnX;
+        stylus.hpp3RatioWarnCountY = src.stylusHpp3WarnY;
+        stylus.hpp3SignalAvgX = src.stylusHpp3AvgX;
+        stylus.hpp3SignalAvgY = src.stylusHpp3AvgY;
+        stylus.hpp3SignalSampleCount = src.stylusHpp3Samples;
+    }
 
     auto& diag = stylus.diag;
     diag.anchorRow = src.diag.anchorRow;

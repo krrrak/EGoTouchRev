@@ -248,13 +248,18 @@ struct StylusFrameData {
     uint32_t status = 0;
     uint16_t pressure = 0;
 
-    // ASA/HPP process mirror fields for debug/alignment.
+    // Transitional release mirrors still used by runtime/tests.
+    // These will be removed once output/interop consumers finish migrating.
+    bool tipSwitchActive = false;
+
+#if EGOTOUCH_DIAG
+    // Debug-only legacy mirrors retained for UI/DVR during the touch-mirror
+    // migration. They are not part of the release-time stylus contract.
     uint8_t asaMode = 0;        // 0=None, 1=HPP2, 2=HPP3
     uint8_t dataType = 0;       // 0=Line, 1=IQLine, 2=Grid, 3=TiedGrid
     uint8_t processResult = 5;  // 0=Output, 1=InvalidReset, 3=Release, 5=Bypass
     bool validJudgmentPassed = false;
     bool modeExitRelease = false;
-    bool tipSwitchActive = false;
     bool hpp3NoiseInvalid = false;
     bool hpp3NoiseDebounce = false;
     bool hpp3Dim1SignalValid = false;
@@ -280,9 +285,11 @@ struct StylusFrameData {
     uint16_t signalY = 0;
     uint16_t maxRawPeak = 0;
 
-    StylusSolvePoint point{};
     StylusPacket packet{};
     StylusPacketRoute packetRoute = StylusPacketRoute::Valid;
+#endif
+
+    StylusSolvePoint point{};
 
     // Diagnostic: which pipeline stage produced this result
     // 0=ok, 1=slaveParseFail, 2=tx1Invalid, 3=noPeak, 4=coordFail, 5=noiseReject

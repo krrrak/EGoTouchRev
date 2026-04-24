@@ -126,7 +126,9 @@ private:
     static inline void SetInvalidTx1Terminal(Solvers::StylusFrameState& state) {
         state.flow.terminal = true;
         state.flow.pipelineStage = 3;
+#if EGOTOUCH_DIAG
         state.flow.packetRoute = Solvers::StylusPacketRoute::InvalidZeroState;
+#endif
         state.flow.clearCommitted = false;
         state.flow.resetPost = false;
         state.flow.resetNoise = false;

@@ -369,10 +369,12 @@ void DiagnosticsWorkbench::DrawSlaveHeatmap() {
                     static_cast<unsigned int>(stylus.diag.btSeq),
                     static_cast<unsigned int>(stylus.diag.predictedAgeFrames),
                     stylus.diag.pressureIsReal ? "Y" : "N");
-#endif
-        ImGui::Text("Status: 0x%08X", static_cast<unsigned int>(stylus.status));
         ImGui::Text("ASA/DataType: %u / %u", static_cast<unsigned int>(stylus.asaMode), static_cast<unsigned int>(stylus.dataType));
         ImGui::Text("Process Result: %u  Valid: %s", static_cast<unsigned int>(stylus.processResult), stylus.validJudgmentPassed ? "Y" : "N");
+        ImGui::Text("HPP3 Noise: %s / %s", stylus.hpp3NoiseInvalid ? "Invalid" : "OK", stylus.hpp3NoiseDebounce ? "Debounce" : "Stable");
+        ImGui::Text("HPP3 SigValid D1/D2: %s / %s", stylus.hpp3Dim1SignalValid ? "Y" : "N", stylus.hpp3Dim2SignalValid ? "Y" : "N");
+#endif
+        ImGui::Text("Status: 0x%08X", static_cast<unsigned int>(stylus.status));
         ImGui::Text("Pipeline Stage: %u  Pressure Source: %s",
                     static_cast<unsigned int>(stylus.pipelineStage),
                     stylus.diag.pressureIsReal ? "Real(BT)" : "Predicted/Synth");
@@ -524,16 +526,12 @@ void DiagnosticsWorkbench::DrawStylusPanel() {
                 m_currentFrame.masterSuffixValid ? static_cast<unsigned int>(m_currentFrame.masterSuffix.penF0NoiseCount()) : 0u,
                 m_currentFrame.masterSuffixValid ? static_cast<unsigned int>(m_currentFrame.masterSuffix.penF1NoiseCount()) : 0u);
     ImGui::Text("Status: 0x%08X", static_cast<unsigned int>(stylus.status));
+#if EGOTOUCH_DIAG
     ImGui::Text("ASA Mode/DataType: %u / %u  Result:%u  Valid:%s",
                 static_cast<unsigned int>(stylus.asaMode),
                 static_cast<unsigned int>(stylus.dataType),
                 static_cast<unsigned int>(stylus.processResult),
                 stylus.validJudgmentPassed ? "Y" : "N");
-    ImGui::Text("Recheck: En=%s Pass=%s Overlap=%s Th=%u",
-                stylus.recheckEnabled ? "Y" : "N",
-                stylus.recheckPassed ? "Y" : "N",
-                stylus.recheckOverlap ? "Y" : "N",
-                static_cast<unsigned int>(stylus.recheckThreshold));
     ImGui::Text("HPP3 Noise: Invalid=%s Debounce=%s",
                 stylus.hpp3NoiseInvalid ? "Y" : "N",
                 stylus.hpp3NoiseDebounce ? "Y" : "N");
@@ -546,6 +544,12 @@ void DiagnosticsWorkbench::DrawStylusPanel() {
                 static_cast<unsigned int>(stylus.hpp3SignalAvgX),
                 static_cast<unsigned int>(stylus.hpp3SignalAvgY),
                 static_cast<unsigned int>(stylus.hpp3SignalSampleCount));
+#endif
+    ImGui::Text("Recheck: En=%s Pass=%s Overlap=%s Th=%u",
+                stylus.recheckEnabled ? "Y" : "N",
+                stylus.recheckPassed ? "Y" : "N",
+                stylus.recheckOverlap ? "Y" : "N",
+                static_cast<unsigned int>(stylus.recheckThreshold));
     ImGui::Text("TouchSuppress: Active=%s NullLike=%s Remain=%u",
                 stylus.touchSuppressActive ? "Y" : "N",
                 stylus.touchNullLike ? "Y" : "N",
@@ -596,6 +600,7 @@ void DiagnosticsWorkbench::DrawStylusPanel() {
 
     ImGui::Separator();
     if (ImGui::CollapsingHeader("Legacy Stylus Packet (optional)")) {
+#if EGOTOUCH_DIAG
         if (stylus.packet.valid) {
             ImGui::Text("Packet (RID=0x%02X, Len=%u):", stylus.packet.reportId, stylus.packet.length);
             std::ostringstream oss;
@@ -610,6 +615,9 @@ void DiagnosticsWorkbench::DrawStylusPanel() {
         } else {
             ImGui::TextDisabled("Legacy packet unavailable for current frame.");
         }
+#else
+        ImGui::TextDisabled("Legacy packet mirror is disabled in non-diagnostic builds.");
+#endif
     }
 
     ImGui::End();

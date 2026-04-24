@@ -1,6 +1,6 @@
 #pragma once
 #include "AsaTypes.hpp"
-#include "PenStateMachine.hpp"
+#include "LinearHistoryView.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -21,22 +21,22 @@ public:
     inline float GetConstraintAlpha() const { return m_constraintAlpha; }
 
     inline AsaCoorResult Process(const AsaCoorResult& coor, bool enabled,
-                                 const PenStateMachine& historyOwner) {
+                                 const LinearHistoryView& history) {
         if (!enabled) {
             m_constraintAlpha = 0.0f;
             m_mode = Mode::Curve;
             return coor;
         }
 
-        const int usableCount = std::min(historyOwner.GetHistoryCount(), kMaxBufLen);
-        if (usableCount < 3 || historyOwner.GetValidHistoryCount() < 3) {
+        const int usableCount = std::min(history.historyCount, kMaxBufLen);
+        if (usableCount < 3 || history.validHistoryCount < 3) {
             m_constraintAlpha = 0.0f;
             m_mode = Mode::Curve;
             return coor;
         }
 
         if (usableCount >= minFitLength) {
-            m_fit = FitLine(historyOwner, usableCount);
+            m_fit = FitLine(history, usableCount);
         } else {
             m_fit = LineFit{};
         }
@@ -90,18 +90,19 @@ private:
     float m_constraintAlpha = 0.0f;
     LineFit m_fit{};
 
-    static inline bool HistoryPointAt(const PenStateMachine& historyOwner,
+    static inline bool HistoryPointAt(const LinearHistoryView& history,
                                       int index,
                                       Point& out) {
-        PenHistoryPoint point{};
-        if (!historyOwner.TryGetHistoryPoint(index, point)) {
+        int32_t dim1 = 0;
+        int32_t dim2 = 0;
+        if (!history.TryGetPoint(index, dim1, dim2)) {
             return false;
         }
-        out = Point{point.dim1, point.dim2};
+        out = Point{dim1, dim2};
         return true;
     }
 
-    inline LineFit FitLine(const PenStateMachine& historyOwner, int count) const {
+    inline LineFit FitLine(const LinearHistoryView& history, int count) const {
         LineFit result{};
         if (count < 3) return result;
 
@@ -116,7 +117,7 @@ private:
 
         for (int i = 0; i < count; ++i) {
             Point point{};
-            if (!HistoryPointAt(historyOwner, i, point)) {
+            if (!HistoryPointAt(history, i, point)) {
                 continue;
             }
             if (!foundRefPoint) {
@@ -164,7 +165,7 @@ private:
 
         for (int i = 0; i < count; ++i) {
             Point point{};
-            if (!HistoryPointAt(historyOwner, i, point)) {
+            if (!HistoryPointAt(history, i, point)) {
                 continue;
             }
             float d = 0.0f;

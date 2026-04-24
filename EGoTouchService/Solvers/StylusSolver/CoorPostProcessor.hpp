@@ -2,6 +2,7 @@
 #include "AsaTypes.hpp"
 #include "CoorReviser.hpp"
 #include "LinearFilter.hpp"
+#include "LinearHistoryView.hpp"
 #include "NoiseGate.hpp"
 #include "StylusFrameState.hpp"
 #include <algorithm>
@@ -29,12 +30,12 @@ public:
     template <typename FinalizeFn>
     inline AsaCoorResult Process(Solvers::StylusFrameState& state,
                                  LinearFilter& linearFilter,
-                                 const PenStateMachine& historyOwner,
+                                 const LinearHistoryView& history,
                                  CoorReviser& coorReviser,
                                  NoiseGate& noiseGate,
                                  const StylusExitSnapContext& exitCtx,
                                  FinalizeFn&& finalizeFinalCoor) {
-        ApplyLinearFilter(state, linearFilter, historyOwner);
+        ApplyLinearFilter(state, linearFilter, history);
         coorReviser.Process(state);
         ApplyMotionFilters(state);
         state.output.finalCoor = finalizeFinalCoor(state);
@@ -44,7 +45,7 @@ public:
     template <typename CommitterLike, typename FinalizeFn>
     inline AsaCoorResult Process(Solvers::StylusFrameState& state,
                                  LinearFilter& linearFilter,
-                                 const PenStateMachine& historyOwner,
+                                 const LinearHistoryView& history,
                                  CoorReviser& coorReviser,
                                  NoiseGate& noiseGate,
                                  const CommitterLike& committer,
@@ -52,7 +53,7 @@ public:
         return Process(
             state,
             linearFilter,
-            historyOwner,
+            history,
             coorReviser,
             noiseGate,
             StylusExitSnapContext::FromCommitter(committer),
@@ -62,11 +63,11 @@ public:
     template <typename CommitterLike>
     inline AsaCoorResult Process(Solvers::StylusFrameState& state,
                                  LinearFilter& linearFilter,
-                                 const PenStateMachine& historyOwner,
+                                 const LinearHistoryView& history,
                                  CoorReviser& coorReviser,
                                  NoiseGate& noiseGate,
                                  const CommitterLike& committer) {
-        ApplyLinearFilter(state, linearFilter, historyOwner);
+        ApplyLinearFilter(state, linearFilter, history);
         coorReviser.Process(state);
         ApplyMotionFilters(state);
         committer.Process(state);
@@ -75,18 +76,18 @@ public:
 
     inline AsaCoorResult ProcessLinear(Solvers::StylusFrameState& state,
                                        LinearFilter& linearFilter,
-                                       const PenStateMachine& historyOwner) {
+                                       const LinearHistoryView& history) {
         state.output.postCoor = linearFilter.Process(
             state.tx1.globalCoor,
             state.lifecycle.enableLinearFilter,
-            historyOwner);
+            history);
         return state.output.postCoor;
     }
 
     inline AsaCoorResult ApplyLinearFilter(Solvers::StylusFrameState& state,
                                            LinearFilter& linearFilter,
-                                           const PenStateMachine& historyOwner) {
-        return ProcessLinear(state, linearFilter, historyOwner);
+                                           const LinearHistoryView& history) {
+        return ProcessLinear(state, linearFilter, history);
     }
 
     inline AsaCoorResult ApplyMotionFilters(Solvers::StylusFrameState& state) {

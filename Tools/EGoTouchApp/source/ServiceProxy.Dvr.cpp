@@ -1102,23 +1102,10 @@ bool WriteFrameCsvFile(const std::filesystem::path& filePath,
         slaveRows.push_back({"Tx1BlockValid", frame.stylus.tx1BlockValid ? "1" : "0"});
         slaveRows.push_back({"Tx2BlockValid", frame.stylus.tx2BlockValid ? "1" : "0"});
         slaveRows.push_back({"Status", std::to_string(frame.stylus.status)});
-        slaveRows.push_back({"AsaMode", std::to_string(static_cast<unsigned int>(frame.stylus.asaMode))});
-        slaveRows.push_back({"DataType", std::to_string(static_cast<unsigned int>(frame.stylus.dataType))});
-        slaveRows.push_back({"ProcessResult", std::to_string(static_cast<unsigned int>(frame.stylus.processResult))});
-        slaveRows.push_back({"ValidJudgmentPassed", frame.stylus.validJudgmentPassed ? "1" : "0"});
         slaveRows.push_back({"RecheckEnabled", frame.stylus.recheckEnabled ? "1" : "0"});
         slaveRows.push_back({"RecheckPassed", frame.stylus.recheckPassed ? "1" : "0"});
         slaveRows.push_back({"RecheckOverlap", frame.stylus.recheckOverlap ? "1" : "0"});
         slaveRows.push_back({"RecheckThreshold", std::to_string(frame.stylus.recheckThreshold)});
-        slaveRows.push_back({"Hpp3NoiseInvalid", frame.stylus.hpp3NoiseInvalid ? "1" : "0"});
-        slaveRows.push_back({"Hpp3NoiseDebounce", frame.stylus.hpp3NoiseDebounce ? "1" : "0"});
-        slaveRows.push_back({"Hpp3Dim1SignalValid", frame.stylus.hpp3Dim1SignalValid ? "1" : "0"});
-        slaveRows.push_back({"Hpp3Dim2SignalValid", frame.stylus.hpp3Dim2SignalValid ? "1" : "0"});
-        slaveRows.push_back({"Hpp3RatioWarnCountX", std::to_string(static_cast<unsigned int>(frame.stylus.hpp3RatioWarnCountX))});
-        slaveRows.push_back({"Hpp3RatioWarnCountY", std::to_string(static_cast<unsigned int>(frame.stylus.hpp3RatioWarnCountY))});
-        slaveRows.push_back({"Hpp3SignalAvgX", std::to_string(frame.stylus.hpp3SignalAvgX)});
-        slaveRows.push_back({"Hpp3SignalAvgY", std::to_string(frame.stylus.hpp3SignalAvgY)});
-        slaveRows.push_back({"Hpp3SignalSampleCount", std::to_string(static_cast<unsigned int>(frame.stylus.hpp3SignalSampleCount))});
         slaveRows.push_back({"TouchNullLike", frame.stylus.touchNullLike ? "1" : "0"});
         slaveRows.push_back({"TouchSuppressActive", frame.stylus.touchSuppressActive ? "1" : "0"});
         slaveRows.push_back({"TouchSuppressFrames", std::to_string(static_cast<unsigned int>(frame.stylus.touchSuppressFrames))});
@@ -1149,8 +1136,23 @@ bool WriteFrameCsvFile(const std::filesystem::path& filePath,
         slaveRows.push_back({"TiltY", std::to_string(frame.stylus.point.tiltY)});
         slaveRows.push_back({"TiltMagnitude", std::to_string(frame.stylus.point.tiltMagnitude)});
         slaveRows.push_back({"TiltAzimuthDeg", std::to_string(frame.stylus.point.tiltAzimuthDeg)});
+#if EGOTOUCH_DIAG
+        slaveRows.push_back({"AsaMode", std::to_string(static_cast<unsigned int>(frame.stylus.asaMode))});
+        slaveRows.push_back({"DataType", std::to_string(static_cast<unsigned int>(frame.stylus.dataType))});
+        slaveRows.push_back({"ProcessResult", std::to_string(static_cast<unsigned int>(frame.stylus.processResult))});
+        slaveRows.push_back({"ValidJudgmentPassed", frame.stylus.validJudgmentPassed ? "1" : "0"});
+        slaveRows.push_back({"Hpp3NoiseInvalid", frame.stylus.hpp3NoiseInvalid ? "1" : "0"});
+        slaveRows.push_back({"Hpp3NoiseDebounce", frame.stylus.hpp3NoiseDebounce ? "1" : "0"});
+        slaveRows.push_back({"Hpp3Dim1SignalValid", frame.stylus.hpp3Dim1SignalValid ? "1" : "0"});
+        slaveRows.push_back({"Hpp3Dim2SignalValid", frame.stylus.hpp3Dim2SignalValid ? "1" : "0"});
+        slaveRows.push_back({"Hpp3RatioWarnCountX", std::to_string(static_cast<unsigned int>(frame.stylus.hpp3RatioWarnCountX))});
+        slaveRows.push_back({"Hpp3RatioWarnCountY", std::to_string(static_cast<unsigned int>(frame.stylus.hpp3RatioWarnCountY))});
+        slaveRows.push_back({"Hpp3SignalAvgX", std::to_string(frame.stylus.hpp3SignalAvgX)});
+        slaveRows.push_back({"Hpp3SignalAvgY", std::to_string(frame.stylus.hpp3SignalAvgY)});
+        slaveRows.push_back({"Hpp3SignalSampleCount", std::to_string(static_cast<unsigned int>(frame.stylus.hpp3SignalSampleCount))});
         slaveRows.push_back({"LegacyPacketValid", frame.stylus.packet.valid ? "1" : "0"});
         slaveRows.push_back({"LegacyPacketHex", frame.stylus.packet.valid ? FormatCsvPacketBytes(frame.stylus.packet.bytes) : "N/A"});
+#endif
         ApplyDynamicRows(slaveRows, Ipc::DebugDvrTarget::SlaveSuffix, dynamicSchema, dynamicFrame);
         WriteCsvKeyValueSection(out, "Slave Status", slaveRows);
     }

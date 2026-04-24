@@ -213,7 +213,11 @@ public:
 
 private:
     static inline void SyncPacketRoute(StylusFrameState& state) {
+#if EGOTOUCH_DIAG
         state.stylus.packetRoute = state.flow.packetRoute;
+#else
+        (void)state;
+#endif
     }
 
     static inline void ApplyFinalFrame(StylusFrameState& state) {
@@ -359,10 +363,11 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
             static_cast<int16_t>(state.tx2.peakSignal));
     }
 
+    const auto linearHistory = m_penStateMachine.GetLinearHistoryView();
     m_postProcessor.Process(
         state,
         m_linearFilter,
-        m_penStateMachine,
+        linearHistory,
         m_coorReviser,
         m_noiseGate,
         *m_output);

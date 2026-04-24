@@ -72,7 +72,9 @@ public:
         if (!state.tx1.globalCoor.valid) {
             state.flow.terminal = true;
             state.flow.pipelineStage = 4;
+#if EGOTOUCH_DIAG
             state.flow.packetRoute = Solvers::StylusPacketRoute::InvalidZeroState;
+#endif
             state.flow.clearCommitted = false;
             state.flow.resetPost = false;
             state.flow.resetNoise = false;

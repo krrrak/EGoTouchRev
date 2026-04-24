@@ -52,7 +52,9 @@ public:
         if (detected) {
             state.flow.terminal = true;
             state.flow.pipelineStage = 5;
+#if EGOTOUCH_DIAG
             state.flow.packetRoute = Solvers::StylusPacketRoute::InvalidZeroState;
+#endif
             state.flow.clearCommitted = false;
             state.flow.resetPost = true;
             state.flow.resetNoise = false;
@@ -100,8 +102,10 @@ public:
 
     inline bool ProcessRecheck(Solvers::StylusFrameState& state) const {
         const bool passed = ProcessRecheck(state.signal);
-        state.stylus.recheckEnabled = recheckEnabled;
-        state.stylus.recheckPassed = state.signal.recheckPassed;
+        state.stylus.interop.recheckEnabled = recheckEnabled;
+        state.stylus.interop.recheckPassed = state.signal.recheckPassed;
+        state.stylus.recheckEnabled = state.stylus.interop.recheckEnabled;
+        state.stylus.recheckPassed = state.stylus.interop.recheckPassed;
         return passed;
     }
 

@@ -252,19 +252,34 @@ private:
         state.signal.recheckThresholdMulti = analysis.recheck.sustainThreshold;
         state.signal.recheckPassed = analysis.recheckPassed;
 
-        state.stylus.tx1BlockValid = state.parse.gridData.tx1.valid;
-        state.stylus.tx2BlockValid = state.parse.gridData.tx2.valid;
-        state.stylus.signalX = state.signal.signalX;
-        state.stylus.signalY = state.signal.signalY;
-        state.stylus.maxRawPeak = state.signal.maxRawPeak;
+        auto& stylus = state.stylus;
+        stylus.input.tx1BlockValid = state.parse.gridData.tx1.valid;
+        stylus.input.tx2BlockValid = state.parse.gridData.tx2.valid;
+        stylus.interop.signalX = state.signal.signalX;
+        stylus.interop.signalY = state.signal.signalY;
+        stylus.interop.maxRawPeak = state.signal.maxRawPeak;
+        stylus.interop.recheckThreshold = state.signal.recheckThreshold;
+        stylus.interop.recheckThresholdMulti = state.signal.recheckThresholdMulti;
+        stylus.interop.recheckOverlap = state.signal.overlapLike;
+        stylus.interop.recheckPassed = state.signal.recheckPassed;
+
+        stylus.tx1BlockValid = stylus.input.tx1BlockValid;
+        stylus.tx2BlockValid = stylus.input.tx2BlockValid;
+        stylus.signalX = stylus.interop.signalX;
+        stylus.signalY = stylus.interop.signalY;
+        stylus.maxRawPeak = stylus.interop.maxRawPeak;
         state.stylus.point.peakTx1 = state.signal.tx1Composite;
         state.stylus.point.peakTx2 = state.signal.tx2Composite;
-        state.stylus.recheckThreshold = state.signal.recheckThreshold;
-        state.stylus.recheckThresholdMulti = state.signal.recheckThresholdMulti;
-        state.stylus.recheckOverlap = state.signal.overlapLike;
-        state.stylus.recheckPassed = state.signal.recheckPassed;
-        state.stylus.hpp3Dim1SignalValid = (state.signal.signalX > 0);
-        state.stylus.hpp3Dim2SignalValid = (state.signal.signalY > 0);
+        state.stylus.output.point.peakTx1 = state.signal.tx1Composite;
+        state.stylus.output.point.peakTx2 = state.signal.tx2Composite;
+        stylus.recheckThreshold = stylus.interop.recheckThreshold;
+        stylus.recheckThresholdMulti = stylus.interop.recheckThresholdMulti;
+        stylus.recheckOverlap = stylus.interop.recheckOverlap;
+        stylus.recheckPassed = stylus.interop.recheckPassed;
+#if EGOTOUCH_DIAG
+        stylus.hpp3Dim1SignalValid = (state.signal.signalX > 0);
+        stylus.hpp3Dim2SignalValid = (state.signal.signalY > 0);
+#endif
     }
 };
 

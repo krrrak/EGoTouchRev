@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 
+#include "LinearHistoryView.hpp"
 #include "StylusFrameState.hpp"
 
 namespace Asa {
@@ -311,6 +312,15 @@ public:
     int   GetValidHistoryCount() const { return m_validHistoryCount; }
     int   GetBtFrameCount() const { return m_btFrameCount; }
 
+    inline LinearHistoryView GetLinearHistoryView() const {
+        LinearHistoryView view{};
+        view.context = this;
+        view.tryGetPoint = &TryGetHistoryPointFromView;
+        view.historyCount = m_historyCount;
+        view.validHistoryCount = m_validHistoryCount;
+        return view;
+    }
+
     inline bool TryGetHistoryPoint(int logicalIndex, PenHistoryPoint& out) const {
         if (logicalIndex < 0 || logicalIndex >= m_historyCount) {
             return false;
@@ -490,6 +500,20 @@ private:
     inline const HistoryEntry& HistoryAt(int logicalIndex) const {
         const int idx = (m_historyHead + logicalIndex) % kHistoryCapacity;
         return m_history[static_cast<size_t>(idx)];
+    }
+
+    static inline bool TryGetHistoryPointFromView(const void* context,
+                                                  int logicalIndex,
+                                                  int32_t& dim1,
+                                                  int32_t& dim2) {
+        const auto* self = static_cast<const PenStateMachine*>(context);
+        PenHistoryPoint point{};
+        if (self == nullptr || !self->TryGetHistoryPoint(logicalIndex, point)) {
+            return false;
+        }
+        dim1 = point.dim1;
+        dim2 = point.dim2;
+        return true;
     }
 
     inline MotionProfile BuildProfile() const {

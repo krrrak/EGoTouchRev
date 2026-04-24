@@ -28,7 +28,9 @@ struct StylusFlowState {
     bool resetPost = false;
     bool resetNoise = false;
     uint8_t pipelineStage = 0;
+#if EGOTOUCH_DIAG
     StylusPacketRoute packetRoute = StylusPacketRoute::Valid;
+#endif
 };
 
 struct StylusParseState {
