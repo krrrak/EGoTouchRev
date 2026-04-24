@@ -276,15 +276,6 @@ inline void PopulateStylusPacketFromLegacySharedFrame(StylusType& stylus,
     }
 }
 
-template <typename StylusType>
-inline void ClearLegacyNoPressInkIfPresent(StylusType& stylus) {
-    if constexpr (requires { stylus.noPressInkActive = false; }) {
-        stylus.noPressInkActive = false;
-    } else {
-        (void)stylus;
-    }
-}
-
 template <typename HeatmapFrame>
 inline void PopulateSharedFrameDataFromSolverFrame(SharedFrameData& dst,
                                                    const HeatmapFrame& src) {
@@ -552,8 +543,6 @@ inline void PopulateSolverFrameFromSharedFrameData(HeatmapFrame& out,
     stylus.signalX = src.stylusSignalX;
     stylus.signalY = src.stylusSignalY;
     stylus.maxRawPeak = src.stylusMaxRawPeak;
-    // Deprecated legacy mirror. Downstream should use output/interop/debug contract fields.
-    ClearLegacyNoPressInkIfPresent(stylus);
     stylus.pipelineStage = src.stylusPipelineStage;
 
     auto& diag = stylus.diag;

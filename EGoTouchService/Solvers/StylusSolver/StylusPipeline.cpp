@@ -248,7 +248,6 @@ private:
         stylus.pressure = 0;
         stylus.point.pressure = 0;
         stylus.tipSwitchActive = false;
-        stylus.noPressInkActive = false;
         stylus.pipelineStage = state.flow.pipelineStage;
         state.output.finalCoor = {};
     }

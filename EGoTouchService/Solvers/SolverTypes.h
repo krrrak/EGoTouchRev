@@ -254,10 +254,7 @@ struct StylusFrameData {
     uint8_t processResult = 5;  // 0=Output, 1=InvalidReset, 3=Release, 5=Bypass
     bool validJudgmentPassed = false;
     bool modeExitRelease = false;
-    bool noPressInkActive = false;
     bool tipSwitchActive = false;
-    bool sustainOutput = false;
-    bool fastLiftOutput = false;
     bool hpp3NoiseInvalid = false;
     bool hpp3NoiseDebounce = false;
     bool hpp3Dim1SignalValid = false;
@@ -286,9 +283,6 @@ struct StylusFrameData {
     StylusSolvePoint point{};
     StylusPacket packet{};
     StylusPacketRoute packetRoute = StylusPacketRoute::Valid;
-
-    // Phase 6: AnimationProcess state output (Idle/PenDown/Writing/Lifting)
-    uint8_t animState = 0;
 
     // Diagnostic: which pipeline stage produced this result
     // 0=ok, 1=slaveParseFail, 2=tx1Invalid, 3=noPeak, 4=coordFail, 5=noiseReject

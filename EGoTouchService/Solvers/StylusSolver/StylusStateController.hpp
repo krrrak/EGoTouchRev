@@ -223,22 +223,20 @@ public:
         Solvers::StylusFrameState& state,
         const PenUpdateResult& penUpdate,
         const PenStateMachine& penStateMachine) {
+        (void)penStateMachine;
         auto& stylus = state.stylus;
         stylus.point.rawPressure = state.lifecycle.btSample.pressure;
         stylus.point.mappedPressure = state.lifecycle.mappedPressure;
         stylus.pressure = penUpdate.output.outputPressure;
         stylus.point.pressure = stylus.pressure;
-        stylus.noPressInkActive = penUpdate.output.noPressInkActive;
         stylus.tipSwitchActive = penUpdate.output.tipSwitchActive;
-        stylus.sustainOutput = penUpdate.output.sustainOutput;
-        stylus.fastLiftOutput = penUpdate.output.fastLiftOutput;
-        stylus.animState = penStateMachine.GetAnimState();
     }
 
     static inline void ApplyTerminalStylusStateMirrors(
         Solvers::StylusFrameState& state,
         const PenStateMachine& penStateMachine) {
-        state.stylus.animState = penStateMachine.GetAnimState();
+        (void)state;
+        (void)penStateMachine;
     }
 
 private:
