@@ -55,8 +55,17 @@ public:
     void Close();
 
 private:
+    struct StylusDispatchPacket {
+        Solvers::StylusPacket packet{};
+        uint8_t penState = 0;
+    };
+
     bool UpdateTouchState(bool hasTouch);
-    void BuildStylusPacket(Solvers::HeatmapFrame& frame);
+    StylusDispatchPacket BuildStylusPacket(
+        const Solvers::StylusFrameData& stylus);
+    static void MirrorLegacyStylusPacket(
+        Solvers::HeatmapFrame& frame,
+        const StylusDispatchPacket& built);
 
     void WriteTouchPacketsLocked(
         const std::array<Solvers::TouchPacket, 2>& packets);

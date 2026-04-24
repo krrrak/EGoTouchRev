@@ -198,7 +198,8 @@ bool VhfReporter::UpdateTouchState(bool hasTouch) {
                                          std::memory_order_relaxed);
 }
 
-void VhfReporter::BuildStylusPacket(Solvers::HeatmapFrame& frame) {
+VhfReporter::StylusDispatchPacket VhfReporter::BuildStylusPacket(
+        const Solvers::StylusFrameData& stylus) {
     VhfStylusPacket::Config config;
     {
         std::lock_guard<std::mutex> lk(m_mu);
@@ -207,15 +208,24 @@ void VhfReporter::BuildStylusPacket(Solvers::HeatmapFrame& frame) {
         config.emitWhenInvalid = m_emitStylusPacketWhenInvalid;
     }
 
-    frame.stylus.packet = VhfStylusPacket::Build(frame.stylus, config);
-    frame.stylus.diag.vhfPenState =
-        VhfStylusPacket::ExtractPenState(frame.stylus.packet);
+    StylusDispatchPacket built{};
+    built.packet = VhfStylusPacket::Build(stylus, config);
+    built.penState = VhfStylusPacket::ExtractPenState(built.packet);
+    return built;
+}
+
+void VhfReporter::MirrorLegacyStylusPacket(
+        Solvers::HeatmapFrame& frame,
+        const StylusDispatchPacket& built) {
+    frame.stylus.packet = built.packet;
+    frame.stylus.diag.vhfPenState = built.penState;
 }
 
 // ── 主入口 (legacy) ──
 
 void VhfReporter::Dispatch(Solvers::HeatmapFrame& frame) {
-    BuildStylusPacket(frame);
+    const auto stylusPacket = BuildStylusPacket(frame.stylus);
+    MirrorLegacyStylusPacket(frame, stylusPacket);
     if (!m_enabled.load(std::memory_order_relaxed)) {
         return;
     }
@@ -226,7 +236,7 @@ void VhfReporter::Dispatch(Solvers::HeatmapFrame& frame) {
 
     const bool hasTouch = HasTouchReports(frame.touchPackets);
     const bool sendTouchAllUp = UpdateTouchState(hasTouch);
-    const bool hasStylus = frame.stylus.packet.valid;
+    const bool hasStylus = stylusPacket.packet.valid;
 
     if (!hasTouch && !sendTouchAllUp && !hasStylus) {
         return;
@@ -235,7 +245,7 @@ void VhfReporter::Dispatch(Solvers::HeatmapFrame& frame) {
     std::array<uint8_t, 17> stylusBytes{};
     if (hasStylus) {
         stylusBytes = MakeStylusBytes(
-            frame.stylus.packet,
+            stylusPacket.packet,
             m_eraserState.load(std::memory_order_relaxed));
     }
 
@@ -248,7 +258,7 @@ void VhfReporter::Dispatch(Solvers::HeatmapFrame& frame) {
     }
     if (hasStylus) {
         WriteStylusPacketLocked(stylusBytes.data(),
-                                frame.stylus.packet.length);
+                                stylusPacket.packet.length);
     }
 }
 
@@ -256,19 +266,20 @@ void VhfReporter::Dispatch(Solvers::HeatmapFrame& frame) {
 
 void VhfReporter::DispatchStylus(Solvers::HeatmapFrame& frame,
                                  bool writeEnabled) {
-    BuildStylusPacket(frame);
+    const auto stylusPacket = BuildStylusPacket(frame.stylus);
+    MirrorLegacyStylusPacket(frame, stylusPacket);
     if (!writeEnabled ||
         !m_enabled.load(std::memory_order_relaxed) ||
-        !frame.stylus.packet.valid) {
+        !stylusPacket.packet.valid) {
         return;
     }
 
     const auto bytes = MakeStylusBytes(
-        frame.stylus.packet,
+        stylusPacket.packet,
         m_eraserState.load(std::memory_order_relaxed));
 
     std::lock_guard<std::mutex> lk(m_mu);
-    WriteStylusPacketLocked(bytes.data(), frame.stylus.packet.length);
+    WriteStylusPacketLocked(bytes.data(), stylusPacket.packet.length);
 }
 
 // ── 独立手指写入 ──

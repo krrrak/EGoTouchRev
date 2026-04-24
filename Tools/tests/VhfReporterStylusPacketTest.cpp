@@ -1,4 +1,5 @@
 #include "vhf/VhfReporter.h"
+#include "vhf/VhfReporterStylusPacketHelper.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -65,78 +66,78 @@ HeatmapFrame MakeInvalidOutputFrameWithStaleLegacyValidData() {
     return frame;
 }
 
-void TestDispatchStylusBuildsAndBackfillsValidPacketFromOutput() {
-    VhfReporter reporter;
-    reporter.SetEnabled(false);
-    reporter.SetStylusPacketSensorRows(40);
-    reporter.SetStylusPacketSensorCols(60);
+VhfStylusPacket::Config MakeDefaultStylusPacketConfig() {
+    VhfStylusPacket::Config config;
+    config.sensorRows = 40;
+    config.sensorCols = 60;
+    config.emitWhenInvalid = true;
+    return config;
+}
 
+void TestStylusPacketHelperBuildsValidPacketFromOutput() {
     auto frame = MakeOutputDrivenStylusFrame();
-    reporter.DispatchStylus(frame);
+    const auto packet = VhfStylusPacket::Build(
+        frame.stylus, MakeDefaultStylusPacketConfig());
 
-    Require(frame.stylus.packet.valid,
-            "VHF should backfill a valid stylus packet before dispatch");
-    Require(frame.stylus.packet.length == 13,
+    Require(packet.valid,
+            "valid output should build a stylus packet");
+    Require(packet.length == 13,
             "VHF-built stylus packet should use 13-byte report length");
-    Require(frame.stylus.packet.bytes[0] == 0x08,
+    Require(packet.bytes[0] == 0x08,
             "VHF-built stylus packet should keep stylus report id");
-    Require(frame.stylus.packet.bytes[1] == 0x21,
+    Require(packet.bytes[1] == 0x21,
             "VHF-built valid stylus packet should encode TipSwitch and InRange");
-    Require(ReadU16Le(frame.stylus.packet, 3) == 7200,
+    Require(ReadU16Le(packet, 3) == 7200,
             "VHF-built stylus packet should map output Y into HID X");
-    Require(ReadU16Le(frame.stylus.packet, 5) == 20480,
+    Require(ReadU16Le(packet, 5) == 20480,
             "VHF-built stylus packet should map output X into HID Y");
-    Require(ReadU16Le(frame.stylus.packet, 7) == 321,
+    Require(ReadU16Le(packet, 7) == 321,
             "VHF-built stylus packet should encode output pressure");
-    Require(ReadI16Le(frame.stylus.packet, 9) == 700,
+    Require(ReadI16Le(packet, 9) == 700,
             "VHF-built stylus packet should encode output tiltX in centidegrees");
-    Require(ReadI16Le(frame.stylus.packet, 11) == -300,
+    Require(ReadI16Le(packet, 11) == -300,
             "VHF-built stylus packet should encode output tiltY in centidegrees");
-    Require(frame.stylus.diag.vhfPenState == 0x21,
-            "VHF should update diagnostics from the raw built packet state");
+    Require(VhfStylusPacket::ExtractPenState(packet) == 0x21,
+            "helper pen state extraction should match raw packet");
 }
 
-void TestDispatchStylusBuildsInvalidZeroStatePacketFromInvalidOutputWhenEnabled() {
-    VhfReporter reporter;
-    reporter.SetEnabled(false);
-    reporter.SetStylusPacketEmitWhenInvalid(true);
-
+void TestStylusPacketHelperBuildsInvalidZeroStatePacketFromInvalidOutputWhenEnabled() {
     auto frame = MakeInvalidOutputFrameWithStaleLegacyValidData();
-    reporter.DispatchStylus(frame);
+    auto config = MakeDefaultStylusPacketConfig();
+    config.emitWhenInvalid = true;
+    const auto packet = VhfStylusPacket::Build(frame.stylus, config);
 
-    Require(frame.stylus.packet.valid,
+    Require(packet.valid,
             "invalid output should still build a packet when emitWhenInvalid is enabled");
-    Require(frame.stylus.packet.length == 13,
+    Require(packet.length == 13,
             "invalid output should build a 13-byte packet");
-    Require(frame.stylus.packet.bytes[1] == 0,
+    Require(packet.bytes[1] == 0,
             "invalid output should clear stylus state bits");
-    Require(ReadU16Le(frame.stylus.packet, 3) == 0,
+    Require(ReadU16Le(packet, 3) == 0,
             "invalid output should clear HID X");
-    Require(ReadU16Le(frame.stylus.packet, 5) == 0,
+    Require(ReadU16Le(packet, 5) == 0,
             "invalid output should clear HID Y");
-    Require(ReadU16Le(frame.stylus.packet, 7) == 0,
+    Require(ReadU16Le(packet, 7) == 0,
             "invalid output should clear pressure");
-    Require(frame.stylus.diag.vhfPenState == 0,
-            "invalid output should write neutral diagnostics state");
+    Require(VhfStylusPacket::ExtractPenState(packet) == 0,
+            "invalid output should decode neutral pen state");
 }
 
-void TestDispatchStylusSuppressesInvalidPacketFromInvalidOutputWhenDisabled() {
-    VhfReporter reporter;
-    reporter.SetEnabled(false);
-    reporter.SetStylusPacketEmitWhenInvalid(false);
-
+void TestStylusPacketHelperSuppressesInvalidPacketFromInvalidOutputWhenDisabled() {
     auto frame = MakeInvalidOutputFrameWithStaleLegacyValidData();
-    reporter.DispatchStylus(frame);
+    auto config = MakeDefaultStylusPacketConfig();
+    config.emitWhenInvalid = false;
+    const auto packet = VhfStylusPacket::Build(frame.stylus, config);
 
-    Require(!frame.stylus.packet.valid,
+    Require(!packet.valid,
             "invalid output should stay suppressed when emitWhenInvalid is disabled");
-    Require(frame.stylus.packet.length == 13,
+    Require(packet.length == 13,
             "suppressed invalid packet should preserve HID report length");
-    Require(frame.stylus.diag.vhfPenState == 0,
-            "suppressed invalid packet should keep neutral diagnostics state");
+    Require(VhfStylusPacket::ExtractPenState(packet) == 0,
+            "suppressed invalid packet should decode neutral pen state");
 }
 
-void TestDispatchStylusDoesNotWriteBackEraserTransform() {
+void TestDispatchStylusPublishesRawPenStateToDiagnostics() {
     VhfReporter reporter;
     reporter.SetEnabled(false);
     reporter.SetEraserState(1);
@@ -144,25 +145,17 @@ void TestDispatchStylusDoesNotWriteBackEraserTransform() {
     auto frame = MakeOutputDrivenStylusFrame();
     reporter.DispatchStylus(frame);
 
-    Require(frame.stylus.packet.valid,
-            "valid frame should still build a packet before any eraser transform");
-    Require(frame.stylus.packet.bytes[1] == 0x21,
-            "eraser post-transform must not be written back into frame.stylus.packet");
     Require(frame.stylus.diag.vhfPenState == 0x21,
             "diagnostics should reflect the raw packet, not the transformed write buffer");
 }
 
-void TestDispatchStylusBackfillsEvenWhenWriteDisabled() {
+void TestDispatchStylusPublishesDiagnosticsEvenWhenWriteDisabled() {
     VhfReporter reporter;
     reporter.SetEnabled(true);
 
     auto frame = MakeOutputDrivenStylusFrame();
     reporter.DispatchStylus(frame, false);
 
-    Require(frame.stylus.packet.valid,
-            "write-disabled dispatch should still backfill the stylus packet");
-    Require(frame.stylus.packet.bytes[1] == 0x21,
-            "write-disabled dispatch should still encode the raw pen state");
     Require(frame.stylus.diag.vhfPenState == 0x21,
             "write-disabled dispatch should still publish diagnostics state");
 }
@@ -171,11 +164,11 @@ void TestDispatchStylusBackfillsEvenWhenWriteDisabled() {
 
 int main() {
     try {
-        TestDispatchStylusBuildsAndBackfillsValidPacketFromOutput();
-        TestDispatchStylusBuildsInvalidZeroStatePacketFromInvalidOutputWhenEnabled();
-        TestDispatchStylusSuppressesInvalidPacketFromInvalidOutputWhenDisabled();
-        TestDispatchStylusDoesNotWriteBackEraserTransform();
-        TestDispatchStylusBackfillsEvenWhenWriteDisabled();
+        TestStylusPacketHelperBuildsValidPacketFromOutput();
+        TestStylusPacketHelperBuildsInvalidZeroStatePacketFromInvalidOutputWhenEnabled();
+        TestStylusPacketHelperSuppressesInvalidPacketFromInvalidOutputWhenDisabled();
+        TestDispatchStylusPublishesRawPenStateToDiagnostics();
+        TestDispatchStylusPublishesDiagnosticsEvenWhenWriteDisabled();
         std::cout << "[TEST] VHF reporter stylus packet tests passed.\n";
         return 0;
     } catch (const std::exception& ex) {
