@@ -54,7 +54,10 @@ public:
         stylus.debug.coord.btSeq = stylus.runtime.pressure.btSeq;
         stylus.debug.coord.predictedAgeFrames = stylus.runtime.pressure.predictedAgeFrames;
         stylus.debug.coord.pressureIsReal = stylus.runtime.pressure.pressureIsReal;
-        stylus.debug.coord.linearFilterState = static_cast<uint8_t>(stylus.output.pipelineStage);
+        stylus.debug.coord.linearFilterState = stylus.runtime.post.linearFilterState;
+        stylus.debug.coord.coorReviserActive = stylus.runtime.post.linearFilterActive;
+        stylus.debug.coord.coorRevDeltaX = static_cast<float>(stylus.runtime.post.linearFilterDeltaDim1);
+        stylus.debug.coord.coorRevDeltaY = static_cast<float>(stylus.runtime.post.linearFilterDeltaDim2);
 #endif
 
         stylus.SyncLegacyFieldsFromContract();

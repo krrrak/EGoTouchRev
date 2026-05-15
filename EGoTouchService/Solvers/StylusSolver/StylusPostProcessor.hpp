@@ -1,5 +1,6 @@
 #pragma once
 
+#include "LinearFilterProcess.hpp"
 #include "SolverTypes.h"
 
 #include <algorithm>
@@ -16,8 +17,11 @@ public:
 
     bool m_enabled = true;
     int m_filterMode = Bypass;
+    int m_sensorRows = 40;
+    int m_sensorCols = 60;
+    LinearFilterProcess m_linearFilter;
 
-    inline bool Process(HeatmapFrame& frame) const {
+    inline bool Process(HeatmapFrame& frame) {
         auto& stylus = frame.stylus;
         auto& flow = stylus.runtime.flow;
         auto& post = stylus.runtime.post;
@@ -26,15 +30,32 @@ public:
         flow.pipelineStage = 3;
         if (!m_enabled || !stylus.runtime.tx1.globalCoor.valid) {
             post = {};
+            m_linearFilter.Reset();
             return true;
         }
 
-        post.postCoor = stylus.runtime.tx1.globalCoor;
-        post.finalCoor = stylus.runtime.tx1.globalCoor;
         post.finalValid = decision.inRangeCandidate;
         post.finalPressure = decision.tipDownCandidate
             ? stylus.runtime.pressure.outputPressure
             : 0;
+
+        Asa::AsaCoorResult filteredCoor = stylus.runtime.tx1.globalCoor;
+        if (m_filterMode == IirQ8) {
+            filteredCoor = m_linearFilter.Process(
+                stylus.runtime.tx1.globalCoor,
+                post.finalPressure != 0,
+                std::max(0, m_sensorCols) * Asa::kCoorUnit,
+                std::max(0, m_sensorRows) * Asa::kCoorUnit);
+        } else {
+            m_linearFilter.Reset();
+        }
+
+        post.postCoor = filteredCoor;
+        post.finalCoor = filteredCoor;
+        post.linearFilterState = m_linearFilter.State();
+        post.linearFilterActive = m_linearFilter.Active();
+        post.linearFilterDeltaDim1 = m_linearFilter.LastDeltaDim1();
+        post.linearFilterDeltaDim2 = m_linearFilter.LastDeltaDim2();
         post.confidence = std::clamp(
             static_cast<float>(stylus.runtime.signal.maxRawPeak) / 4095.0f,
             0.0f,

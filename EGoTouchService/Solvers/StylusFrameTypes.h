@@ -165,6 +165,10 @@ struct StylusRuntimePost {
     bool finalValid = false;
     uint16_t finalPressure = 0;
     float confidence = 0.0f;
+    uint8_t linearFilterState = 0;
+    bool linearFilterActive = false;
+    int32_t linearFilterDeltaDim1 = 0;
+    int32_t linearFilterDeltaDim2 = 0;
 };
 
 struct StylusRuntimeFrame {
