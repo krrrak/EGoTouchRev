@@ -73,6 +73,32 @@ struct GridPeakUnit {
     bool valid = false;
 };
 
+struct GridPeakRegion {
+    int peakRow = -1;
+    int peakCol = -1;
+    int32_t peakValue = 0;
+    int32_t regionSum = 0;
+    int32_t sum3x3 = 0;
+    int minRow = 0;
+    int maxRow = 0;
+    int minCol = 0;
+    int maxCol = 0;
+    int32_t refinedDim1 = 0;
+    int32_t refinedDim2 = 0;
+    int connectedPixels = 0;
+    int regionId = -1;
+    bool valid = false;
+};
+
+struct GridPeakTable {
+    std::array<GridPeakRegion, 4> regions{};
+    int count = 0;
+    int strongestSlot = -1;
+    int weakestSlot = -1;
+    int strongestRegionId = -1;
+    int32_t selectedPeak3x3Sum = 0;
+};
+
 struct AsaCoorResult {
     int32_t dim1 = 0;
     int32_t dim2 = 0;

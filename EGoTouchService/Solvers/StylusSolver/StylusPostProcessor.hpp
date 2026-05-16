@@ -28,7 +28,7 @@ public:
         auto& decision = stylus.runtime.decision;
 
         flow.pipelineStage = 3;
-        if (!m_enabled || !stylus.runtime.tx1.globalCoor.valid) {
+        if (!m_enabled || !stylus.runtime.tx1.coordinate.reportGlobalCoor.valid) {
             post = {};
             m_linearFilter.Reset();
             return true;
@@ -39,10 +39,10 @@ public:
             ? stylus.runtime.pressure.outputPressure
             : 0;
 
-        Asa::AsaCoorResult filteredCoor = stylus.runtime.tx1.globalCoor;
+        Asa::AsaCoorResult filteredCoor = stylus.runtime.tx1.coordinate.reportGlobalCoor;
         if (m_filterMode == IirQ8) {
             filteredCoor = m_linearFilter.Process(
-                stylus.runtime.tx1.globalCoor,
+                stylus.runtime.tx1.coordinate.reportGlobalCoor,
                 post.finalPressure != 0,
                 std::max(0, m_sensorCols) * Asa::kCoorUnit,
                 std::max(0, m_sensorRows) * Asa::kCoorUnit);
@@ -69,12 +69,12 @@ public:
         post.point.pressure = post.finalPressure;
         post.point.rawPressure = stylus.runtime.pressure.rawPressure;
         post.point.mappedPressure = stylus.runtime.pressure.mappedPressure;
-        post.point.peakTx1 = stylus.runtime.signal.tx1Composite;
-        post.point.peakTx2 = stylus.runtime.signal.tx2Composite;
-        post.point.tx1X = static_cast<float>(stylus.runtime.tx1.globalCoor.dim1);
-        post.point.tx1Y = static_cast<float>(stylus.runtime.tx1.globalCoor.dim2);
-        post.point.tx2X = static_cast<float>(stylus.runtime.tx2.globalCoor.dim1);
-        post.point.tx2Y = static_cast<float>(stylus.runtime.tx2.globalCoor.dim2);
+        post.point.peakTx1 = stylus.runtime.signal.signalX;
+        post.point.peakTx2 = stylus.runtime.signal.signalY;
+        post.point.tx1X = static_cast<float>(stylus.runtime.tx1.coordinate.reportGlobalCoor.dim1);
+        post.point.tx1Y = static_cast<float>(stylus.runtime.tx1.coordinate.reportGlobalCoor.dim2);
+        post.point.tx2X = static_cast<float>(stylus.runtime.tx2.coordinate.reportGlobalCoor.dim1);
+        post.point.tx2Y = static_cast<float>(stylus.runtime.tx2.coordinate.reportGlobalCoor.dim2);
         post.point.confidence = post.confidence;
         return true;
     }

@@ -16,7 +16,7 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
     }
 
     m_cmf.Process(frame);
-    m_peakDetector.Process(frame);
+    m_featureExtractor.Process(frame);
     if (frame.stylus.runtime.flow.terminal) {
         m_commit.Commit(frame);
         return true;
@@ -45,7 +45,7 @@ std::vector<ConfigParam> StylusPipeline::GetConfigSchema() const {
                         ConfigParam::Bool, const_cast<bool*>(&m_cmf.m_enabled))
         .Module("Signal Conditioning");
     schema.emplace_back("sp.peakDetectorEnabled", "Peak Detector Enabled",
-                        ConfigParam::Bool, const_cast<bool*>(&m_peakDetector.m_enabled))
+                        ConfigParam::Bool, const_cast<bool*>(&m_featureExtractor.m_enabled))
         .Module("Data Solve");
     schema.emplace_back("sp.coordinateSolverEnabled", "Coordinate Solver Enabled",
                         ConfigParam::Bool, const_cast<bool*>(&m_coordinateSolver.m_enabled))
@@ -107,7 +107,7 @@ std::vector<ConfigParam> StylusPipeline::GetConfigSchema() const {
 void StylusPipeline::SaveConfig(std::ostream& out) const {
     out << "sp.frameParserEnabled=" << (m_frameParser.m_enabled ? "1" : "0") << "\n";
     out << "sp.cmfEnabled=" << (m_cmf.m_enabled ? "1" : "0") << "\n";
-    out << "sp.peakDetectorEnabled=" << (m_peakDetector.m_enabled ? "1" : "0") << "\n";
+    out << "sp.peakDetectorEnabled=" << (m_featureExtractor.m_enabled ? "1" : "0") << "\n";
     out << "sp.coordinateSolverEnabled=" << (m_coordinateSolver.m_enabled ? "1" : "0") << "\n";
     out << "sp.pressureSolverEnabled=" << (m_pressureSolver.m_enabled ? "1" : "0") << "\n";
     out << "sp.postEnabled=" << (m_post.m_enabled ? "1" : "0") << "\n";
@@ -136,7 +136,7 @@ void StylusPipeline::LoadConfig(const std::string& key, const std::string& value
     } else if (key == "sp.cmfEnabled") {
         m_cmf.m_enabled = toBool(value);
     } else if (key == "sp.solveEnabled" || key == "sp.peakDetectorEnabled") {
-        m_peakDetector.m_enabled = toBool(value);
+        m_featureExtractor.m_enabled = toBool(value);
     } else if (key == "sp.coordinateSolverEnabled") {
         m_coordinateSolver.m_enabled = toBool(value);
     } else if (key == "sp.pressureSolverEnabled") {

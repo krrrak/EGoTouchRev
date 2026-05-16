@@ -3,7 +3,7 @@
 #include "ConfigSchema.h"
 #include "CommonModeFilter.hpp"
 #include "CoordinateSolver.hpp"
-#include "GridPeakDetector.hpp"
+#include "GridFeatureExtractor.hpp"
 #include "PressureSolver.hpp"
 #include "SolverTypes.h"
 #include "StylusFrameParser.hpp"
@@ -38,7 +38,7 @@ public:
 
     Stylus::StylusFrameParser m_frameParser;
     Stylus::CommonModeFilter m_cmf;
-    Stylus::GridPeakDetector m_peakDetector;
+    Stylus::GridFeatureExtractor m_featureExtractor;
     Stylus::CoordinateSolver m_coordinateSolver;
     Stylus::PressureSolver m_pressureSolver;
     Stylus::StylusPostProcessor m_post;

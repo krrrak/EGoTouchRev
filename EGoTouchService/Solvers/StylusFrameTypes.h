@@ -104,16 +104,29 @@ struct StylusRuntimeParse {
     uint32_t status = 0;
     uint16_t checksum16 = 0;
     std::array<uint8_t, Asa::kSlaveHeaderBytes> rawSlaveHdr{};
-    Asa::AsaGridData gridData{};
 };
 
-struct StylusRuntimeProjection {
+struct StylusRuntimeRawGrid {
+    Asa::AsaGridData asaGrid{};
+};
+
+struct StylusGridFeature {
     int16_t grid[Asa::kGridDim][Asa::kGridDim]{};
     Asa::GridPeakUnit peak{};
+    Asa::GridPeakTable peakTable{};
     Asa::AsaProjection projection{};
+    Asa::AsaCoorResult refinedLocalCoor{};
     uint16_t peakSignal = 0;
-    Asa::AsaCoorResult localCoor{};
-    Asa::AsaCoorResult globalCoor{};
+};
+
+struct StylusCoordinateResult {
+    Asa::AsaCoorResult localGridCoor{};
+    Asa::AsaCoorResult reportGlobalCoor{};
+};
+
+struct StylusTxRuntime {
+    StylusGridFeature feature{};
+    StylusCoordinateResult coordinate{};
 };
 
 struct StylusRuntimeSignal {
@@ -126,15 +139,12 @@ struct StylusRuntimeSignal {
     uint16_t signalX = 0;
     uint16_t signalY = 0;
     uint16_t maxRawPeak = 0;
-    uint16_t tx1Composite = 0;
-    uint16_t tx2Composite = 0;
     bool dim1EdgeActive = false;
     bool dim2EdgeActive = false;
     uint16_t dim1EdgeSignal = 0;
     uint16_t dim2EdgeSignal = 0;
     bool overlapLike = false;
 };
-
 struct StylusRuntimePressure {
     StylusBtInputSnapshot btSample{};
     bool pressureIsReal = false;
@@ -174,8 +184,9 @@ struct StylusRuntimePost {
 struct StylusRuntimeFrame {
     StylusRuntimeFlow flow{};
     StylusRuntimeParse parse{};
-    StylusRuntimeProjection tx1{};
-    StylusRuntimeProjection tx2{};
+    StylusRuntimeRawGrid rawGrid{};
+    StylusTxRuntime tx1{};
+    StylusTxRuntime tx2{};
     StylusRuntimeSignal signal{};
     StylusRuntimePressure pressure{};
     StylusRuntimeDecision decision{};

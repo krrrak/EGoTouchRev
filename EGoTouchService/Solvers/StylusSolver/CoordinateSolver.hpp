@@ -22,100 +22,93 @@ class CoordinateSolver {
 public:
     bool m_enabled = true;
     uint16_t m_signalFloor = 64;
-    bool m_useTriangle = true;
-    bool m_triEdgeSecondaryBlend = true;
-    bool m_pitchMapEnabled = false;
-    bool m_gravityFictitiousEdge = true;
-    int32_t m_gravityNoiseFloor = 0;
+    bool m_useTriangle = true; // Deprecated: factory coordinate mode is fixed to triangle.
+    bool m_triEdgeSecondaryBlend = true; // Deprecated: factory edge secondary blend is fixed on.
+    bool m_pitchMapEnabled = false; // Deprecated: factory pitch map application is fixed.
+    bool m_gravityFictitiousEdge = true; // Deprecated: gravity path is unused by the factory configuration.
+    int32_t m_gravityNoiseFloor = 0; // Deprecated: gravity path is unused by the factory configuration.
 
-    TriangleEdgeParams m_triEdgeDim1 = {50, 5000, 5000};
-    TriangleEdgeParams m_triEdgeDim2 = {50, 4500, 3700};
+    TriangleEdgeParams m_triEdgeDim1 = {50, 5000, 5000}; // Deprecated: factory constants are used directly.
+    TriangleEdgeParams m_triEdgeDim2 = {50, 4500, 3700}; // Deprecated: factory constants are used directly.
 
-    PitchCompensation m_pitchCompDim1{};
-    PitchCompensation m_pitchCompDim2{};
+    PitchCompensation m_pitchCompDim1{}; // Deprecated: factory polynomial compensation is used directly.
+    PitchCompensation m_pitchCompDim2{}; // Deprecated: factory polynomial compensation is used directly.
 
-    std::array<double, Asa::kMaxSensorDim + 1> m_pitchTableDim1 = [] {
+    std::array<double, Asa::kMaxSensorDim + 1> m_pitchTableDim1 = [] { // Deprecated: factory pitch table is used directly.
         std::array<double, Asa::kMaxSensorDim + 1> table{};
         table.fill(100.0);
         return table;
     }();
 
-    std::array<double, Asa::kMaxSensorDim + 1> m_pitchTableDim2 = [] {
+    std::array<double, Asa::kMaxSensorDim + 1> m_pitchTableDim2 = [] { // Deprecated: factory pitch table is used directly.
         std::array<double, Asa::kMaxSensorDim + 1> table{};
         table.fill(100.0);
         return table;
     }();
 
     inline bool Process(HeatmapFrame& frame) const {
-        auto& stylus = frame.stylus;
-        auto& flow = stylus.runtime.flow;
+        auto& runtime = frame.stylus.runtime;
+        auto& flow = runtime.flow;
+        auto& tx1 = runtime.tx1;
+        auto& tx2 = runtime.tx2;
 
         flow.pipelineStage = 4;
-        if (!m_enabled || !stylus.runtime.tx1.peak.valid) {
+        if (!m_enabled || !tx1.feature.peak.valid) {
             flow.terminal = true;
             return true;
         }
 
-        stylus.runtime.tx1.localCoor = Solve(
-            stylus.runtime.tx1.projection,
-            m_triEdgeDim1, m_triEdgeDim2,
-            m_pitchCompDim1, m_pitchCompDim2);
-        stylus.runtime.tx1.globalCoor = stylus.runtime.tx1.localCoor;
-        if (stylus.runtime.tx1.globalCoor.valid) {
-            LocalToGlobal(stylus.runtime.tx1.globalCoor,
-                          stylus.runtime.parse.gridData.tx1.anchorRow,
-                          stylus.runtime.parse.gridData.tx1.anchorCol,
+        tx1.coordinate.localGridCoor = Solve(tx1.feature.projection);
+        tx1.coordinate.reportGlobalCoor = tx1.coordinate.localGridCoor;
+        if (tx1.coordinate.reportGlobalCoor.valid) {
+            LocalToGlobal(tx1.coordinate.reportGlobalCoor,
+                          runtime.rawGrid.asaGrid.tx1.anchorRow,
+                          runtime.rawGrid.asaGrid.tx1.anchorCol,
                           kAnchorCenterOffset);
-            if (m_pitchMapEnabled) ApplyPitchMap(stylus.runtime.tx1.globalCoor);
+            ApplyPitchMap(tx1.coordinate.reportGlobalCoor);
         }
 
-        if (!stylus.runtime.tx1.globalCoor.valid) {
+        if (!tx1.coordinate.reportGlobalCoor.valid) {
             flow.terminal = true;
             flow.frameClass = Asa::StylusFrameClass::Tx1Missing;
             return true;
         }
 
-        if (stylus.runtime.parse.gridData.tx2.valid && stylus.runtime.tx2.peak.valid) {
-            stylus.runtime.tx2.localCoor = Solve(
-                stylus.runtime.tx2.projection,
-                m_triEdgeDim1, m_triEdgeDim2,
-                m_pitchCompDim1, m_pitchCompDim2);
-            stylus.runtime.tx2.globalCoor = stylus.runtime.tx2.localCoor;
-            if (stylus.runtime.tx2.globalCoor.valid) {
-                LocalToGlobal(stylus.runtime.tx2.globalCoor,
-                              stylus.runtime.parse.gridData.tx2.anchorRow,
-                              stylus.runtime.parse.gridData.tx2.anchorCol,
+        if (runtime.rawGrid.asaGrid.tx2.valid && tx2.feature.refinedLocalCoor.valid) {
+            tx2.coordinate.localGridCoor = tx2.feature.refinedLocalCoor;
+            tx2.coordinate.reportGlobalCoor = tx2.coordinate.localGridCoor;
+            if (tx2.coordinate.reportGlobalCoor.valid) {
+                LocalToGlobal(tx2.coordinate.reportGlobalCoor,
+                              runtime.rawGrid.asaGrid.tx2.anchorRow,
+                              runtime.rawGrid.asaGrid.tx2.anchorCol,
                               kAnchorCenterOffset);
-                if (m_pitchMapEnabled) ApplyPitchMap(stylus.runtime.tx2.globalCoor);
+                ApplyPitchMap(tx2.coordinate.reportGlobalCoor);
             }
         } else {
-            stylus.runtime.tx2.localCoor = {};
-            stylus.runtime.tx2.globalCoor = {};
+            tx2.coordinate = {};
         }
 
-        auto& signal = stylus.runtime.signal;
+        auto& signal = runtime.signal;
         signal.signalX = static_cast<uint16_t>(std::clamp<int>(
-            static_cast<int>(stylus.runtime.tx1.peakSignal), 0, 0xFFFF));
+            static_cast<int>(tx1.feature.peakSignal), 0, 0xFFFF));
         signal.signalY = static_cast<uint16_t>(std::clamp<int>(
-            static_cast<int>(stylus.runtime.tx2.peakSignal), 0, 0xFFFF));
+            static_cast<int>(tx2.feature.peakSignal), 0, 0xFFFF));
         signal.maxRawPeak = std::max(signal.signalX, signal.signalY);
-        signal.tx1Composite = signal.signalX;
-        signal.tx2Composite = signal.signalY;
         signal.recheckPassed = signal.maxRawPeak >= m_signalFloor;
         signal.recheckEnabled = true;
         signal.recheckThreshold = m_signalFloor;
         signal.recheckThresholdMulti = static_cast<uint16_t>(std::max<uint16_t>(m_signalFloor, 256));
 
         signal.dim1EdgeActive =
-            stylus.runtime.tx1.projection.peakIdxDim1 == 0 ||
-            stylus.runtime.tx1.projection.peakIdxDim1 == (Asa::kGridDim - 1);
+            tx1.feature.projection.peakIdxDim1 == 0 ||
+            tx1.feature.projection.peakIdxDim1 == (Asa::kGridDim - 1);
         signal.dim2EdgeActive =
-            stylus.runtime.tx1.projection.peakIdxDim2 == 0 ||
-            stylus.runtime.tx1.projection.peakIdxDim2 == (Asa::kGridDim - 1);
+            tx1.feature.projection.peakIdxDim2 == 0 ||
+            tx1.feature.projection.peakIdxDim2 == (Asa::kGridDim - 1);
         signal.dim1EdgeSignal = signal.dim1EdgeActive ? signal.signalX : 0;
         signal.dim2EdgeSignal = signal.dim2EdgeActive ? signal.signalY : 0;
 
-        stylus.runtime.decision.inRangeCandidate = stylus.runtime.tx1.globalCoor.valid;
+        runtime.decision.inRangeCandidate = tx1.coordinate.reportGlobalCoor.valid;
         flow.terminal = false;
         return true;
     }
@@ -123,24 +116,34 @@ public:
 private:
     static constexpr int kAnchorCenterOffset = Asa::kGridDim / 2;
     static constexpr int kInvalidCoor = 0x7FFFFFFF;
+    static constexpr bool kFactoryTriEdgeSecondaryBlend = true;
+    static constexpr TriangleEdgeParams kFactoryTriEdgeDim1 = {50, 5000, 5000};
+    static constexpr TriangleEdgeParams kFactoryTriEdgeDim2 = {50, 4500, 3700};
+    static constexpr PitchCompensation kFactoryPitchCompDim1 = {
+        {0.0, -1.7109151490662926, 0.005959771652221362, -5.113555667385272e-06}, true};
+    static constexpr PitchCompensation kFactoryPitchCompDim2 = {
+        {0.0, -1.4495726495726495, 0.004745726495726496, -3.7393162393162394e-06}, true};
+    static constexpr std::array<double, Asa::kMaxSensorDim + 1> kFactoryPitchTableDim1 = {
+        0.0,         0.984375,   1.96875,    2.953125,   3.9375,     4.921875,   5.90625,    6.890625,   7.875,
+        8.859375,  9.84375,    10.8515625, 11.859375,  12.8671875, 13.875,     14.8828125, 15.890625,  16.8984375,
+        17.90625,   18.9140625, 19.921875,  20.9296875, 21.9375,    22.9453125, 23.953125,  24.9609375, 25.96875,
+        26.9765625, 27.984375,  28.9921875, 30.0,       31.0078125, 32.015625,  33.0234375, 34.03125,   35.0390625,
+        36.046875,  37.0546875, 38.0625,    39.0703125, 40.078125,  41.0859375, 42.09375,   43.1015625, 44.109375,
+        45.1171875, 46.125,     47.1328125, 48.140625,  49.1484375, 50.15625,   51.140625,  52.125,     53.109375,
+        54.09375,   55.078125,  56.0625,    57.046875,  58.03125,   59.015625,  60.0,       60.0,       0.0,
+        0.0,        0.0,        0.0,        0.0,        0.0,        0.0,        0.0,        0.0,        0.0,
+        0.0,        0.0,        0.0,        0.0,        0.0,        0.0,        0.0,        0.0,        100.0};
+    static constexpr std::array<double, Asa::kMaxSensorDim + 1> kFactoryPitchTableDim2 = {100.0};
 
-    inline Asa::AsaCoorResult Solve(const Asa::AsaProjection& proj,
-                                    const TriangleEdgeParams& edgeDim1,
-                                    const TriangleEdgeParams& edgeDim2,
-                                    const PitchCompensation& pitchDim1,
-                                    const PitchCompensation& pitchDim2) const {
+    inline Asa::AsaCoorResult Solve(const Asa::AsaProjection& proj) const {
         Asa::AsaCoorResult result{};
-        int32_t dim1 = m_useTriangle
-            ? SolveByTriangle(proj.dim1, proj.peakIdxDim1, edgeDim1)
-            : SolveByGravity(proj.dim1, proj.peakIdxDim1);
-        int32_t dim2 = m_useTriangle
-            ? SolveByTriangle(proj.dim2, proj.peakIdxDim2, edgeDim2)
-            : SolveByGravity(proj.dim2, proj.peakIdxDim2);
+        int32_t dim1 = SolveByTriangle(proj.dim1, proj.peakIdxDim1, kFactoryTriEdgeDim1);
+        int32_t dim2 = SolveByTriangle(proj.dim2, proj.peakIdxDim2, kFactoryTriEdgeDim2);
 
         if (dim1 == kInvalidCoor || dim2 == kInvalidCoor) return result;
 
-        dim1 = ApplyPitchCompensation(dim1, pitchDim1);
-        dim2 = ApplyPitchCompensation(dim2, pitchDim2);
+        dim1 = ApplyPitchCompensation(dim1, kFactoryPitchCompDim1);
+        dim2 = ApplyPitchCompensation(dim2, kFactoryPitchCompDim2);
 
         const int32_t maxDim = Asa::kGridDim * Asa::kCoorUnit - 1;
         result.valid = true;
@@ -170,7 +173,7 @@ private:
         const int comp2 = peak - ((n1 - n2) * safeRatio) / 10;
         if (virtualNeighbor < comp2) {
             virtualNeighbor = comp2;
-            if (m_triEdgeSecondaryBlend) {
+            if (kFactoryTriEdgeSecondaryBlend) {
                 int gate = comp2;
                 const int sum = peak + n1 + comp2;
                 if (sum < threshold) gate = threshold - peak - n1;
@@ -204,59 +207,6 @@ private:
         return peakIdx * Asa::kCoorUnit + offset;
     }
 
-    inline int32_t SolveByGravity(const int32_t (&signal)[Asa::kGridDim], int peakIdx) const {
-        if (peakIdx < 0 || peakIdx >= Asa::kGridDim) return kInvalidCoor;
-
-        constexpr int kMaxBuf = 5;
-        int32_t buf[kMaxBuf] = {};
-        int bufLen = 0;
-        int startIdx = peakIdx - 1;
-
-        auto clampSig = [&](int i) -> int32_t {
-            if (i < 0 || i >= Asa::kGridDim) return 0;
-            return std::max<int32_t>(0, signal[i] - m_gravityNoiseFloor);
-        };
-
-        if (peakIdx == 0) {
-            startIdx = -1;
-            const int endIdx = std::min(peakIdx + 2, Asa::kGridDim - 1);
-            const int32_t baseline = clampSig(endIdx);
-            if (m_gravityFictitiousEdge && Asa::kGridDim >= 2) {
-                buf[bufLen++] = std::max<int32_t>(0, clampSig(1) - baseline);
-            } else { startIdx = 0; }
-            for (int i = 0; i <= endIdx; ++i)
-                buf[bufLen++] = std::max<int32_t>(0, clampSig(i) - baseline);
-        } else if (peakIdx == Asa::kGridDim - 1) {
-            startIdx = std::max(0, peakIdx - 2);
-            const int32_t baseline = clampSig(startIdx);
-            for (int i = startIdx; i < Asa::kGridDim; ++i)
-                buf[bufLen++] = std::max<int32_t>(0, clampSig(i) - baseline);
-            if (m_gravityFictitiousEdge && Asa::kGridDim >= 2)
-                buf[bufLen++] = std::max<int32_t>(0, clampSig(Asa::kGridDim - 2) - baseline);
-        } else {
-            const int32_t left = clampSig(peakIdx - 1);
-            const int32_t center = clampSig(peakIdx);
-            const int32_t right = clampSig(peakIdx + 1);
-            const int32_t baseline = std::min(left, right);
-            buf[0] = std::max<int32_t>(0, left - baseline);
-            buf[1] = std::max<int32_t>(0, center - baseline);
-            buf[2] = std::max<int32_t>(0, right - baseline);
-            bufLen = 3;
-        }
-
-        int64_t weighted = 0, total = 0;
-        for (int i = 0; i < bufLen; ++i) {
-            weighted += static_cast<int64_t>(i) * buf[i];
-            total += buf[i];
-        }
-        if (total <= 0) return kInvalidCoor;
-
-        const int32_t gravity = static_cast<int32_t>(
-            (weighted * Asa::kCoorUnit) / total) + (Asa::kCoorUnit / 2);
-        const int32_t result = startIdx * Asa::kCoorUnit + gravity;
-        return std::clamp(result, 0, (Asa::kGridDim - 1) * Asa::kCoorUnit);
-    }
-
     static inline int32_t ApplyPitchCompensation(int32_t coor, const PitchCompensation& comp) {
         if (!comp.enabled) return coor;
         const int remainder = ((coor % Asa::kCoorUnit) + Asa::kCoorUnit) % Asa::kCoorUnit;
@@ -270,8 +220,8 @@ private:
 
     void ApplyPitchMap(Asa::AsaCoorResult& coor) const {
         if (!coor.valid) return;
-        coor.dim1 = Asa::SensorPitchSizeMap(coor.dim1, m_pitchTableDim1.data(), Asa::kCoorUnit);
-        coor.dim2 = Asa::SensorPitchSizeMap(coor.dim2, m_pitchTableDim2.data(), Asa::kCoorUnit);
+        coor.dim1 = Asa::SensorPitchSizeMap(coor.dim1, kFactoryPitchTableDim1.data(), Asa::kCoorUnit);
+        coor.dim2 = Asa::SensorPitchSizeMap(coor.dim2, kFactoryPitchTableDim2.data(), Asa::kCoorUnit);
     }
 
     static inline void LocalToGlobal(Asa::AsaCoorResult& coor,

@@ -24,10 +24,12 @@ public:
         auto& stylus = frame.stylus;
         auto& flow = stylus.runtime.flow;
         auto& parse = stylus.runtime.parse;
+        auto& rawGrid = stylus.runtime.rawGrid;
 
         flow.pipelineStage = 1;
         flow.frameClass = Asa::StylusFrameClass::ShortFrame;
         parse = {};
+        rawGrid = {};
 
         const StylusBtInputSnapshot btSample = stylus.input.btSample;
         stylus.input = {};
@@ -105,12 +107,12 @@ public:
             words[i] = ReadLe16(wordPtr + i * sizeof(uint16_t));
         }
 
-        parse.gridData = Asa::ExtractGridFromSlaveWords(words.data(), static_cast<int>(words.size()));
+        rawGrid.asaGrid = Asa::ExtractGridFromSlaveWords(words.data(), static_cast<int>(words.size()));
         parse.hasCurrentStylusSignal = true;
-        stylus.input.tx1BlockValid = parse.gridData.tx1.valid;
-        stylus.input.tx2BlockValid = parse.gridData.tx2.valid;
+        stylus.input.tx1BlockValid = rawGrid.asaGrid.tx1.valid;
+        stylus.input.tx2BlockValid = rawGrid.asaGrid.tx2.valid;
 
-        if (!parse.gridData.tx1.valid) {
+        if (!rawGrid.asaGrid.tx1.valid) {
             flow.terminal = true;
             flow.frameClass = Asa::StylusFrameClass::Tx1Missing;
             parse.valid = false;
