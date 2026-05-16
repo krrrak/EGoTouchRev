@@ -19,9 +19,9 @@ public:
     int m_anchorMoveThreshold = 32;
     int m_enterCountMax = 10;
     int m_exitCountMax = 10;
-    int m_dragLimit = 128;
-    int m_enterMaxDistSq = 1024;
-    int m_exitDistSq = 4096;
+    int m_dragLimit = 32;
+    int m_enterMaxDistSq = 900;
+    int m_exitDistSq = 3600;
     int m_exitCos1000 = 700;
     int m_reverseCos1000 = -500;
 

@@ -60,6 +60,23 @@ void LoadFromSavedText(Solvers::StylusPipeline& pipeline, const std::string& sav
     }
 }
 
+void TestDefaultParametersMatchAsaTable() {
+    Solvers::Stylus::LinearFilterProcess filter;
+
+    Require(filter.m_sparseMoveThreshold == 64,
+            "default straight sparse threshold should match TSACore");
+    Require(filter.m_shortMoveThreshold == 16,
+            "default short-distance threshold should match TSACore");
+    Require(filter.m_anchorMoveThreshold == 32,
+            "default enter/exit anchor threshold should match TSACore");
+    Require(filter.m_dragLimit == 0x20,
+            "default drag limit should match ASA table +0xa62");
+    Require(filter.m_enterMaxDistSq == 0x0384,
+            "default enter max distance should match ASA table +0xa64");
+    Require(filter.m_exitDistSq == 0x0e10,
+            "default exit distance should match ASA table +0xa66");
+}
+
 void TestPressureResetReturnsRawAndStateZero() {
     Solvers::Stylus::LinearFilterProcess filter;
     FeedStraightToStable(filter);
@@ -184,6 +201,7 @@ void TestConfigRoundTrip() {
 
 int main() {
     try {
+        TestDefaultParametersMatchAsaTable();
         TestPressureResetReturnsRawAndStateZero();
         TestStraightLineEntryAndDragLimit();
         TestLargeDeviationExitsStraightLine();
