@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <cstdint>
 
 namespace Solvers::Stylus {
@@ -19,6 +18,12 @@ struct PressureHistorySample {
 
 class PressureSolver {
 public:
+    enum BtPressureMapOrderMode : int {
+        Direct = 0,
+        OnCell = 1,
+        InCell = 2,
+    };
+
     static constexpr int kHistorySize = 6;
 
     bool m_enabled = true;
@@ -32,10 +37,9 @@ public:
     int m_seg1Threshold = 11;
     int m_seg2Threshold = 127;
     int m_gainPercent = 100;
-
-    double m_kalmanProcessNoisePos = 6.0;
-    double m_kalmanProcessNoiseVel = 2.0;
-    double m_kalmanMeasureNoise = 16.0;
+    int m_btPressureMapOrderMode = Direct;
+    uint16_t m_btPressSignalSuppressEnterThreshold = 2200;
+    uint16_t m_btPressSignalSuppressExitThreshold = 3200;
 
     inline bool Process(HeatmapFrame& frame) {
         auto& stylus = frame.stylus;
@@ -48,54 +52,53 @@ public:
         pressure.btSample = stylus.input.btSample;
 
         if (!m_enabled) return true;
-        if (!decision.inRangeCandidate) { Reset(); return true; }
 
-        const bool hasSample = stylus.input.btSample.hasSample;
-        const bool hasNewRealSample =
-            hasSample && stylus.input.btSample.seq != 0 && stylus.input.btSample.seq != m_lastSeq;
+        UpdateBtPacket(stylus.input.btSample);
 
-        pressure.rawPressure = hasSample ? stylus.input.btSample.pressure : 0;
-        pressure.mappedPressure = static_cast<uint16_t>(MapPressure(pressure.rawPressure));
-        pressure.pressureIsReal = hasNewRealSample;
-        pressure.btSeq = hasSample ? stylus.input.btSample.seq : m_lastSeq;
+        pressure.btSeq = m_haveBtPacket ? m_lastSeq : 0;
+        pressure.pressureIsReal = m_haveBtPacket;
+        pressure.predictedAgeFrames = 0;
+        pressure.lookaheadHoverGate = m_haveBtPacket && m_btPressBuf[3] == 0;
 
-        if (hasNewRealSample) {
-            m_lastSeq = stylus.input.btSample.seq;
-            PredictKalman();
-            UpdateKalman(static_cast<double>(pressure.mappedPressure));
-            m_predictedAgeFrames = 0;
-        } else {
-            PredictKalman();
-            m_predictedAgeFrames = static_cast<uint8_t>(std::min<int>(255, m_predictedAgeFrames + 1));
+        if (m_haveBtPacket && !pressure.lookaheadHoverGate) {
+            pressure.rawPressure = GetPressureInMapOrder();
+            pressure.mappedPressure = static_cast<uint16_t>(MapPressure(pressure.rawPressure));
+            pressure.outputPressure = pressure.mappedPressure;
+
+            if (pressure.outputPressure != 0 && m_prevOutputPressure != 0) {
+                pressure.outputPressure = ApplyIir(pressure.outputPressure, m_prevOutputPressure);
+            }
         }
 
-        int output = static_cast<int>(std::lround(m_statePos));
-        if (hasNewRealSample && pressure.mappedPressure == 0) {
-            output = 0;
-            m_statePos = 0.0;
-            m_stateVel = 0.0;
-            ResetCovarianceForZero();
-            m_predictedAgeFrames = 0;
+        if (m_haveBtPacket) {
+            SuppressBtPressBySignal(stylus.runtime.signal, pressure);
         }
-
-        pressure.outputPressure = static_cast<uint16_t>(std::clamp(output, 0, 0x0FFF));
-        pressure.predictedAgeFrames = m_predictedAgeFrames;
 
         decision.tipDownCandidate =
-            decision.inRangeCandidate && (pressure.outputPressure >= m_tipDownPressureThreshold);
+            decision.inRangeCandidate &&
+            (pressure.outputPressure >= m_tipDownPressureThreshold);
         decision.authoritativeDown = decision.tipDownCandidate;
 
-        PushHistory({pressure.rawPressure, pressure.mappedPressure,
-                     pressure.outputPressure, pressure.btSeq, pressure.pressureIsReal});
+        PushHistory({pressure.rawPressure,
+                     pressure.mappedPressure,
+                     pressure.outputPressure,
+                     pressure.btSeq,
+                     pressure.pressureIsReal});
+
+        m_prevOutputPressure = pressure.outputPressure;
+        if (m_haveBtPacket) {
+            m_btPressCnt = static_cast<uint8_t>(m_btPressCnt + 1);
+        }
         return true;
     }
 
     inline void Reset() {
         m_lastSeq = 0;
-        m_predictedAgeFrames = 0;
-        m_statePos = 0.0;
-        m_stateVel = 0.0;
-        ResetCovariance();
+        m_haveBtPacket = false;
+        m_btPressCnt = 0;
+        m_prevOutputPressure = 0;
+        m_btPressSignalSuppressLatched = false;
+        m_btPressBuf.fill(0);
         ClearHistory();
     }
 
@@ -111,57 +114,97 @@ public:
     inline uint32_t GetLastSeq() const { return m_lastSeq; }
 
 private:
+    static constexpr std::array<uint8_t, 6> kOnCellOrder{{0, 1, 1, 2, 3, 3}};
+    static constexpr std::array<uint8_t, 4> kInCellOrder{{0, 1, 2, 3}};
+
     uint32_t m_lastSeq = 0;
-    uint8_t m_predictedAgeFrames = 0;
-    double m_statePos = 0.0;
-    double m_stateVel = 0.0;
-    double m_cov00 = 1.0, m_cov01 = 0.0, m_cov10 = 0.0, m_cov11 = 1.0;
+    bool m_haveBtPacket = false;
+    uint8_t m_btPressCnt = 0;
+    uint16_t m_prevOutputPressure = 0;
+    bool m_btPressSignalSuppressLatched = false;
+    std::array<uint16_t, 4> m_btPressBuf{};
 
     std::array<PressureHistorySample, kHistorySize> m_history{};
     int m_historyHead = 0;
     int m_historyCount = 0;
 
+    inline void UpdateBtPacket(const StylusBtInputSnapshot& btSample) {
+        if (!btSample.hasSample) return;
+        if (m_haveBtPacket && btSample.seq == m_lastSeq) return;
+        m_btPressBuf = btSample.pressure;
+        m_lastSeq = btSample.seq;
+        m_btPressCnt = 0;
+        m_haveBtPacket = true;
+    }
+
+    inline uint16_t GetPressureInMapOrder() const {
+        if (m_btPressureMapOrderMode == OnCell) {
+            if (m_btPressCnt < kOnCellOrder.size() && m_btPressBuf[0] != 0) {
+                return m_btPressBuf[kOnCellOrder[static_cast<std::size_t>(m_btPressCnt)]];
+            }
+            return m_btPressBuf[3];
+        }
+
+        if (m_btPressureMapOrderMode == InCell) {
+            if (m_btPressCnt < kInCellOrder.size() && m_btPressBuf[0] != 0) {
+                return m_btPressBuf[kInCellOrder[static_cast<std::size_t>(m_btPressCnt)]];
+            }
+            return m_btPressBuf[3];
+        }
+
+        return m_btPressBuf[3];
+    }
+
     inline int MapPressure(uint16_t rawPressure) const {
         const int x = static_cast<int>(rawPressure);
+        if (x == 0x0FFF) {
+            return 0x0FFF;
+        }
+
         int mapped = 0;
         if (x <= m_seg1Threshold) {
             mapped = (x > 1) ? 1 : x;
-        } else if (m_polyEnabled) {
-            mapped = (x <= m_seg2Threshold)
-                ? EvaluatePolynomial(m_polySeg1, x)
-                : EvaluatePolynomial(m_polySeg2, x);
-        } else {
+        } else if (!m_polyEnabled) {
             mapped = x;
+        } else if (x > m_seg2Threshold) {
+            mapped = EvaluatePolynomial(m_polySeg2, x);
+        } else {
+            mapped = EvaluatePolynomial(m_polySeg1, x);
         }
+
         mapped = mapped * std::clamp(m_gainPercent, 1, 1000) / 100;
         return std::clamp(mapped, 0, 0x0FFF);
     }
 
-    inline void PredictKalman() {
-        m_statePos += m_stateVel;
-        const double p00 = m_cov00 + m_cov01 + m_cov10 + m_cov11 + m_kalmanProcessNoisePos;
-        const double p01 = m_cov01 + m_cov11;
-        const double p10 = m_cov10 + m_cov11;
-        const double p11 = m_cov11 + m_kalmanProcessNoiseVel;
-        m_cov00 = p00; m_cov01 = p01; m_cov10 = p10; m_cov11 = p11;
+    inline uint16_t ApplyIir(uint16_t current, uint16_t previous) const {
+        const int weight = std::clamp(m_iirWeightQ8, 0, 0x7F);
+        const int mixed = previous * (0x80 - weight) + current * weight;
+        return static_cast<uint16_t>(std::clamp(mixed >> 7, 0, 0x0FFF));
     }
 
-    inline void UpdateKalman(double measurement) {
-        const double innovation = measurement - m_statePos;
-        const double s = m_cov00 + std::max(1.0, m_kalmanMeasureNoise);
-        const double k0 = m_cov00 / s;
-        const double k1 = m_cov10 / s;
-        m_statePos += k0 * innovation;
-        m_stateVel += k1 * innovation;
-        const double p00 = (1.0 - k0) * m_cov00;
-        const double p01 = (1.0 - k0) * m_cov01;
-        const double p10 = m_cov10 - k1 * m_cov00;
-        const double p11 = m_cov11 - k1 * m_cov01;
-        m_cov00 = p00; m_cov01 = p01; m_cov10 = p10; m_cov11 = p11;
-    }
+    inline void SuppressBtPressBySignal(const StylusRuntimeSignal& signal,
+                                        StylusRuntimePressure& pressure) {
+        if (pressure.outputPressure == 0) {
+            m_btPressSignalSuppressLatched = false;
+        }
 
-    inline void ResetCovariance() { m_cov00 = 1.0; m_cov01 = 0.0; m_cov10 = 0.0; m_cov11 = 1.0; }
-    inline void ResetCovarianceForZero() { m_cov00 = 0.5; m_cov01 = 0.0; m_cov10 = 0.0; m_cov11 = 0.5; }
+        if (!m_btPressSignalSuppressLatched) {
+            if (signal.signalX < m_btPressSignalSuppressEnterThreshold &&
+                !signal.dim2EdgeActive &&
+                !signal.dim1EdgeActive) {
+                m_btPressSignalSuppressLatched = true;
+                pressure.outputPressure = 0;
+            }
+            return;
+        }
+
+        if (signal.signalX > m_btPressSignalSuppressExitThreshold) {
+            m_btPressSignalSuppressLatched = false;
+            return;
+        }
+
+        pressure.outputPressure = 0;
+    }
 
     inline void ClearHistory() {
         m_historyHead = 0;

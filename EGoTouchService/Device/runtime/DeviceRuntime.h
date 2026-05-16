@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -159,6 +160,9 @@ public:
 
     /// 注入 BT MCU 压感值（由 PenBridge 线程写入，StylusPipeline 帧内读取）
     void IngestBtMcuPressure(uint16_t p);
+    void IngestBtMcuPressurePacket(const std::array<uint16_t, 4>& pressure,
+                                   uint8_t freq1,
+                                   uint8_t freq2);
 
     // Frame push callback for IPC (called after pipeline+VHF in worker loop)
     using FramePushCallback = std::function<void(const Solvers::HeatmapFrame&)>;

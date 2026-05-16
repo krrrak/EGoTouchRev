@@ -74,19 +74,7 @@ public:
             return true;
         }
 
-        if (runtime.rawGrid.asaGrid.tx2.valid && tx2.feature.refinedLocalCoor.valid) {
-            tx2.coordinate.localGridCoor = tx2.feature.refinedLocalCoor;
-            tx2.coordinate.reportGlobalCoor = tx2.coordinate.localGridCoor;
-            if (tx2.coordinate.reportGlobalCoor.valid) {
-                LocalToGlobal(tx2.coordinate.reportGlobalCoor,
-                              runtime.rawGrid.asaGrid.tx2.anchorRow,
-                              runtime.rawGrid.asaGrid.tx2.anchorCol,
-                              kAnchorCenterOffset);
-                ApplyPitchMap(tx2.coordinate.reportGlobalCoor);
-            }
-        } else {
-            tx2.coordinate = {};
-        }
+        tx2.coordinate = {};
 
         auto& signal = runtime.signal;
         signal.signalX = static_cast<uint16_t>(std::clamp<int>(

@@ -233,6 +233,11 @@ if (EGO_BUILD_TESTS)
     )
     target_link_libraries(StylusLinearFilterProcessTest PRIVATE Solvers Common)
 
+    add_executable(StylusHpp3PostPressureProcessTest
+        Tools/tests/StylusHpp3PostPressureProcessTest.cpp
+    )
+    target_link_libraries(StylusHpp3PostPressureProcessTest PRIVATE Solvers Common)
+
     add_executable(VhfReporterStylusPacketTest
         Tools/tests/VhfReporterStylusPacketTest.cpp
     )
@@ -245,6 +250,7 @@ if (EGO_BUILD_TESTS)
     add_test(NAME TouchPipelineConfigRoundTripTest COMMAND TouchPipelineConfigRoundTripTest)
     add_test(NAME ServiceProxyConfigMergeTest COMMAND ServiceProxyConfigMergeTest)
     add_test(NAME StylusLinearFilterProcessTest COMMAND StylusLinearFilterProcessTest)
+    add_test(NAME StylusHpp3PostPressureProcessTest COMMAND StylusHpp3PostPressureProcessTest)
     add_test(NAME VhfReporterStylusPacketTest COMMAND VhfReporterStylusPacketTest)
 endif()
 

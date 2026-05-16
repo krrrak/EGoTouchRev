@@ -47,9 +47,12 @@ enum class StylusPacketRoute : uint8_t {
 };
 
 struct StylusBtInputSnapshot {
-    uint16_t pressure = 0;
+    std::array<uint16_t, 4> pressure{};
     uint32_t seq = 0;
+    uint8_t freq1 = 0;
+    uint8_t freq2 = 0;
     bool hasSample = false;
+    bool hasFreq = false;
 };
 
 struct StylusInputSnapshot {
@@ -145,9 +148,24 @@ struct StylusRuntimeSignal {
     uint16_t dim2EdgeSignal = 0;
     bool overlapLike = false;
 };
+
+struct StylusRuntimeTilt {
+    bool valid = false;
+    bool anomalyDamped = false;
+    uint16_t signalRatio = 0;
+    uint16_t lenLimit = 0;
+    int32_t diffDim1 = 0;
+    int32_t diffDim2 = 0;
+    int16_t preTiltDim1 = 0;
+    int16_t preTiltDim2 = 0;
+    int16_t reportTiltDim1 = 0;
+    int16_t reportTiltDim2 = 0;
+};
+
 struct StylusRuntimePressure {
     StylusBtInputSnapshot btSample{};
     bool pressureIsReal = false;
+    bool lookaheadHoverGate = false;
     uint16_t rawPressure = 0;
     uint16_t mappedPressure = 0;
     uint16_t outputPressure = 0;
@@ -188,6 +206,7 @@ struct StylusRuntimeFrame {
     StylusTxRuntime tx1{};
     StylusTxRuntime tx2{};
     StylusRuntimeSignal signal{};
+    StylusRuntimeTilt tilt{};
     StylusRuntimePressure pressure{};
     StylusRuntimeDecision decision{};
     StylusRuntimePost post{};
@@ -315,9 +334,24 @@ struct StylusFrameData {
     StylusDiagnostics diag{};
 
     inline void SnapshotBtInput(uint16_t btPressure, uint32_t btSeq, bool hasBtSample) {
+        input.btSample.pressure.fill(0);
+        input.btSample.pressure[3] = btPressure;
+        input.btSample.seq = btSeq;
+        input.btSample.freq1 = 0;
+        input.btSample.freq2 = 0;
+        input.btSample.hasSample = hasBtSample;
+        input.btSample.hasFreq = false;
+    }
+
+    inline void SnapshotBtInput(const std::array<uint16_t, 4>& btPressure,
+                                uint32_t btSeq,
+                                bool hasBtSample) {
         input.btSample.pressure = btPressure;
         input.btSample.seq = btSeq;
+        input.btSample.freq1 = 0;
+        input.btSample.freq2 = 0;
         input.btSample.hasSample = hasBtSample;
+        input.btSample.hasFreq = false;
     }
 
     inline void ResetRuntime() {

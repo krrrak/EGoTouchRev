@@ -24,8 +24,8 @@ void Require(bool condition, const char* message) {
 HeatmapFrame MakeFrame(int32_t x,
                        int32_t y,
                        uint16_t pressure,
-                       uint16_t signalX = 1200,
-                       uint16_t signalY = 1200) {
+                       uint16_t signalX = 4000,
+                       uint16_t signalY = 4000) {
     HeatmapFrame frame{};
     auto& stylus = frame.stylus;
 
@@ -238,9 +238,70 @@ void TestLookaheadHoverGateBlocksPostPressureReinjection() {
             "lookahead hover gate should clear fake pressure state");
 }
 
+void TestBtPressSignalSuppressEnterClearsPressure() {
+    PressureSolver solver;
+    solver.m_polyEnabled = false;
+    solver.m_btPressSignalSuppressEnterThreshold = 500;
+    solver.m_btPressSignalSuppressExitThreshold = 700;
+
+    auto frame = MakeFrame(0, 0, 0, 400, 1200);
+    SetBtInput(frame, std::array<uint16_t, 4>{{200, 200, 200, 200}}, 1);
+    solver.Process(frame);
+
+    Require(frame.stylus.runtime.pressure.outputPressure == 0,
+            "low TX1 signal below enter threshold should suppress BT pressure");
+    Require(!frame.stylus.runtime.decision.tipDownCandidate,
+            "low TX1 signal below enter threshold should clear tip decision");
+}
+
+void TestBtPressSignalSuppressSkipsEdgeFrames() {
+    PressureSolver solver;
+    solver.m_polyEnabled = false;
+    solver.m_btPressSignalSuppressEnterThreshold = 500;
+    solver.m_btPressSignalSuppressExitThreshold = 700;
+
+    auto frame = MakeFrame(0, 0, 0, 400, 1200);
+    SetBtInput(frame, std::array<uint16_t, 4>{{200, 200, 200, 200}}, 1);
+    SetEdge(frame, true, false, 400, 1200);
+    solver.Process(frame);
+
+    Require(frame.stylus.runtime.pressure.outputPressure == 200,
+            "edge frames should bypass BT pressure signal suppression");
+    Require(frame.stylus.runtime.decision.tipDownCandidate,
+            "edge frames should preserve tip decision when pressure remains nonzero");
+}
+
+void TestBtPressSignalSuppressLatchExitsOnlyAboveThreshold() {
+    PressureSolver solver;
+    solver.m_polyEnabled = false;
+    solver.m_btPressSignalSuppressEnterThreshold = 500;
+    solver.m_btPressSignalSuppressExitThreshold = 700;
+
+    auto enter = MakeFrame(0, 0, 0, 400, 1200);
+    SetBtInput(enter, std::array<uint16_t, 4>{{200, 200, 200, 200}}, 1);
+    solver.Process(enter);
+    Require(enter.stylus.runtime.pressure.outputPressure == 0,
+            "enter frame should latch BT pressure suppression");
+
+    auto equalExit = MakeFrame(0, 0, 0, 700, 1200);
+    SetBtInput(equalExit, std::array<uint16_t, 4>{{200, 200, 200, 200}}, 2);
+    solver.Process(equalExit);
+    Require(equalExit.stylus.runtime.pressure.outputPressure == 0,
+            "BT pressure suppression should not clear at the exact exit threshold");
+
+    auto aboveExit = MakeFrame(0, 0, 0, 701, 1200);
+    SetBtInput(aboveExit, std::array<uint16_t, 4>{{200, 200, 200, 200}}, 3);
+    solver.Process(aboveExit);
+    Require(aboveExit.stylus.runtime.pressure.outputPressure == 200,
+            "BT pressure suppression should clear only after the exit threshold");
+    Require(aboveExit.stylus.runtime.decision.tipDownCandidate,
+            "tip decision should recover after BT pressure suppression exits");
+}
+
 void TestFakePressureDecreaseBuckets() {
     {
         Hpp3PostPressureProcess process;
+        process.m_fakePressureDecreaseEnabled = true;
         auto first = MakeFrame(0, 0, 800);
         process.Process(first);
         auto second = MakeFrame(50, 0, 0);
@@ -250,6 +311,7 @@ void TestFakePressureDecreaseBuckets() {
     }
     {
         Hpp3PostPressureProcess process;
+        process.m_fakePressureDecreaseEnabled = true;
         auto first = MakeFrame(0, 0, 800);
         process.Process(first);
         auto second = MakeFrame(200, 0, 0);
@@ -259,6 +321,7 @@ void TestFakePressureDecreaseBuckets() {
     }
     {
         Hpp3PostPressureProcess process;
+        process.m_fakePressureDecreaseEnabled = true;
         auto first = MakeFrame(0, 0, 800);
         process.Process(first);
         auto second = MakeFrame(400, 0, 0);
@@ -272,6 +335,7 @@ void TestFakePressureDecreaseBuckets() {
     }
     {
         Hpp3PostPressureProcess process;
+        process.m_fakePressureDecreaseEnabled = true;
         auto first = MakeFrame(0, 0, 800);
         process.Process(first);
         auto second = MakeFrame(600, 0, 0);
@@ -291,6 +355,7 @@ void TestFakePressureDecreaseBuckets() {
 
 void TestBtFreqShiftDebounceSuppressesFakePressure() {
     Hpp3PostPressureProcess process;
+    process.m_fakePressureDecreaseEnabled = true;
     process.m_btFreqShiftDebounceFrames = 2;
 
     auto first = MakeFrame(0, 0, 800);
@@ -377,6 +442,8 @@ void TestConfigRoundTripIncludesPostPressure() {
     pipeline.m_postPressure.m_btFreqShiftDebounceFrames = 7;
     pipeline.m_postPressure.m_pressureEdgeEnterThreshold = 1234;
     pipeline.m_postPressure.m_pressureEdgeExitThreshold = 2345;
+    pipeline.m_pressureSolver.m_btPressSignalSuppressEnterThreshold = 3456;
+    pipeline.m_pressureSolver.m_btPressSignalSuppressExitThreshold = 4567;
 
     std::ostringstream out;
     pipeline.SaveConfig(out);
@@ -388,10 +455,14 @@ void TestConfigRoundTripIncludesPostPressure() {
             "saved config should contain fake pressure flag");
     Require(saved.find("sp.btFreqShiftDebounceFrames=7") != std::string::npos,
             "saved config should contain BT freq debounce frames");
-    Require(saved.find("sp.btPressSignalSuppressEnterThreshold=1234") != std::string::npos,
+    Require(saved.find("sp.pressureEdgeEnterThreshold=1234") != std::string::npos,
             "saved config should preserve enter threshold key");
-    Require(saved.find("sp.btPressSignalSuppressExitThreshold=2345") != std::string::npos,
+    Require(saved.find("sp.pressureEdgeExitThreshold=2345") != std::string::npos,
             "saved config should preserve exit threshold key");
+    Require(saved.find("sp.btPressSignalSuppressEnterThreshold=3456") != std::string::npos,
+            "saved config should contain BT pressure suppress enter threshold");
+    Require(saved.find("sp.btPressSignalSuppressExitThreshold=4567") != std::string::npos,
+            "saved config should contain BT pressure suppress exit threshold");
 
     Solvers::StylusPipeline restored;
     LoadFromSavedText(restored, saved);
@@ -406,6 +477,10 @@ void TestConfigRoundTripIncludesPostPressure() {
             "loaded config should restore enter threshold");
     Require(restored.m_postPressure.m_pressureEdgeExitThreshold == 2345,
             "loaded config should restore exit threshold");
+    Require(restored.m_pressureSolver.m_btPressSignalSuppressEnterThreshold == 3456,
+            "loaded config should restore BT pressure suppress enter threshold");
+    Require(restored.m_pressureSolver.m_btPressSignalSuppressExitThreshold == 4567,
+            "loaded config should restore BT pressure suppress exit threshold");
 }
 
 } // namespace
@@ -419,6 +494,9 @@ int main() {
         TestPressureSolverUsesTsacoreInCellOrder();
         TestLookaheadHoverGateClearsPressureAndDecision();
         TestLookaheadHoverGateBlocksPostPressureReinjection();
+        TestBtPressSignalSuppressEnterClearsPressure();
+        TestBtPressSignalSuppressSkipsEdgeFrames();
+        TestBtPressSignalSuppressLatchExitsOnlyAboveThreshold();
         TestFakePressureDecreaseBuckets();
         TestBtFreqShiftDebounceSuppressesFakePressure();
         TestSingleEdgeLowSignalSuppressesPressure();

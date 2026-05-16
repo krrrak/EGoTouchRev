@@ -144,6 +144,12 @@ void DeviceRuntime::IngestBtMcuPressure(uint16_t p) {
     m_stylusPipeline.SetBtMcuPressure(p);
 }
 
+void DeviceRuntime::IngestBtMcuPressurePacket(const std::array<uint16_t, 4>& pressure,
+                                              uint8_t freq1,
+                                              uint8_t freq2) {
+    m_stylusPipeline.SetBtMcuPressurePacket(pressure, freq1, freq2);
+}
+
 // --------------- 命令注入 ---------------
 
 bool DeviceRuntime::SubmitExternalAfeCommand(AFE_Command type, uint8_t param) {

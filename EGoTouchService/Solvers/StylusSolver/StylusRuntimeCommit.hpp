@@ -58,6 +58,10 @@ public:
         stylus.debug.coord.coorReviserActive = stylus.runtime.post.linearFilterActive;
         stylus.debug.coord.coorRevDeltaX = static_cast<float>(stylus.runtime.post.linearFilterDeltaDim1);
         stylus.debug.coord.coorRevDeltaY = static_cast<float>(stylus.runtime.post.linearFilterDeltaDim2);
+        stylus.debug.coord.tiltDiffX = static_cast<float>(stylus.runtime.tilt.diffDim1);
+        stylus.debug.coord.tiltDiffY = static_cast<float>(stylus.runtime.tilt.diffDim2);
+        stylus.debug.coord.signalRatio = stylus.runtime.tilt.signalRatio;
+        stylus.debug.coord.tiltAnomalyDamped = stylus.runtime.tilt.anomalyDamped;
 #endif
 
         stylus.SyncLegacyFieldsFromContract();

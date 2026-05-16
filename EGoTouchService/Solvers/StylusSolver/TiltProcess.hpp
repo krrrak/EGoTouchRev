@@ -1,0 +1,344 @@
+#pragma once
+
+#include "SolverTypes.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+
+namespace Solvers::Stylus {
+
+class TiltProcess {
+public:
+    bool m_enabled = true;
+
+    inline void Reset() {
+        m_signalRatioBuf.fill(0);
+        m_signalRatioBufCnt = 0;
+        m_coordDifDim1Buf.fill(0);
+        m_coordDifDim2Buf.fill(0);
+        m_coorDifBufCnt = 0;
+        m_tiltDim1Buf.fill(0);
+        m_tiltDim2Buf.fill(0);
+        m_lastCoordDiffDim1 = 0;
+        m_lastCoordDiffDim2 = 0;
+        m_lastOutput = {};
+        m_haveLastOutput = false;
+        m_prevPressureActive = false;
+    }
+
+    static inline int16_t JitterFilter1Degree(int16_t prev, int16_t cur) {
+        if (prev < cur) return static_cast<int16_t>(cur - 1);
+        if (cur < prev) return static_cast<int16_t>(cur + 1);
+        return cur;
+    }
+
+    inline bool Process(HeatmapFrame& frame) {
+        auto& stylus = frame.stylus;
+        auto& runtime = stylus.runtime;
+        auto& tilt = runtime.tilt;
+        auto& tx1 = runtime.tx1;
+        auto& tx2 = runtime.tx2;
+
+        runtime.flow.pipelineStage = 4;
+        if (!m_enabled) {
+            tilt = {};
+            tx2.coordinate = {};
+            return true;
+        }
+
+        if (!tx1.coordinate.localGridCoor.valid) {
+            tx2.coordinate = {};
+            KeepLastFrame(tilt);
+            m_prevPressureActive = stylus.input.btSample.hasSample && stylus.input.btSample.pressure[3] != 0;
+            return true;
+        }
+
+        if (!runtime.rawGrid.asaGrid.tx2.valid || !tx2.feature.refinedLocalCoor.valid) {
+            tx2.coordinate = {};
+            KeepLastFrame(tilt);
+            m_prevPressureActive = stylus.input.btSample.hasSample && stylus.input.btSample.pressure[3] != 0;
+            return true;
+        }
+
+        if (!m_haveLastOutput || !m_prevPressureActive) {
+            ResetHistory();
+        }
+
+        tx2.coordinate.localGridCoor = tx2.feature.refinedLocalCoor;
+        tx2.coordinate.reportGlobalCoor = tx2.coordinate.localGridCoor;
+        LocalToGlobal(tx2.coordinate.reportGlobalCoor,
+                      runtime.rawGrid.asaGrid.tx2.anchorRow,
+                      runtime.rawGrid.asaGrid.tx2.anchorCol,
+                      kAnchorCenterOffset);
+
+        Asa::AsaCoorResult tx1Global = tx1.coordinate.localGridCoor;
+        LocalToGlobal(tx1Global,
+                      runtime.rawGrid.asaGrid.tx1.anchorRow,
+                      runtime.rawGrid.asaGrid.tx1.anchorCol,
+                      kAnchorCenterOffset);
+
+        const uint16_t signalRatio = GetSignalRatio(runtime.signal.signalX, runtime.signal.signalY);
+        PushSignalRatio(signalRatio);
+        const uint16_t signalRatioAvg = static_cast<uint16_t>(GetSignalRatioAverage(3));
+        const uint16_t lenLimit = GetTX1TX2LenLimit(signalRatioAvg);
+
+        const int32_t rawDiffDim1 = static_cast<int32_t>(tx2.coordinate.reportGlobalCoor.dim1) -
+                                    static_cast<int32_t>(tx1Global.dim1);
+        const int32_t rawDiffDim2 = static_cast<int32_t>(tx2.coordinate.reportGlobalCoor.dim2) -
+                                    static_cast<int32_t>(tx1Global.dim2);
+
+        int32_t diffDim1 = rawDiffDim1;
+        int32_t diffDim2 = rawDiffDim2;
+        bool anomalyDamped = false;
+
+        if (m_coorDifBufCnt == 0) {
+            if (diffDim1 > static_cast<int32_t>(lenLimit)) {
+                diffDim1 = static_cast<int32_t>(lenLimit);
+                anomalyDamped = true;
+            } else if (diffDim1 < -static_cast<int32_t>(lenLimit)) {
+                diffDim1 = -static_cast<int32_t>(lenLimit);
+                anomalyDamped = true;
+            }
+            if (diffDim2 > static_cast<int32_t>(lenLimit)) {
+                diffDim2 = static_cast<int32_t>(lenLimit);
+                anomalyDamped = true;
+            } else if (diffDim2 < -static_cast<int32_t>(lenLimit)) {
+                diffDim2 = -static_cast<int32_t>(lenLimit);
+                anomalyDamped = true;
+            }
+        } else if (diffDim1 > static_cast<int32_t>(lenLimit) || diffDim1 < -static_cast<int32_t>(lenLimit) ||
+                   diffDim2 > static_cast<int32_t>(lenLimit) || diffDim2 < -static_cast<int32_t>(lenLimit)) {
+            diffDim1 = m_lastCoordDiffDim1;
+            diffDim2 = m_lastCoordDiffDim2;
+            anomalyDamped = true;
+        }
+
+        PushCoordinateDiff(diffDim1, diffDim2);
+        diffDim1 = static_cast<int32_t>(GetCoordinateDiffAverage(5, 0));
+        diffDim2 = static_cast<int32_t>(GetCoordinateDiffAverage(5, 1));
+        m_lastCoordDiffDim1 = diffDim1;
+        m_lastCoordDiffDim2 = diffDim2;
+
+        int16_t preTiltDim1 = GetTiltByCoorDif(diffDim1, 0);
+        int16_t preTiltDim2 = GetTiltByCoorDif(diffDim2, 1);
+
+        const uint16_t diffLen = static_cast<uint16_t>(std::sqrt(
+            static_cast<double>(diffDim1) * static_cast<double>(diffDim1) +
+            static_cast<double>(diffDim2) * static_cast<double>(diffDim2)));
+        if (diffLen > lenLimit && diffLen != 0) {
+            diffDim1 = static_cast<int32_t>((static_cast<int64_t>(lenLimit) * diffDim1) / diffLen);
+            diffDim2 = static_cast<int32_t>((static_cast<int64_t>(lenLimit) * diffDim2) / diffLen);
+            preTiltDim1 = GetTiltByCoorDif(diffDim1, 0);
+            preTiltDim2 = GetTiltByCoorDif(diffDim2, 1);
+            anomalyDamped = true;
+        }
+
+        tilt.signalRatio = signalRatioAvg;
+        tilt.lenLimit = lenLimit;
+        tilt.diffDim1 = diffDim1;
+        tilt.diffDim2 = diffDim2;
+        tilt.preTiltDim1 = preTiltDim1;
+        tilt.preTiltDim2 = preTiltDim2;
+        tilt.anomalyDamped = anomalyDamped;
+        tilt.valid = true;
+
+        PushTilt(preTiltDim1, preTiltDim2);
+        if (!m_prevPressureActive || m_lastOutput.reportTiltDim1 == 0) {
+            tilt.reportTiltDim1 = preTiltDim1;
+            tilt.reportTiltDim2 = preTiltDim2;
+        } else {
+            tilt.reportTiltDim1 = static_cast<int16_t>(GetTiltAverage(5, 0));
+            tilt.reportTiltDim2 = static_cast<int16_t>(GetTiltAverage(5, 1));
+        }
+
+        tilt.reportTiltDim1 = JitterFilter1Degree(m_lastOutput.reportTiltDim1, tilt.reportTiltDim1);
+        tilt.reportTiltDim2 = JitterFilter1Degree(m_lastOutput.reportTiltDim2, tilt.reportTiltDim2);
+
+        m_lastOutput = tilt;
+        m_haveLastOutput = true;
+        m_prevPressureActive = stylus.input.btSample.hasSample && stylus.input.btSample.pressure[3] != 0;
+        return true;
+    }
+
+private:
+    static constexpr int kHistorySize = 10;
+    static constexpr int kAnchorCenterOffset = Asa::kGridDim / 2;
+    static constexpr bool kAxisRotated = false;
+    static constexpr int kDim1Length = 60;
+    static constexpr int kDim2Length = 40;
+    static constexpr int kDim1PitchSize = 0x102C;
+    static constexpr int kDim2PitchSize = 0x0A50;
+    static constexpr int kAntennaSpacing = 144;
+    static constexpr std::array<uint16_t, 4> kRatioThresholds{{40, 90, 155, 200}};
+    static constexpr std::array<uint16_t, 4> kRatioScales{{0, 850, 950, 1000}};
+
+    std::array<uint16_t, kHistorySize> m_signalRatioBuf{};
+    int m_signalRatioBufCnt = 0;
+
+    std::array<int32_t, kHistorySize> m_coordDifDim1Buf{};
+    std::array<int32_t, kHistorySize> m_coordDifDim2Buf{};
+    int m_coorDifBufCnt = 0;
+
+    std::array<int16_t, kHistorySize> m_tiltDim1Buf{};
+    std::array<int16_t, kHistorySize> m_tiltDim2Buf{};
+
+    int32_t m_lastCoordDiffDim1 = 0;
+    int32_t m_lastCoordDiffDim2 = 0;
+    StylusRuntimeTilt m_lastOutput{};
+    bool m_haveLastOutput = false;
+    bool m_prevPressureActive = false;
+
+    static inline void LocalToGlobal(Asa::AsaCoorResult& coor,
+                                     int anchorRow,
+                                     int anchorCol,
+                                     int anchorCenterOffset) {
+        if (!coor.valid) return;
+        const int32_t centerOff = static_cast<int32_t>(anchorCenterOffset) * Asa::kCoorUnit;
+        coor.dim1 += static_cast<int32_t>(anchorCol) * Asa::kCoorUnit - centerOff;
+        coor.dim2 += static_cast<int32_t>(anchorRow) * Asa::kCoorUnit - centerOff;
+    }
+
+    static inline uint16_t GetSignalRatio(uint16_t tx1Signal, uint16_t tx2Signal) {
+        if (tx1Signal == 0) return 0;
+        const uint32_t ratio = static_cast<uint32_t>(tx2Signal) * 100u / tx1Signal;
+        return static_cast<uint16_t>(std::min<uint32_t>(ratio, 500u));
+    }
+
+    inline void PushSignalRatio(uint16_t value) {
+        ++m_signalRatioBufCnt;
+        if (m_signalRatioBufCnt > kHistorySize) m_signalRatioBufCnt = kHistorySize;
+        for (int i = kHistorySize - 1; i > 0; --i) {
+            m_signalRatioBuf[static_cast<std::size_t>(i)] = m_signalRatioBuf[static_cast<std::size_t>(i - 1)];
+        }
+        m_signalRatioBuf[0] = value;
+    }
+
+    inline uint16_t GetSignalRatioAverage(int count) const {
+        const int n = std::min(count <= 0 ? 1 : count, m_signalRatioBufCnt);
+        if (n <= 0) return 0;
+        uint32_t sum = 0;
+        for (int i = 0; i < n; ++i) {
+            sum += m_signalRatioBuf[static_cast<std::size_t>(i)];
+        }
+        return static_cast<uint16_t>(sum / static_cast<uint32_t>(n));
+    }
+
+    inline uint16_t GetTX1TX2LenLimit(uint16_t signalRatio) const {
+        const int base = kAxisRotated
+            ? (kDim1Length * kAntennaSpacing * Asa::kCoorUnit) / kDim2PitchSize
+            : (kDim1Length * kAntennaSpacing * Asa::kCoorUnit) / kDim1PitchSize;
+
+        if (signalRatio <= kRatioThresholds[0]) {
+            return 0;
+        }
+        if (signalRatio > kRatioThresholds.back()) {
+            return static_cast<uint16_t>(base);
+        }
+
+        int scale = kRatioScales.back();
+        for (std::size_t i = 0; i + 1 < kRatioThresholds.size(); ++i) {
+            const uint16_t lo = kRatioThresholds[i];
+            const uint16_t hi = kRatioThresholds[i + 1];
+            if (!(lo < signalRatio && signalRatio <= hi)) continue;
+            const int loScale = static_cast<int>(kRatioScales[i]);
+            const int hiScale = static_cast<int>(kRatioScales[i + 1]);
+            const int span = static_cast<int>(hi - lo);
+            const int t = static_cast<int>(signalRatio - lo);
+            scale = loScale + (t * (hiScale - loScale)) / span;
+            break;
+        }
+
+        return static_cast<uint16_t>((base * scale) / 1000);
+    }
+
+    inline void PushCoordinateDiff(int32_t dim1, int32_t dim2) {
+        ++m_coorDifBufCnt;
+        if (m_coorDifBufCnt > kHistorySize) m_coorDifBufCnt = kHistorySize;
+        for (int i = kHistorySize - 1; i > 0; --i) {
+            m_coordDifDim1Buf[static_cast<std::size_t>(i)] = m_coordDifDim1Buf[static_cast<std::size_t>(i - 1)];
+            m_coordDifDim2Buf[static_cast<std::size_t>(i)] = m_coordDifDim2Buf[static_cast<std::size_t>(i - 1)];
+        }
+        m_coordDifDim1Buf[0] = dim1;
+        m_coordDifDim2Buf[0] = dim2;
+    }
+
+    inline int32_t GetCoordinateDiffAverage(int count, int axis) const {
+        const int n = std::min(count <= 0 ? 1 : count, m_coorDifBufCnt);
+        if (n <= 0) return 0;
+        int64_t sum = 0;
+        for (int i = 0; i < n; ++i) {
+            sum += (axis == 0) ? m_coordDifDim1Buf[static_cast<std::size_t>(i)]
+                               : m_coordDifDim2Buf[static_cast<std::size_t>(i)];
+        }
+        return static_cast<int32_t>(sum / n);
+    }
+
+    inline int16_t GetTiltByCoorDif(int32_t diff, int axis) const {
+        const int len = GetTiltAxisLength(axis);
+        if (-len < diff && diff < len) {
+            const double angle = std::asin(static_cast<double>(diff) / static_cast<double>(len));
+            return static_cast<int16_t>(static_cast<int>((angle * 180.0) / 3.141592657));
+        }
+        if (diff < len) {
+            return static_cast<int16_t>(-90);
+        }
+        return static_cast<int16_t>(90);
+    }
+
+    inline int GetTiltAxisLength(int axis) const {
+        if (!kAxisRotated) {
+            if (axis == 0) {
+                return (kDim1Length * kAntennaSpacing * Asa::kCoorUnit) / kDim1PitchSize;
+            }
+            return (kDim2Length * kAntennaSpacing * Asa::kCoorUnit) / kDim2PitchSize;
+        }
+        if (axis == 0) {
+            return (kDim1Length * kAntennaSpacing * Asa::kCoorUnit) / kDim2PitchSize;
+        }
+        return (kDim2Length * kAntennaSpacing * Asa::kCoorUnit) / kDim1PitchSize;
+    }
+
+    inline void PushTilt(int16_t dim1, int16_t dim2) {
+        for (int i = kHistorySize - 1; i > 0; --i) {
+            m_tiltDim1Buf[static_cast<std::size_t>(i)] = m_tiltDim1Buf[static_cast<std::size_t>(i - 1)];
+            m_tiltDim2Buf[static_cast<std::size_t>(i)] = m_tiltDim2Buf[static_cast<std::size_t>(i - 1)];
+        }
+        m_tiltDim1Buf[0] = dim1;
+        m_tiltDim2Buf[0] = dim2;
+    }
+
+    inline int16_t GetTiltAverage(int count, int axis) const {
+        const int n = std::min(count <= 0 ? 1 : count, m_coorDifBufCnt);
+        if (n <= 0) return 0;
+        int32_t sum = 0;
+        for (int i = 0; i < n; ++i) {
+            sum += (axis == 0) ? m_tiltDim1Buf[static_cast<std::size_t>(i)]
+                               : m_tiltDim2Buf[static_cast<std::size_t>(i)];
+        }
+        return static_cast<int16_t>(sum / n);
+    }
+
+    inline void ResetHistory() {
+        m_signalRatioBuf.fill(0);
+        m_signalRatioBufCnt = 0;
+        m_coordDifDim1Buf.fill(0);
+        m_coordDifDim2Buf.fill(0);
+        m_coorDifBufCnt = 0;
+        m_tiltDim1Buf.fill(0);
+        m_tiltDim2Buf.fill(0);
+        m_lastCoordDiffDim1 = 0;
+        m_lastCoordDiffDim2 = 0;
+    }
+
+    inline void KeepLastFrame(StylusRuntimeTilt& out) const {
+        if (!m_haveLastOutput) {
+            out = {};
+            return;
+        }
+        out = m_lastOutput;
+    }
+};
+
+} // namespace Solvers::Stylus

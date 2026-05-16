@@ -19,6 +19,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstring>
 #include <fstream>
@@ -520,9 +521,12 @@ void ServiceHost::StartPenSubsystem() {
         m_impl->m_penPressureReader->SetNotifyEvent(m_impl->m_penEvent);
     }
     m_impl->m_penPressureReader->SetPressureCallback(
-        [this](uint16_t press) {
+        [this](const Himax::Pen::PenPressureStats& stats) {
             if (m_deviceRuntime) {
-                m_deviceRuntime->IngestBtMcuPressure(press);
+                m_deviceRuntime->IngestBtMcuPressurePacket(
+                    std::array<uint16_t, 4>{stats.press[0], stats.press[1], stats.press[2], stats.press[3]},
+                    stats.freq1,
+                    stats.freq2);
             }
         });
     m_impl->m_penPressureReader->Start();

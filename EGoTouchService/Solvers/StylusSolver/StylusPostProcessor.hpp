@@ -4,6 +4,7 @@
 #include "SolverTypes.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace Solvers::Stylus {
 
@@ -75,6 +76,20 @@ public:
         post.point.tx1Y = static_cast<float>(stylus.runtime.tx1.coordinate.reportGlobalCoor.dim2);
         post.point.tx2X = static_cast<float>(stylus.runtime.tx2.coordinate.reportGlobalCoor.dim1);
         post.point.tx2Y = static_cast<float>(stylus.runtime.tx2.coordinate.reportGlobalCoor.dim2);
+        post.point.tiltValid = stylus.runtime.tilt.valid;
+        post.point.preTiltX = stylus.runtime.tilt.preTiltDim1;
+        post.point.preTiltY = stylus.runtime.tilt.preTiltDim2;
+        post.point.tiltX = stylus.runtime.tilt.reportTiltDim1;
+        post.point.tiltY = stylus.runtime.tilt.reportTiltDim2;
+        post.point.tiltMagnitude = stylus.runtime.tilt.valid
+            ? static_cast<float>(std::hypot(static_cast<double>(post.point.tiltX),
+                                            static_cast<double>(post.point.tiltY)))
+            : 0.0f;
+        post.point.tiltAzimuthDeg = stylus.runtime.tilt.valid
+            ? static_cast<float>(std::atan2(static_cast<double>(post.point.tiltY),
+                                            static_cast<double>(post.point.tiltX)) *
+                                 (180.0 / 3.14159265358979323846))
+            : 0.0f;
         post.point.confidence = post.confidence;
         return true;
     }

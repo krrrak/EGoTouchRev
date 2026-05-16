@@ -10,9 +10,9 @@ namespace Solvers::Stylus {
 class Hpp3PostPressureProcess {
 public:
     bool m_enabled = true;
-    bool m_fakePressureDecreaseEnabled = true;
-    uint16_t m_pressureEdgeEnterThreshold = 0;
-    uint16_t m_pressureEdgeExitThreshold = 0;
+    bool m_fakePressureDecreaseEnabled = false;
+    uint16_t m_pressureEdgeEnterThreshold = 1500;
+    uint16_t m_pressureEdgeExitThreshold = 3000;
     int m_btFreqShiftDebounceFrames = 2;
 
     inline bool Process(HeatmapFrame& frame) {

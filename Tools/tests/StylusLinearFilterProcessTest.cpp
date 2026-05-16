@@ -1,6 +1,7 @@
 #include "StylusSolver/CoordinateSolver.hpp"
 #include "StylusSolver/GridFeatureExtractor.hpp"
 #include "StylusSolver/LinearFilterProcess.hpp"
+#include "StylusSolver/TiltProcess.hpp"
 #include "StylusSolver/StylusPipeline.h"
 
 #include <cmath>
@@ -80,6 +81,22 @@ void SetProjectionPeak(Asa::AsaProjection& projection,
     projection.dim2[peakDim2 - 1] = leftDim2;
     projection.dim2[peakDim2] = centerDim2;
     projection.dim2[peakDim2 + 1] = rightDim2;
+}
+
+void SetTx1LinePeakFrame(Solvers::HeatmapFrame& frame,
+                         int leftCol,
+                         int leftValue,
+                         int rightCol = -1,
+                         int rightValue = 0) {
+    auto& stylus = frame.stylus;
+    stylus.runtime.parse.valid = true;
+    stylus.runtime.rawGrid.asaGrid.tx1.valid = true;
+    stylus.runtime.rawGrid.asaGrid.tx1.anchorRow = 4;
+    stylus.runtime.rawGrid.asaGrid.tx1.anchorCol = 4;
+    stylus.runtime.rawGrid.asaGrid.tx1.grid[4][leftCol] = static_cast<int16_t>(leftValue);
+    if (rightCol >= 0) {
+        stylus.runtime.rawGrid.asaGrid.tx1.grid[4][rightCol] = static_cast<int16_t>(rightValue);
+    }
 }
 
 void TestDefaultParametersMatchAsaTable() {
@@ -178,6 +195,7 @@ void TestBypassModeResetsPostFilter() {
 
 void TestConfigRoundTrip() {
     Solvers::StylusPipeline pipeline;
+    pipeline.m_tiltProcess.m_enabled = false;
     pipeline.m_post.m_linearFilter.m_enabled = false;
     pipeline.m_post.m_linearFilter.m_dragLimit = 77;
     pipeline.m_post.m_linearFilter.m_enterMaxDistSq = 88;
@@ -191,6 +209,8 @@ void TestConfigRoundTrip() {
     pipeline.SaveConfig(out);
     const std::string saved = out.str();
 
+    Require(saved.find("sp.tiltProcessEnabled=0") != std::string::npos,
+            "saved config should include tilt process enabled flag");
     Require(saved.find("sp.linearFilterEnabled=0") != std::string::npos,
             "saved config should include linear filter enabled flag");
     Require(saved.find("sp.linearFilterDragLimit=77") != std::string::npos,
@@ -201,6 +221,8 @@ void TestConfigRoundTrip() {
     Solvers::StylusPipeline loaded;
     LoadFromSavedText(loaded, saved);
 
+    Require(!loaded.m_tiltProcess.m_enabled,
+            "tilt process enabled flag should round-trip");
     Require(!loaded.m_post.m_linearFilter.m_enabled,
             "linear filter enabled flag should round-trip");
     Require(loaded.m_post.m_linearFilter.m_dragLimit == 77,
@@ -289,42 +311,191 @@ void TestTx2SeedThresholdIsGreaterThanNinetyNine() {
             "TX2 candidate value 100 should seed a peak under the factory >99 gate");
 }
 
-void TestCoordinateSolverUsesTx2RefinedCoordinate() {
+void TestTx1LinePeakFirstFrameUsesStrongestCurrentPeak() {
+    Solvers::HeatmapFrame frame{};
+    SetTx1LinePeakFrame(frame, 3, 540, 6, 520);
+
+    Solvers::Stylus::GridFeatureExtractor extractor;
+    extractor.Process(frame);
+
+    Require(frame.stylus.runtime.tx1.feature.projection.peakIdxDim1 == 3,
+            "first TX1 line peak frame should select the strongest current dim1 peak");
+    Require(frame.stylus.runtime.tx1.feature.projection.peakIdxDim2 == 4,
+            "first TX1 line peak frame should still resolve the dim2 projection peak");
+}
+
+void TestTx1LinePeakHistoryCarriesPreviousSelection() {
+    Solvers::Stylus::GridFeatureExtractor extractor;
+
+    Solvers::HeatmapFrame first{};
+    SetTx1LinePeakFrame(first, 3, 540, 6, 520);
+    extractor.Process(first);
+    Require(first.stylus.runtime.tx1.feature.projection.peakIdxDim1 == 3,
+            "history seed frame should select the initial dim1 peak");
+
+    Solvers::HeatmapFrame second{};
+    SetTx1LinePeakFrame(second, 3, 520, 6, 560);
+    extractor.Process(second);
+    Require(second.stylus.runtime.tx1.feature.projection.peakIdxDim1 == 3,
+            "TX1 line peak history should keep a nearby previous peak selected over a slightly stronger newcomer");
+}
+
+void TestTx1LinePeakHistoryResetsAfterInvalidParse() {
+    Solvers::Stylus::GridFeatureExtractor extractor;
+
+    Solvers::HeatmapFrame first{};
+    SetTx1LinePeakFrame(first, 3, 540, 6, 520);
+    extractor.Process(first);
+
+    Solvers::HeatmapFrame invalid{};
+    extractor.Process(invalid);
+
+    Solvers::HeatmapFrame second{};
+    SetTx1LinePeakFrame(second, 3, 520, 6, 560);
+    extractor.Process(second);
+    Require(second.stylus.runtime.tx1.feature.projection.peakIdxDim1 == 6,
+            "invalid parse frame should clear TX1 line peak history before the next valid frame");
+}
+
+void TestTiltJitterFilterMatchesTsacore() {
+    Require(Solvers::Stylus::TiltProcess::JitterFilter1Degree(5, 7) == 6,
+            "jitter filter should pull larger current tilt back by one degree");
+    Require(Solvers::Stylus::TiltProcess::JitterFilter1Degree(7, 5) == 6,
+            "jitter filter should pull smaller current tilt forward by one degree");
+    Require(Solvers::Stylus::TiltProcess::JitterFilter1Degree(7, 7) == 7,
+            "jitter filter should keep equal tilt unchanged");
+}
+
+void TestTiltProcessUsesTx2RefinedCoordinate() {
     Solvers::HeatmapFrame frame{};
     auto& stylus = frame.stylus;
+    stylus.SnapshotBtInput(256, 1, true);
     stylus.runtime.rawGrid.asaGrid.tx2.valid = true;
     stylus.runtime.tx1.feature.peak.valid = true;
+    stylus.runtime.tx1.feature.peakSignal = 320;
+    stylus.runtime.tx2.feature.peakSignal = 777;
     SetProjectionPeak(stylus.runtime.tx1.feature.projection,
                       4, 4,
                       100, 300, 100,
                       120, 320, 120);
     stylus.runtime.rawGrid.asaGrid.tx1.anchorRow = 4;
     stylus.runtime.rawGrid.asaGrid.tx1.anchorCol = 4;
+    stylus.runtime.rawGrid.asaGrid.tx2.anchorRow = 6;
+    stylus.runtime.rawGrid.asaGrid.tx2.anchorCol = 5;
+    stylus.runtime.tx2.feature.refinedLocalCoor = {1234, 2345, true};
+
+    Solvers::Stylus::CoordinateSolver solver;
+    Solvers::Stylus::TiltProcess tilt;
+    solver.Process(frame);
+    tilt.Process(frame);
+
+    Require(stylus.runtime.tx2.coordinate.localGridCoor.valid,
+            "tilt process should accept TX2 refined coordinate");
+    Require(stylus.runtime.tx2.coordinate.localGridCoor.dim1 == 1234 &&
+            stylus.runtime.tx2.coordinate.localGridCoor.dim2 == 2345,
+            "tilt process should consume TX2 refined coordinate directly");
+    Require(stylus.runtime.tx2.coordinate.reportGlobalCoor.dim1 == 1234 + Asa::kCoorUnit &&
+            stylus.runtime.tx2.coordinate.reportGlobalCoor.dim2 == 2345 + 2 * Asa::kCoorUnit,
+            "tilt process should map TX2 refined coordinate into anchored global grid space");
+    Require(stylus.runtime.signal.signalY == 777,
+            "coordinate solver should keep TX2 peak signal in the runtime signal block before tilt processing");
+}
+
+void TestTiltProcessProducesTiltAndPostOutput() {
+    Solvers::HeatmapFrame frame{};
+    auto& stylus = frame.stylus;
+    stylus.SnapshotBtInput(256, 1, true);
+    stylus.runtime.rawGrid.asaGrid.tx2.valid = true;
+    stylus.runtime.rawGrid.asaGrid.tx1.anchorRow = 4;
+    stylus.runtime.rawGrid.asaGrid.tx1.anchorCol = 4;
     stylus.runtime.rawGrid.asaGrid.tx2.anchorRow = 4;
     stylus.runtime.rawGrid.asaGrid.tx2.anchorCol = 4;
-    stylus.runtime.tx2.feature.refinedLocalCoor = {1234, 2345, true};
-    stylus.runtime.tx2.feature.peak.valid = false;
-    stylus.runtime.tx2.feature.projection.peakIdxDim1 = 1;
-    stylus.runtime.tx2.feature.projection.peakIdxDim2 = 1;
-    stylus.runtime.tx2.feature.projection.dim1[0] = 10;
-    stylus.runtime.tx2.feature.projection.dim1[1] = 20;
-    stylus.runtime.tx2.feature.projection.dim1[2] = 10;
-    stylus.runtime.tx2.feature.projection.dim2[0] = 10;
-    stylus.runtime.tx2.feature.projection.dim2[1] = 20;
-    stylus.runtime.tx2.feature.projection.dim2[2] = 10;
-    stylus.runtime.signal.signalX = 111;
-    stylus.runtime.tx2.feature.peakSignal = 777;
+    stylus.runtime.tx1.feature.peak.valid = true;
+    stylus.runtime.tx1.feature.peakSignal = 420;
+    stylus.runtime.tx2.feature.peakSignal = 280;
+    SetProjectionPeak(stylus.runtime.tx1.feature.projection,
+                      4, 4,
+                      120, 320, 120,
+                      120, 320, 120);
 
     Solvers::Stylus::CoordinateSolver solver;
     solver.Process(frame);
+    Require(stylus.runtime.tx1.coordinate.localGridCoor.valid,
+            "coordinate solver should produce a valid TX1 coordinate before tilt processing");
 
-    Require(stylus.runtime.tx2.coordinate.localGridCoor.valid,
-            "coordinate solver should accept TX2 refined coordinate");
-    Require(stylus.runtime.tx2.coordinate.localGridCoor.dim1 == 1234 &&
-            stylus.runtime.tx2.coordinate.localGridCoor.dim2 == 2345,
-            "coordinate solver should consume TX2 refined coordinate directly");
-    Require(stylus.runtime.signal.signalY == 777,
-            "coordinate solver should keep TX2 peak signal in the runtime signal block");
+    stylus.runtime.tx2.feature.refinedLocalCoor =
+        Coor(stylus.runtime.tx1.coordinate.localGridCoor.dim1 + 320,
+             stylus.runtime.tx1.coordinate.localGridCoor.dim2 - 192);
+
+    Solvers::Stylus::TiltProcess tilt;
+    tilt.Process(frame);
+
+    Solvers::Stylus::StylusPostProcessor post;
+    post.Process(frame);
+
+    Require(stylus.runtime.tilt.valid,
+            "tilt process should mark tilt valid when TX1/TX2 coordinates exist");
+    Require(stylus.runtime.tilt.preTiltDim1 != 0 || stylus.runtime.tilt.preTiltDim2 != 0,
+            "tilt process should generate a non-zero pre-filter tilt for a shifted TX2 coordinate");
+    Require(stylus.runtime.post.point.tiltValid,
+            "post processor should propagate tilt validity to the output point");
+    Require(stylus.runtime.post.point.tiltX == stylus.runtime.tilt.reportTiltDim1 &&
+            stylus.runtime.post.point.tiltY == stylus.runtime.tilt.reportTiltDim2,
+            "post processor should publish tilt output from the tilt runtime block");
+    Require(stylus.runtime.post.point.tiltMagnitude > 0.0f,
+            "post processor should compute a positive tilt magnitude for non-zero tilt");
+}
+
+void TestTiltProcessKeepsLastFrameWhenTx2Invalid() {
+    Solvers::Stylus::CoordinateSolver solver;
+    Solvers::Stylus::TiltProcess tilt;
+
+    Solvers::HeatmapFrame first{};
+    auto& firstStylus = first.stylus;
+    firstStylus.SnapshotBtInput(256, 1, true);
+    firstStylus.runtime.rawGrid.asaGrid.tx2.valid = true;
+    firstStylus.runtime.rawGrid.asaGrid.tx1.anchorRow = 4;
+    firstStylus.runtime.rawGrid.asaGrid.tx1.anchorCol = 4;
+    firstStylus.runtime.rawGrid.asaGrid.tx2.anchorRow = 4;
+    firstStylus.runtime.rawGrid.asaGrid.tx2.anchorCol = 4;
+    firstStylus.runtime.tx1.feature.peak.valid = true;
+    firstStylus.runtime.tx1.feature.peakSignal = 420;
+    firstStylus.runtime.tx2.feature.peakSignal = 280;
+    SetProjectionPeak(firstStylus.runtime.tx1.feature.projection,
+                      4, 4,
+                      120, 320, 120,
+                      120, 320, 120);
+    solver.Process(first);
+    firstStylus.runtime.tx2.feature.refinedLocalCoor =
+        Coor(firstStylus.runtime.tx1.coordinate.localGridCoor.dim1 + 320,
+             firstStylus.runtime.tx1.coordinate.localGridCoor.dim2 - 192);
+    tilt.Process(first);
+
+    const int16_t prevPreTiltX = firstStylus.runtime.tilt.preTiltDim1;
+    const int16_t prevPreTiltY = firstStylus.runtime.tilt.preTiltDim2;
+    const int16_t prevTiltX = firstStylus.runtime.tilt.reportTiltDim1;
+    const int16_t prevTiltY = firstStylus.runtime.tilt.reportTiltDim2;
+
+    Solvers::HeatmapFrame second{};
+    auto& secondStylus = second.stylus;
+    secondStylus.SnapshotBtInput(256, 2, true);
+    secondStylus.runtime.rawGrid.asaGrid.tx2.valid = false;
+    secondStylus.runtime.rawGrid.asaGrid.tx1.anchorRow = 4;
+    secondStylus.runtime.rawGrid.asaGrid.tx1.anchorCol = 4;
+    secondStylus.runtime.tx1.feature.peak.valid = true;
+    secondStylus.runtime.tx1.feature.peakSignal = 420;
+    SetProjectionPeak(secondStylus.runtime.tx1.feature.projection,
+                      4, 4,
+                      120, 320, 120,
+                      120, 320, 120);
+    solver.Process(second);
+    tilt.Process(second);
+
+    Require(secondStylus.runtime.tilt.preTiltDim1 == prevPreTiltX &&
+            secondStylus.runtime.tilt.preTiltDim2 == prevPreTiltY &&
+            secondStylus.runtime.tilt.reportTiltDim1 == prevTiltX &&
+            secondStylus.runtime.tilt.reportTiltDim2 == prevTiltY,
+            "tilt process should keep the previous frame tilt when TX2 is invalid");
 }
 
 } // namespace
@@ -341,7 +512,13 @@ int main() {
         TestConfigRoundTrip();
         TestGridFeatureExtractorAlignsTx2WithFactoryFlow();
         TestTx2SeedThresholdIsGreaterThanNinetyNine();
-        TestCoordinateSolverUsesTx2RefinedCoordinate();
+        TestTx1LinePeakFirstFrameUsesStrongestCurrentPeak();
+        TestTx1LinePeakHistoryCarriesPreviousSelection();
+        TestTx1LinePeakHistoryResetsAfterInvalidParse();
+        TestTiltJitterFilterMatchesTsacore();
+        TestTiltProcessUsesTx2RefinedCoordinate();
+        TestTiltProcessProducesTiltAndPostOutput();
+        TestTiltProcessKeepsLastFrameWhenTx2Invalid();
         std::cout << "[TEST] Stylus linear filter process tests passed.\n";
         return 0;
     } catch (const std::exception& ex) {
