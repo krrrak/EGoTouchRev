@@ -36,6 +36,7 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
     m_tiltProcess.Process(frame);
     m_pressureSolver.Process(frame);
     m_postPressure.Process(frame);
+    m_linearFilterProcess.Process(frame);
     m_commit.Commit(frame);
     return true;
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AsaTypes.hpp"
+#include "SolverTypes.h"
 
 #include <algorithm>
 #include <array>
@@ -24,6 +25,8 @@ public:
     int m_exitDistSq = 3600;
     int m_exitCos1000 = 700;
     int m_reverseCos1000 = -500;
+    int m_sensorDim1Limit = 61440;
+    int m_sensorDim2Limit = 40960;
 
     inline void Reset() {
         m_state = 0;
@@ -45,6 +48,32 @@ public:
         m_lastDeltaDim1 = 0;
         m_lastDeltaDim2 = 0;
         m_frame = 0;
+    }
+
+    inline void Process(HeatmapFrame& frame) {
+        auto& runtime = frame.stylus.runtime;
+        const Asa::AsaCoorResult result = Process(
+            runtime.tx1.coordinate.reportGlobalCoor,
+            runtime.pressure.outputPressure > 0,
+            m_sensorDim1Limit,
+            m_sensorDim2Limit);
+
+        runtime.post.finalCoor = result;
+        runtime.post.finalValid = result.valid;
+        runtime.post.point.x = static_cast<float>(result.dim1);
+        runtime.post.point.y = static_cast<float>(result.dim2);
+        runtime.post.linearFilterState = m_state;
+        runtime.post.linearFilterActive = m_active;
+        runtime.post.linearFilterDeltaDim1 = m_lastDeltaDim1;
+        runtime.post.linearFilterDeltaDim2 = m_lastDeltaDim2;
+#if EGOTOUCH_DIAG
+        runtime.post.lfLineFitSlopeA = static_cast<float>(m_curLineFit.slopeA);
+        runtime.post.lfLineFitInterceptB = static_cast<float>(m_curLineFit.interceptB);
+        runtime.post.lfLineFitValid = m_curLineFit.valid;
+        runtime.post.lfCos1000 = m_lastCos1000;
+        runtime.post.lfStraightBufCount = m_straightCount;
+        runtime.post.lfDragApplied = m_lastDragApplied;
+#endif
     }
 
     inline Asa::AsaCoorResult Process(const Asa::AsaCoorResult& raw,

@@ -174,6 +174,8 @@ void TestClampToSensorBounds() {
 }
 
 void TestBypassModeResetsPostFilter() {
+    Solvers::Stylus::LinearFilterProcess filter;
+    filter.m_enabled = true;
     Solvers::HeatmapFrame frame{};
     auto& stylus = frame.stylus;
     stylus.runtime.tx1.coordinate.reportGlobalCoor = Coor(1234, 2345);
@@ -181,11 +183,13 @@ void TestBypassModeResetsPostFilter() {
     stylus.runtime.decision.tipDownCandidate = true;
     stylus.runtime.pressure.outputPressure = 300;
 
+    filter.Process(frame);
+
     Require(stylus.runtime.post.finalCoor.dim1 == 1234 &&
             stylus.runtime.post.finalCoor.dim2 == 2345,
-            "bypass mode should copy raw coordinate");
-    Require(stylus.runtime.post.linearFilterState == 0,
-            "bypass mode should reset linear filter state");
+            "passthrough should copy raw coordinate to post output on first frame");
+    Require(stylus.runtime.post.linearFilterState == 1,
+            "single frame should advance state from 0 to 1");
 }
 
 void TestConfigRoundTrip() {

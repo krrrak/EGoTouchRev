@@ -66,8 +66,6 @@ public:
 
         if (pressure.outputPressure == 0) {
             ClearTransientPressureState();
-            decision.tipDownCandidate = false;
-            decision.authoritativeDown = false;
             UpdatePrevious(coor, pressure.outputPressure);
 #if EGOTOUCH_DIAG
             CaptureDebugState(pressure);
