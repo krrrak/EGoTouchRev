@@ -62,9 +62,6 @@ public:
         stylus.debug.coord.predictedAgeFrames = stylus.runtime.pressure.predictedAgeFrames;
         stylus.debug.coord.pressureIsReal = stylus.runtime.pressure.pressureIsReal;
         stylus.debug.coord.linearFilterState = stylus.runtime.post.linearFilterState;
-        stylus.debug.coord.coorReviserActive = stylus.runtime.post.linearFilterActive;
-        stylus.debug.coord.coorRevDeltaX = static_cast<float>(stylus.runtime.post.linearFilterDeltaDim1);
-        stylus.debug.coord.coorRevDeltaY = static_cast<float>(stylus.runtime.post.linearFilterDeltaDim2);
         stylus.debug.coord.tiltDiffX = static_cast<float>(stylus.runtime.tilt.diffDim1);
         stylus.debug.coord.tiltDiffY = static_cast<float>(stylus.runtime.tilt.diffDim2);
         stylus.debug.coord.signalRatio = stylus.runtime.tilt.signalRatio;
@@ -91,6 +88,10 @@ public:
         stylus.debug.coord.tiltLenLimit = stylus.runtime.tilt.lenLimit;
         stylus.debug.coord.tiltRawDiffDim1 = stylus.runtime.tilt.rawDiffDim1;
         stylus.debug.coord.tiltRawDiffDim2 = stylus.runtime.tilt.rawDiffDim2;
+        stylus.debug.coord.preTiltDim1 = stylus.runtime.tilt.preTiltDim1;
+        stylus.debug.coord.preTiltDim2 = stylus.runtime.tilt.preTiltDim2;
+        stylus.debug.coord.reportTiltDim1 = stylus.runtime.tilt.reportTiltDim1;
+        stylus.debug.coord.reportTiltDim2 = stylus.runtime.tilt.reportTiltDim2;
 
         // ── PressureSolver ──
         stylus.debug.coord.btRawPressure = stylus.runtime.pressure.rawPressure;
@@ -112,6 +113,11 @@ public:
         stylus.debug.coord.lfCos1000 = stylus.runtime.post.lfCos1000;
         stylus.debug.coord.lfStraightBufCount = stylus.runtime.post.lfStraightBufCount;
         stylus.debug.coord.lfDragApplied = stylus.runtime.post.lfDragApplied;
+
+        // ── CoorReviseProcess ──
+        stylus.debug.coord.coorReviserActive = stylus.runtime.post.coorReviseActive;
+        stylus.debug.coord.coorRevDeltaX = static_cast<float>(stylus.runtime.post.coorReviseCorrectionDim1);
+        stylus.debug.coord.coorRevDeltaY = static_cast<float>(stylus.runtime.post.coorReviseCorrectionDim2);
 #endif
 
     }

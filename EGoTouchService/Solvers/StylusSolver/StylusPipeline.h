@@ -8,6 +8,7 @@
 #include "TiltProcess.hpp"
 #include "SolverTypes.h"
 #include "StylusFrameParser.hpp"
+#include "CoorReviseProcess.hpp"
 #include "LinearFilterProcess.hpp"
 #include "StylusRuntimeCommit.hpp"
 
@@ -45,6 +46,7 @@ public:
     Stylus::PressureSolver m_pressureSolver;
     Stylus::Hpp3PostPressureProcess m_postPressure;
     Stylus::LinearFilterProcess m_linearFilterProcess;
+    Stylus::CoorReviseProcess m_coorReviseProcess;
     Stylus::StylusRuntimeCommit m_commit;
 
 private:

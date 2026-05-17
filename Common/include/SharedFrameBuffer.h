@@ -146,6 +146,10 @@ struct SharedStylusDiagnostics {
     uint16_t tiltLenLimit = 0;
     int32_t tiltRawDiffDim1 = 0;
     int32_t tiltRawDiffDim2 = 0;
+    int16_t preTiltDim1 = 0;
+    int16_t preTiltDim2 = 0;
+    int16_t reportTiltDim1 = 0;
+    int16_t reportTiltDim2 = 0;
 
     uint16_t btRawPressure = 0;
     uint16_t preIirPressure = 0;
@@ -467,6 +471,10 @@ inline void PopulateSharedFrameDataFromSolverFrame(SharedFrameData& dst,
     diag.tiltLenLimit = srcDiag.tiltLenLimit;
     diag.tiltRawDiffDim1 = srcDiag.tiltRawDiffDim1;
     diag.tiltRawDiffDim2 = srcDiag.tiltRawDiffDim2;
+    diag.preTiltDim1 = srcDiag.preTiltDim1;
+    diag.preTiltDim2 = srcDiag.preTiltDim2;
+    diag.reportTiltDim1 = srcDiag.reportTiltDim1;
+    diag.reportTiltDim2 = srcDiag.reportTiltDim2;
     diag.btRawPressure = srcDiag.btRawPressure;
     diag.preIirPressure = srcDiag.preIirPressure;
     diag.btPressSuppressActive = srcDiag.btPressSuppressActive;
@@ -641,6 +649,10 @@ inline void PopulateSolverFrameFromSharedFrameData(HeatmapFrame& out,
     diag.tiltLenLimit = src.diag.tiltLenLimit;
     diag.tiltRawDiffDim1 = src.diag.tiltRawDiffDim1;
     diag.tiltRawDiffDim2 = src.diag.tiltRawDiffDim2;
+    diag.preTiltDim1 = src.diag.preTiltDim1;
+    diag.preTiltDim2 = src.diag.preTiltDim2;
+    diag.reportTiltDim1 = src.diag.reportTiltDim1;
+    diag.reportTiltDim2 = src.diag.reportTiltDim2;
     diag.btRawPressure = src.diag.btRawPressure;
     diag.preIirPressure = src.diag.preIirPressure;
     diag.btPressSuppressActive = src.diag.btPressSuppressActive;

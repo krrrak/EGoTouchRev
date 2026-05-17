@@ -13,6 +13,7 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
     if (frame.stylus.runtime.flow.terminal) {
         m_tiltProcess.Reset();
         m_postPressure.Reset();
+        m_coorReviseProcess.Reset();
         m_commit.Commit(frame);
         return true;
     }
@@ -21,6 +22,7 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
     if (frame.stylus.runtime.flow.terminal) {
         m_tiltProcess.Reset();
         m_postPressure.Reset();
+        m_coorReviseProcess.Reset();
         m_commit.Commit(frame);
         return true;
     }
@@ -29,6 +31,7 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
     if (frame.stylus.runtime.flow.terminal) {
         m_tiltProcess.Reset();
         m_postPressure.Reset();
+        m_coorReviseProcess.Reset();
         m_commit.Commit(frame);
         return true;
     }
@@ -37,6 +40,7 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
     m_pressureSolver.Process(frame);
     m_postPressure.Process(frame);
     m_linearFilterProcess.Process(frame);
+    m_coorReviseProcess.Process(frame);
     m_commit.Commit(frame);
     return true;
 }
@@ -94,6 +98,15 @@ std::vector<ConfigParam> StylusPipeline::GetConfigSchema() const {
     schema.emplace_back("sp.signalFloor", "Signal Floor",
                         ConfigParam::Int, const_cast<uint16_t*>(&m_coordinateSolver.m_signalFloor), 0.0f, 65535.0f)
         .Module("Coordinate");
+    schema.emplace_back("sp.coorReviseEnabled", "CoorRevise Enabled",
+                        ConfigParam::Bool, const_cast<bool*>(&m_coorReviseProcess.m_enabled))
+        .Module("Data Solve");
+    schema.emplace_back("sp.coorReviseFactorDim1", "CoorRevise Factor Dim1",
+                        ConfigParam::Int, const_cast<int*>(&m_coorReviseProcess.m_factorDim1), 0.0f, 255.0f)
+        .Module("Data Solve");
+    schema.emplace_back("sp.coorReviseFactorDim2", "CoorRevise Factor Dim2",
+                        ConfigParam::Int, const_cast<int*>(&m_coorReviseProcess.m_factorDim2), 0.0f, 255.0f)
+        .Module("Data Solve");
     return schema;
 }
 
@@ -115,6 +128,9 @@ void StylusPipeline::SaveConfig(std::ostream& out) const {
     out << "sp.btPressSignalSuppressEnterThreshold=" << m_pressureSolver.m_btPressSignalSuppressEnterThreshold << "\n";
     out << "sp.btPressSignalSuppressExitThreshold=" << m_pressureSolver.m_btPressSignalSuppressExitThreshold << "\n";
     out << "sp.signalFloor=" << m_coordinateSolver.m_signalFloor << "\n";
+    out << "sp.coorReviseEnabled=" << (m_coorReviseProcess.m_enabled ? "1" : "0") << "\n";
+    out << "sp.coorReviseFactorDim1=" << m_coorReviseProcess.m_factorDim1 << "\n";
+    out << "sp.coorReviseFactorDim2=" << m_coorReviseProcess.m_factorDim2 << "\n";
 }
 
 void StylusPipeline::LoadConfig(const std::string& key, const std::string& value) {
@@ -164,6 +180,15 @@ void StylusPipeline::LoadConfig(const std::string& key, const std::string& value
             static_cast<uint16_t>(std::clamp(std::stoi(value), 0, 0xFFFF));
     } else if (key == "sp.signalFloor") {
         m_coordinateSolver.m_signalFloor = static_cast<uint16_t>(std::clamp(std::stoi(value), 0, 0xFFFF));
+    } else if (key == "sp.coorReviseEnabled") {
+        m_coorReviseProcess.m_enabled = toBool(value);
+        if (!m_coorReviseProcess.m_enabled) {
+            m_coorReviseProcess.Reset();
+        }
+    } else if (key == "sp.coorReviseFactorDim1") {
+        m_coorReviseProcess.m_factorDim1 = std::clamp(std::stoi(value), 0, 255);
+    } else if (key == "sp.coorReviseFactorDim2") {
+        m_coorReviseProcess.m_factorDim2 = std::clamp(std::stoi(value), 0, 255);
     }
 }
 

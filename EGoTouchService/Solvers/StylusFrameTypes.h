@@ -164,6 +164,7 @@ struct StylusRuntimeTilt {
 #if EGOTOUCH_DIAG
     int32_t rawDiffDim1 = 0;
     int32_t rawDiffDim2 = 0;
+    bool circularClamped = false;
 #endif
 };
 
@@ -218,6 +219,9 @@ struct StylusRuntimePost {
     int32_t lfCos1000 = 0;
     int32_t lfStraightBufCount = 0;
     int32_t lfDragApplied = 0;
+    bool coorReviseActive = false;
+    int16_t coorReviseCorrectionDim1 = 0;
+    int16_t coorReviseCorrectionDim2 = 0;
 #endif
 };
 
@@ -312,6 +316,10 @@ struct StylusDebugFrame {
         uint16_t tiltLenLimit = 0;
         int32_t tiltRawDiffDim1 = 0;
         int32_t tiltRawDiffDim2 = 0;
+        int16_t preTiltDim1 = 0;
+        int16_t preTiltDim2 = 0;
+        int16_t reportTiltDim1 = 0;
+        int16_t reportTiltDim2 = 0;
 
         // ── PressureSolver ──
         uint16_t btRawPressure = 0;

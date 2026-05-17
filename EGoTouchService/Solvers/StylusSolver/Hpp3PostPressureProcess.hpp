@@ -22,6 +22,7 @@ public:
         const auto& coor = runtime.tx1.coordinate.reportGlobalCoor;
 
         if (!m_enabled) {
+            PublishPressureToPost(runtime);
             return true;
         }
 
@@ -32,6 +33,7 @@ public:
             decision.tipDownCandidate = false;
             decision.authoritativeDown = false;
             UpdatePrevious(coor, 0);
+            PublishPressureToPost(runtime);
 #if EGOTOUCH_DIAG
             CaptureDebugState(pressure);
 #endif
@@ -67,6 +69,7 @@ public:
         if (pressure.outputPressure == 0) {
             ClearTransientPressureState();
             UpdatePrevious(coor, pressure.outputPressure);
+            PublishPressureToPost(runtime);
 #if EGOTOUCH_DIAG
             CaptureDebugState(pressure);
 #endif
@@ -75,6 +78,7 @@ public:
 
         ApplyEdgeSignalSuppression(runtime.signal, pressure, decision);
         UpdatePrevious(coor, pressure.outputPressure);
+        PublishPressureToPost(runtime);
 #if EGOTOUCH_DIAG
         CaptureDebugState(pressure);
 #endif
@@ -100,6 +104,13 @@ public:
     inline uint16_t GetPreviousOutputPressureForTest() const { return m_previousOutputPressure; }
 
 private:
+    static inline void PublishPressureToPost(StylusRuntimeFrame& runtime) {
+        runtime.post.finalPressure = runtime.pressure.outputPressure;
+        runtime.post.point.rawPressure = runtime.pressure.rawPressure;
+        runtime.post.point.mappedPressure = runtime.pressure.mappedPressure;
+        runtime.post.point.pressure = runtime.pressure.outputPressure;
+    }
+
     bool m_edgeSignalTooLowLatched = false;
     bool m_fakePressureDecreaseArmed = false;
     uint8_t m_fakePressureDecreaseFramesLeft = 0;

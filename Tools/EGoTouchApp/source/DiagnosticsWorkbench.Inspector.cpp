@@ -223,6 +223,12 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
             ImGui::Separator();
             ImGui::TextColored(ImVec4(0.8f,0.6f,1.0f,1.f), "[Tilt Diagnostics]");
             ImGui::Text("  TX1-TX2 Diff: dX=%.1f  dY=%.1f", diag.tiltDiffX, diag.tiltDiffY);
+            ImGui::Text("  Pre-Tilt Angle:  dim1=%d deg  dim2=%d deg",
+                        static_cast<int>(diag.preTiltDim1),
+                        static_cast<int>(diag.preTiltDim2));
+            ImGui::Text("  Report-Tilt Angle: dim1=%d deg  dim2=%d deg",
+                        static_cast<int>(diag.reportTiltDim1),
+                        static_cast<int>(diag.reportTiltDim2));
             if (diag.tiltAnomalyDamped)
                 ImGui::TextColored(ImVec4(1.0f,0.4f,0.4f,1), "  !! Tilt anomaly damping active");
             ImGui::Text("  Signal Ratio (TX2/TX1): %u%%", diag.signalRatio);

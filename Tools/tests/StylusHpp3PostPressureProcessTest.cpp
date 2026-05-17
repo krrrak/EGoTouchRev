@@ -1,6 +1,7 @@
 #include "StylusSolver/Hpp3PostPressureProcess.hpp"
 #include "StylusSolver/PressureSolver.hpp"
 #include "StylusSolver/StylusPipeline.h"
+#include "StylusSolver/StylusRuntimeCommit.hpp"
 
 #include <array>
 #include <cstdint>
@@ -137,6 +138,29 @@ void TestNoPressCandidateRetainsPreviousPressureOrFallback() {
 
     Require(fallback.stylus.runtime.pressure.outputPressure == 10,
             "tip candidate with no previous pressure should use fallback pressure 10");
+}
+
+void TestPostPressurePublishesFinalPressureForCommit() {
+    Hpp3PostPressureProcess process;
+    Solvers::Stylus::StylusRuntimeCommit commit;
+
+    auto frame = MakeFrame(1000, 1000, 321);
+    frame.stylus.runtime.post.finalValid = true;
+    process.Process(frame);
+    commit.Commit(frame);
+
+    Require(frame.stylus.runtime.post.finalPressure == 321,
+            "post-pressure should publish output pressure as final pressure");
+    Require(frame.stylus.runtime.post.point.rawPressure == 321,
+            "post-pressure should publish raw pressure into the solve point");
+    Require(frame.stylus.runtime.post.point.mappedPressure == 321,
+            "post-pressure should publish mapped pressure into the solve point");
+    Require(frame.stylus.runtime.post.point.pressure == 321,
+            "post-pressure should publish output pressure into the solve point");
+    Require(frame.stylus.output.pressure == 321,
+            "commit should expose final pressure through stylus output");
+    Require(frame.stylus.output.point.pressure == 321,
+            "commit should expose final pressure through the output point");
 }
 
 void TestPressureSolverUsesTsacoreOnCellOrderAndResetsOnNewPacket() {
@@ -490,6 +514,7 @@ int main() {
         TestDisabledModulePreservesRuntime();
         TestNoPressDisabledDoesNotInjectPressure();
         TestNoPressCandidateRetainsPreviousPressureOrFallback();
+        TestPostPressurePublishesFinalPressureForCommit();
         TestPressureSolverUsesTsacoreOnCellOrderAndResetsOnNewPacket();
         TestPressureSolverUsesTsacoreInCellOrder();
         TestLookaheadHoverGateClearsPressureAndDecision();

@@ -45,12 +45,14 @@ public:
         if (!m_enabled) {
             tilt = {};
             tx2.coordinate = {};
+            PublishTiltToPost(runtime.post.point, tilt);
             return true;
         }
 
         if (!tx1.coordinate.localGridCoor.valid) {
             tx2.coordinate = {};
             KeepLastFrame(tilt);
+            PublishTiltToPost(runtime.post.point, tilt);
             m_prevPressureActive = stylus.input.btSample.hasSample && stylus.input.btSample.pressure[3] != 0;
             return true;
         }
@@ -58,6 +60,7 @@ public:
         if (!runtime.rawGrid.asaGrid.tx2.valid || !tx2.feature.refinedLocalCoor.valid) {
             tx2.coordinate = {};
             KeepLastFrame(tilt);
+            PublishTiltToPost(runtime.post.point, tilt);
             m_prevPressureActive = stylus.input.btSample.hasSample && stylus.input.btSample.pressure[3] != 0;
             return true;
         }
@@ -86,10 +89,10 @@ public:
         const uint16_t signalRatioAvg = static_cast<uint16_t>(GetSignalRatioAverage(3));
         const uint16_t lenLimit = GetTX1TX2LenLimit(signalRatioAvg);
 
-        const int32_t rawDiffDim1 = static_cast<int32_t>(tx2.coordinate.reportGlobalCoor.dim1) -
-                                    static_cast<int32_t>(tx1Global.dim1);
-        const int32_t rawDiffDim2 = static_cast<int32_t>(tx2.coordinate.reportGlobalCoor.dim2) -
-                                    static_cast<int32_t>(tx1Global.dim2);
+        const int32_t rawDiffDim1 = static_cast<int32_t>(tx1Global.dim1) -
+                                    static_cast<int32_t>(tx2.coordinate.reportGlobalCoor.dim1);
+        const int32_t rawDiffDim2 = static_cast<int32_t>(tx1Global.dim2) -
+                                    static_cast<int32_t>(tx2.coordinate.reportGlobalCoor.dim2);
 #if EGOTOUCH_DIAG
         tilt.rawDiffDim1 = rawDiffDim1;
         tilt.rawDiffDim2 = rawDiffDim2;
@@ -141,6 +144,23 @@ public:
             anomalyDamped = true;
         }
 
+        // Circular clamp: scale the 2D diff vector so its Euclidean magnitude does not exceed lenLimit.
+        // Per-axis clamping alone allows √2× overshoot on the diagonal; this prevents it.
+        {
+            const int32_t sqMag = diffDim1 * diffDim1 + diffDim2 * diffDim2;
+            int32_t magnitude = IntSqrtU32(static_cast<uint32_t>(sqMag));
+            if (magnitude == 0) magnitude = 1;
+            if (static_cast<int32_t>(lenLimit) < magnitude) {
+                diffDim1 = (static_cast<int32_t>(lenLimit) * diffDim1) / magnitude;
+                diffDim2 = (static_cast<int32_t>(lenLimit) * diffDim2) / magnitude;
+                preTiltDim1 = GetTiltByCoorDif(diffDim1, 0);
+                preTiltDim2 = GetTiltByCoorDif(diffDim2, 1);
+#if EGOTOUCH_DIAG
+                tilt.circularClamped = true;
+#endif
+            }
+        }
+
         tilt.signalRatio = signalRatioAvg;
         tilt.lenLimit = lenLimit;
         tilt.diffDim1 = diffDim1;
@@ -165,6 +185,7 @@ public:
         m_lastOutput = tilt;
         m_haveLastOutput = true;
         m_prevPressureActive = stylus.input.btSample.hasSample && stylus.input.btSample.pressure[3] != 0;
+        PublishTiltToPost(runtime.post.point, tilt);
         return true;
     }
 
@@ -312,6 +333,21 @@ private:
         return (kDim2Length * kAntennaSpacing * Asa::kCoorUnit) / kDim1PitchSize;
     }
 
+    static inline int32_t IntSqrtU32(uint32_t x) {
+        int32_t result = 0;
+        int32_t bit = 0x8000;
+        while (x < static_cast<uint32_t>(bit)) {
+            bit >>= 1;
+        }
+        for (; bit != 0; bit >>= 1) {
+            result += bit;
+            if (x < static_cast<uint32_t>(result * result)) {
+                result -= bit;
+            }
+        }
+        return result;
+    }
+
     inline void PushTilt(int16_t dim1, int16_t dim2) {
         for (int i = kHistorySize - 1; i > 0; --i) {
             m_tiltDim1Buf[static_cast<std::size_t>(i)] = m_tiltDim1Buf[static_cast<std::size_t>(i - 1)];
@@ -342,6 +378,26 @@ private:
         m_tiltDim2Buf.fill(0);
         m_lastCoordDiffDim1 = 0;
         m_lastCoordDiffDim2 = 0;
+    }
+
+    inline void PublishTiltToPost(StylusSolvePoint& point, const StylusRuntimeTilt& tilt) const {
+        point.tiltValid = tilt.valid;
+        point.preTiltX = tilt.preTiltDim1;
+        point.preTiltY = tilt.preTiltDim2;
+        point.tiltX = tilt.reportTiltDim1;
+        point.tiltY = tilt.reportTiltDim2;
+        if (tilt.valid) {
+            const float tx = static_cast<float>(tilt.reportTiltDim1);
+            const float ty = static_cast<float>(tilt.reportTiltDim2);
+            point.tiltMagnitude = std::sqrt(tx * tx + ty * ty);
+            point.tiltAzimuthDeg = std::atan2(ty, tx) * 57.2957795f;
+            if (point.tiltAzimuthDeg < 0.0f) {
+                point.tiltAzimuthDeg += 360.0f;
+            }
+        } else {
+            point.tiltMagnitude = 0.0f;
+            point.tiltAzimuthDeg = 0.0f;
+        }
     }
 
     inline void KeepLastFrame(StylusRuntimeTilt& out) const {

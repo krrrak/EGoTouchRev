@@ -586,6 +586,15 @@ void TestTiltProcessKeepsLastFrameWhenTx2Invalid() {
             secondStylus.runtime.tilt.reportTiltDim1 == prevTiltX &&
             secondStylus.runtime.tilt.reportTiltDim2 == prevTiltY,
             "tilt process should keep the previous frame tilt when TX2 is invalid");
+
+    Require(secondStylus.runtime.post.point.tiltValid,
+            "post point tilt should stay valid when TX2 drops and tilt is held");
+    Require(secondStylus.runtime.post.point.tiltX == prevTiltX &&
+            secondStylus.runtime.post.point.tiltY == prevTiltY,
+            "post point tiltX/Y should match held report tilt when TX2 is invalid");
+    Require(secondStylus.runtime.post.point.preTiltX == prevPreTiltX &&
+            secondStylus.runtime.post.point.preTiltY == prevPreTiltY,
+            "post point preTiltX/Y should match held pre tilt when TX2 is invalid");
 }
 
 } // namespace
