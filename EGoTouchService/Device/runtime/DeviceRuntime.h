@@ -15,7 +15,9 @@
 #include <unordered_map>
 #include <vector>
 #include <functional>
+#include "PenButtonConfig.h"
 #include "btmcu/PenUsbTypes.h"
+#include "win32/SyntheticPenButtonInjector.h"
 
 #include "himax/HimaxChip.h"
 #include "TouchSolver/TouchPipeline.h"
@@ -151,7 +153,14 @@ public:
     // 单独的 Stylus VHF 输出开关
     void SetStylusVhfEnabled(bool v) { m_stylusVhfEnabled.store(v); }
     bool IsStylusVhfEnabled() const { return m_stylusVhfEnabled.load(); }
-    void ApplyServicePolicy(bool autoMode, bool stylusVhfEnabled);
+    void ApplyServicePolicy(bool autoMode, bool stylusVhfEnabled,
+                            PenButtonMode penButtonMode = PenButtonMode::OemCustom,
+                            PenButtonRoute penButtonRoute = PenButtonRoute::VhfOnly);
+
+    void SetPenButtonMode(PenButtonMode m) { m_penButtonMode = m; }
+    PenButtonMode GetPenButtonMode() const { return m_penButtonMode; }
+    void SetPenButtonRoute(PenButtonRoute r) { m_penButtonRoute = r; }
+    PenButtonRoute GetPenButtonRoute() const { return m_penButtonRoute; }
 
     // Pipeline/VHF façade methods for Phase 0 contract freeze.
     void LoadPipelineConfig(const std::string& key, const std::string& value);
@@ -215,6 +224,9 @@ private:
     mutable std::mutex m_penStateMu;
     std::atomic<bool> m_autoMode{false};
     std::atomic<bool> m_stylusVhfEnabled{true};
+    PenButtonMode m_penButtonMode = PenButtonMode::OemCustom;
+    PenButtonRoute m_penButtonRoute = PenButtonRoute::VhfOnly;
+    SyntheticPenButtonInjector m_synthPenButton;
     Himax::Chip m_chip;
     Solvers::TouchPipeline m_touchPipeline;
     Solvers::StylusPipeline m_stylusPipeline;

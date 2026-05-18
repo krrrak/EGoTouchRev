@@ -103,12 +103,16 @@ void ApplyTouchPipelineModuleEnableState(
 
 std::string BuildServiceConfigSection(bool modeFull,
                                       bool autoMode,
-                                      bool stylusVhfEnabled) {
+                                      bool stylusVhfEnabled,
+                                      PenButtonMode penButtonMode,
+                                      PenButtonRoute penButtonRoute) {
     std::ostringstream out;
     out << "[Service]\n";
     out << "mode=" << (modeFull ? "full" : "touch_only") << "\n";
     out << "auto_mode=" << (autoMode ? "1" : "0") << "\n";
     out << "stylus_vhf_enabled=" << (stylusVhfEnabled ? "1" : "0") << "\n";
+    out << "pen_button_mode=" << static_cast<int>(penButtonMode) << "\n";
+    out << "pen_button_route=" << static_cast<int>(penButtonRoute) << "\n";
     return out.str();
 }
 

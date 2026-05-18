@@ -97,9 +97,18 @@ DeviceRuntime::StopRequestResult DeviceRuntime::RequestStop() {
     return StopRequestResult::Stopped;
 }
 
-void DeviceRuntime::ApplyServicePolicy(bool autoMode, bool stylusVhfEnabled) {
+void DeviceRuntime::ApplyServicePolicy(bool autoMode, bool stylusVhfEnabled,
+                                       PenButtonMode penButtonMode,
+                                       PenButtonRoute penButtonRoute) {
     SetAutoMode(autoMode);
     SetStylusVhfEnabled(stylusVhfEnabled);
+    SetPenButtonMode(penButtonMode);
+    SetPenButtonRoute(penButtonRoute);
+    LOG_INFO("Runtime", __func__, "Policy",
+             "Applied: autoMode={} stylusVhfEnabled={} penBtnMode={} penBtnRoute={}",
+             autoMode, stylusVhfEnabled,
+             static_cast<int>(penButtonMode),
+             static_cast<int>(penButtonRoute));
 }
 
 bool DeviceRuntime::IsShutdownRequested() const {
@@ -492,10 +501,50 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent& ev) {
             func = m_penState.currentFunc;
         }
 
-        // 笔双击触控按键 → 触发 Barrel Button (momentary, 下一帧自动复位)
-        m_vhfReporter.SetBarrelButtonState(true);
-        LOG_INFO("Runtime", __func__, "MCU",
-                 "PenCurrentFunc: func={} → barrel button pressed (momentary).", func);
+        const auto mode = m_penButtonMode;
+        const auto route = m_penButtonRoute;
+        const bool useVhf = (route == PenButtonRoute::VhfOnly ||
+                             route == PenButtonRoute::VhfAndWin32);
+        const bool useWin32 = (route == PenButtonRoute::Win32Only ||
+                               route == PenButtonRoute::VhfAndWin32);
+
+        switch (mode) {
+        case PenButtonMode::OemCustom:
+            if (useVhf) {
+                m_vhfReporter.SetBarrelButtonState(true);
+            }
+            LOG_INFO("Runtime", __func__, "MCU",
+                     "PenCurrentFunc: func={} mode=OEM route={} vhf={} win32=0",
+                     func, static_cast<int>(route), useVhf);
+            break;
+
+        case PenButtonMode::NativeBarrel:
+            if (useVhf) {
+                m_vhfReporter.SetBarrelButtonState(true);
+            }
+            if (useWin32) {
+                POINT pt{};
+                GetCursorPos(&pt);
+                m_synthPenButton.InjectBarrelPulse(pt);
+            }
+            LOG_INFO("Runtime", __func__, "MCU",
+                     "PenCurrentFunc: func={} mode=Barrel route={} vhf={} win32={}",
+                     func, static_cast<int>(route), useVhf, useWin32);
+            break;
+
+        case PenButtonMode::NativeEraser:
+            if (useWin32) {
+                POINT pt{};
+                GetCursorPos(&pt);
+                m_synthPenButton.InjectEraserPulse(pt);
+            }
+            int f = func;
+            int w32 = useWin32 ? 1 : 0;
+            LOG_INFO("Runtime", __func__, "MCU",
+                     "PenCurrentFunc: func={} mode=Eraser vhf=0 win32={}",
+                     f, w32);
+            break;
+        }
         break;
     }
 
@@ -508,9 +557,13 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent& ev) {
             eraserState = m_penState.eraserToggle;
         }
 
-        m_vhfReporter.SetEraserState(eraserState);
+        if (m_penButtonMode == PenButtonMode::OemCustom) {
+            m_vhfReporter.SetEraserState(eraserState);
+        }
+        // 在 NativeBarrel/NativeEraser 模式下，0x7F 仅记录日志不动作
         LOG_INFO("Runtime", __func__, "MCU",
-                 "EraserToggle: state={}", eraserState);
+                 "EraserToggle: state={} mode={}",
+                 eraserState, static_cast<int>(m_penButtonMode));
         break;
     }
 

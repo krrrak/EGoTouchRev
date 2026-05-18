@@ -23,7 +23,9 @@ void ApplyTouchPipelineModuleEnableState(
     const TouchPipelineModuleEnableState& state);
 std::string BuildServiceConfigSection(bool modeFull,
                                       bool autoMode,
-                                      bool stylusVhfEnabled);
+                                      bool stylusVhfEnabled,
+                                      PenButtonMode penButtonMode = PenButtonMode::OemCustom,
+                                      PenButtonRoute penButtonRoute = PenButtonRoute::VhfOnly);
 std::string BuildTouchPipelineConfigSection(
     const Solvers::TouchPipeline& pipeline,
     const TouchPipelineModuleEnableState* persistedModuleState = nullptr);

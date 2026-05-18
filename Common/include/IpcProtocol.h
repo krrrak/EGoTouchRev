@@ -66,6 +66,20 @@ enum class ServiceConfigFieldWire : uint8_t {
     Mode = 1u << 0,
     AutoMode = 1u << 1,
     StylusVhfEnabled = 1u << 2,
+    PenButtonMode = 1u << 3,
+    PenButtonRoute = 1u << 4,
+};
+
+enum class PenButtonModeWire : uint8_t {
+    OemCustom = 0,
+    NativeBarrel = 1,
+    NativeEraser = 2,
+};
+
+enum class PenButtonRouteWire : uint8_t {
+    VhfOnly = 0,
+    Win32Only = 1,
+    VhfAndWin32 = 2,
 };
 
 constexpr uint8_t ToBits(ServiceConfigFieldWire field) noexcept {
@@ -81,12 +95,15 @@ struct ConfigSnapshotWire {
     uint8_t definedFields =
         ToBits(ServiceConfigFieldWire::Mode) |
         ToBits(ServiceConfigFieldWire::AutoMode) |
-        ToBits(ServiceConfigFieldWire::StylusVhfEnabled);
+        ToBits(ServiceConfigFieldWire::StylusVhfEnabled) |
+        ToBits(ServiceConfigFieldWire::PenButtonMode) |
+        ToBits(ServiceConfigFieldWire::PenButtonRoute);
     uint8_t desiredMode = static_cast<uint8_t>(ServiceModeWire::Full);
     uint8_t activeMode = static_cast<uint8_t>(ServiceModeWire::Full);
     uint8_t autoMode = 1;
     uint8_t stylusVhfEnabled = 1;
-    uint8_t _reserved0 = 0;
+    uint8_t penButtonMode = static_cast<uint8_t>(PenButtonModeWire::OemCustom);
+    uint8_t penButtonRoute = static_cast<uint8_t>(PenButtonRouteWire::VhfOnly);
 };
 
 struct ApplyConfigPatchRequestWire {
@@ -95,7 +112,8 @@ struct ApplyConfigPatchRequestWire {
     uint8_t desiredMode = static_cast<uint8_t>(ServiceModeWire::Full);
     uint8_t autoMode = 1;
     uint8_t stylusVhfEnabled = 1;
-    uint8_t _reserved0 = 0;
+    uint8_t penButtonMode = static_cast<uint8_t>(PenButtonModeWire::OemCustom);
+    uint8_t penButtonRoute = static_cast<uint8_t>(PenButtonRouteWire::VhfOnly);
 };
 
 struct ConfigMutationResultWire {

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "PenButtonConfig.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -56,6 +58,8 @@ private:
         ServiceMode mode = ServiceMode::Full;
         bool autoMode = true;
         bool stylusVhfEnabled = true;
+        PenButtonMode penButtonMode = PenButtonMode::OemCustom;
+        PenButtonRoute penButtonRoute = PenButtonRoute::VhfOnly;
     };
 
     struct ReloadServiceConfigResult {

@@ -214,6 +214,11 @@ struct StylusRuntimePost {
     int32_t linearFilterDeltaDim1 = 0;
     int32_t linearFilterDeltaDim2 = 0;
 
+    // ── Hpp3NoiseProcess outputs ──
+    bool noiseRejected = false;
+    uint8_t noiseRejectReason = 0;  // bit0=ratio, bit1=magnitude, bit2=jump
+    bool freqBypassed = false;       // frame bypassed by frequency gate
+
     // ── CoorSpeedProcess outputs ──
     int32_t speedValue = 0;
     int32_t speedAvgDx = 0;
@@ -235,6 +240,19 @@ struct StylusRuntimePost {
     bool coorReviseActive = false;
     int16_t coorReviseCorrectionDim1 = 0;
     int16_t coorReviseCorrectionDim2 = 0;
+
+    // ── Hpp3NoiseProcess diagnostics ──
+    bool noiseValidDim1 = true;
+    bool noiseValidDim2 = true;
+    uint8_t ratioAnomalyCntDim1 = 0;
+    uint8_t ratioAnomalyCntDim2 = 0;
+    uint32_t pressSigSumDim1 = 0;
+    uint32_t pressSigSumDim2 = 0;
+    uint16_t pressCnt = 0;
+    uint32_t pressSigAvgDim1 = 0;
+    uint32_t pressSigAvgDim2 = 0;
+    int32_t coorJumpDim1 = 0;
+    int32_t coorJumpDim2 = 0;
 
     // ── AftCoorProcess diagnostics ──
     bool lockActiveX = false;

@@ -2,6 +2,7 @@
 // ServiceProxy: App-side IPC proxy replacing RuntimeOrchestrator.
 // Connects to EGoTouchService via Named Pipe + Shared Memory.
 
+#include "PenButtonConfig.h"
 #include "IpcPipeClient.h"
 #include "SharedFrameBuffer.h"
 #include "ConfigSync.h"
@@ -114,6 +115,10 @@ public:
     void SetSrvModeFull(bool full);
     bool IsSrvStylusVhfEnabled() const { return m_srvStylusVhfEnabled.load(std::memory_order_relaxed); }
     void SetSrvStylusVhfEnabled(bool enabled);
+    PenButtonMode GetPenButtonMode() const { return m_srvPenButtonMode.load(std::memory_order_relaxed); }
+    void SetPenButtonMode(PenButtonMode m);
+    PenButtonRoute GetPenButtonRoute() const { return m_srvPenButtonRoute.load(std::memory_order_relaxed); }
+    void SetPenButtonRoute(PenButtonRoute r);
     bool IsSrvAutoMode() const { return m_srvAutoMode.load(std::memory_order_relaxed); }
     void SetSrvAutoMode(bool enabled);
 
@@ -213,6 +218,8 @@ private:
     std::atomic<bool> m_srvActiveModeFull{true};
     std::atomic<bool> m_srvAutoMode{true};
     std::atomic<bool> m_srvStylusVhfEnabled{true};
+    std::atomic<PenButtonMode> m_srvPenButtonMode{PenButtonMode::OemCustom};
+    std::atomic<PenButtonRoute> m_srvPenButtonRoute{PenButtonRoute::VhfOnly};
 };
 
 } // namespace App

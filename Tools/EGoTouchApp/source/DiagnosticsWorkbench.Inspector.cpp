@@ -157,6 +157,22 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
     if (ImGui::Checkbox("Enable Stylus Native Output", &vhfStylus)) {
         m_proxy->SetSrvStylusVhfEnabled(vhfStylus);
     }
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Pen Button Injection");
+    {
+        int curMode = static_cast<int>(m_proxy->GetPenButtonMode());
+        const char* modeItems[] = {"OEM Custom", "Native Barrel", "Native Eraser"};
+        if (ImGui::Combo("Button Mode", &curMode, modeItems, IM_ARRAYSIZE(modeItems))) {
+            m_proxy->SetPenButtonMode(static_cast<PenButtonMode>(curMode));
+        }
+
+        int curRoute = static_cast<int>(m_proxy->GetPenButtonRoute());
+        const char* routeItems[] = {"VHF Only", "Win32 Only", "VHF + Win32"};
+        if (ImGui::Combo("Injection Route", &curRoute, routeItems, IM_ARRAYSIZE(routeItems))) {
+            m_proxy->SetPenButtonRoute(static_cast<PenButtonRoute>(curRoute));
+        }
+    }
     ImGui::Separator();
 
     // -- Stylus Pipeline Config (official ASA pipeline) --

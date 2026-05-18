@@ -148,7 +148,9 @@ void TestMergePreservesUnrelatedSectionsAndReplacesTouchSections() {
 
     const std::string merged = App::MergeServiceProxyConfigSections(
         existing,
-        App::BuildServiceConfigSection(true, true, false),
+        App::BuildServiceConfigSection(true, true, false,
+                                       PenButtonMode::OemCustom,
+                                       PenButtonRoute::VhfOnly),
         App::BuildTouchPipelineConfigSection(touchPipeline),
         App::BuildStylusPipelineConfigSection(stylusPipeline));
 

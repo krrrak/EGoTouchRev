@@ -19,11 +19,15 @@ void ServiceProxy::SaveConfig() {
     const bool requestedSrvModeFull = m_srvDesiredModeFull.load(std::memory_order_relaxed);
     const bool requestedSrvAutoMode = m_srvAutoMode.load(std::memory_order_relaxed);
     const bool requestedSrvStylusVhfEnabled = m_srvStylusVhfEnabled.load(std::memory_order_relaxed);
+    const PenButtonMode requestedPenButtonMode = m_srvPenButtonMode.load(std::memory_order_relaxed);
+    const PenButtonRoute requestedPenButtonRoute = m_srvPenButtonRoute.load(std::memory_order_relaxed);
 
     std::string serviceSection = BuildServiceConfigSection(
         requestedSrvModeFull,
         requestedSrvAutoMode,
-        requestedSrvStylusVhfEnabled);
+        requestedSrvStylusVhfEnabled,
+        requestedPenButtonMode,
+        requestedPenButtonRoute);
 
     Ipc::ConfigMutationResultWire patchSummary{};
     bool havePatchSummary = false;
@@ -34,11 +38,15 @@ void ServiceProxy::SaveConfig() {
         Ipc::ApplyConfigPatchRequestWire patch{};
         patch.fieldMask = Ipc::ToBits(Ipc::ServiceConfigFieldWire::Mode) |
                           Ipc::ToBits(Ipc::ServiceConfigFieldWire::AutoMode) |
-                          Ipc::ToBits(Ipc::ServiceConfigFieldWire::StylusVhfEnabled);
+                          Ipc::ToBits(Ipc::ServiceConfigFieldWire::StylusVhfEnabled) |
+                          Ipc::ToBits(Ipc::ServiceConfigFieldWire::PenButtonMode) |
+                          Ipc::ToBits(Ipc::ServiceConfigFieldWire::PenButtonRoute);
         patch.desiredMode = static_cast<uint8_t>(requestedSrvModeFull ? Ipc::ServiceModeWire::Full
                                                                       : Ipc::ServiceModeWire::TouchOnly);
         patch.autoMode = requestedSrvAutoMode ? 1 : 0;
         patch.stylusVhfEnabled = requestedSrvStylusVhfEnabled ? 1 : 0;
+        patch.penButtonMode = static_cast<uint8_t>(requestedPenButtonMode);
+        patch.penButtonRoute = static_cast<uint8_t>(requestedPenButtonRoute);
 
         const auto applyResp = m_client.ApplyConfigPatch(patch);
         if (!applyResp.success) {
@@ -67,13 +75,19 @@ void ServiceProxy::SaveConfig() {
             const bool activeFull = snapshot.activeMode == static_cast<uint8_t>(Ipc::ServiceModeWire::Full);
             const bool autoMode = snapshot.autoMode != 0;
             const bool stylusVhfEnabled = snapshot.stylusVhfEnabled != 0;
+            const auto penButtonMode = static_cast<PenButtonMode>(snapshot.penButtonMode);
+            const auto penButtonRoute = static_cast<PenButtonRoute>(snapshot.penButtonRoute);
 
             m_srvDesiredModeFull.store(desiredFull, std::memory_order_relaxed);
             m_srvActiveModeFull.store(activeFull, std::memory_order_relaxed);
             m_srvAutoMode.store(autoMode, std::memory_order_relaxed);
             m_srvStylusVhfEnabled.store(stylusVhfEnabled, std::memory_order_relaxed);
+            m_srvPenButtonMode.store(penButtonMode, std::memory_order_relaxed);
+            m_srvPenButtonRoute.store(penButtonRoute, std::memory_order_relaxed);
 
-            serviceSection = BuildServiceConfigSection(desiredFull, autoMode, stylusVhfEnabled);
+            serviceSection = BuildServiceConfigSection(
+                desiredFull, autoMode, stylusVhfEnabled,
+                penButtonMode, penButtonRoute);
         } else {
             LOG_WARN("App", __func__, "IPC", "GetConfigSnapshot failed after patch/persist; skip local [Service] overwrite in connected mode.");
             skipLocalServiceSection = true;
@@ -174,6 +188,12 @@ void ServiceProxy::LoadConfig() {
                 std::memory_order_relaxed);
             m_srvAutoMode.store(snapshot.autoMode != 0, std::memory_order_relaxed);
             m_srvStylusVhfEnabled.store(snapshot.stylusVhfEnabled != 0, std::memory_order_relaxed);
+            m_srvPenButtonMode.store(
+                static_cast<PenButtonMode>(snapshot.penButtonMode),
+                std::memory_order_relaxed);
+            m_srvPenButtonRoute.store(
+                static_cast<PenButtonRoute>(snapshot.penButtonRoute),
+                std::memory_order_relaxed);
             loadedServiceFromSnapshot = true;
         }
     }
@@ -204,6 +224,16 @@ void ServiceProxy::LoadConfig() {
                     m_srvAutoMode.store(value == "1" || value == "true", std::memory_order_relaxed);
                 } else if (key == "stylus_vhf_enabled") {
                     m_srvStylusVhfEnabled.store(value == "1" || value == "true", std::memory_order_relaxed);
+                } else if (key == "pen_button_mode") {
+                    int ival = std::atoi(value.c_str());
+                    m_srvPenButtonMode.store(
+                        static_cast<PenButtonMode>(std::clamp(ival, 0, 2)),
+                        std::memory_order_relaxed);
+                } else if (key == "pen_button_route") {
+                    int ival = std::atoi(value.c_str());
+                    m_srvPenButtonRoute.store(
+                        static_cast<PenButtonRoute>(std::clamp(ival, 0, 2)),
+                        std::memory_order_relaxed);
                 }
             }
         } else if (section == "TouchPipeline") {
@@ -232,6 +262,16 @@ void ServiceProxy::SetSrvStylusVhfEnabled(bool enabled) {
 void ServiceProxy::SetSrvAutoMode(bool enabled) {
     if (!IsLiveControlAllowed()) return;
     m_srvAutoMode.store(enabled, std::memory_order_relaxed);
+}
+
+void ServiceProxy::SetPenButtonMode(PenButtonMode m) {
+    if (!IsLiveControlAllowed()) return;
+    m_srvPenButtonMode.store(m, std::memory_order_relaxed);
+}
+
+void ServiceProxy::SetPenButtonRoute(PenButtonRoute r) {
+    if (!IsLiveControlAllowed()) return;
+    m_srvPenButtonRoute.store(r, std::memory_order_relaxed);
 }
 
 // ── MasterParser-only mode (local) ──

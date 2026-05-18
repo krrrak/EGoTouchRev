@@ -13,11 +13,14 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
     if (frame.stylus.runtime.flow.terminal) {
         m_tiltProcess.Reset();
         m_postPressure.Reset();
+        m_edgeCoorProcess.Reset();
+        m_edgeCoorPostProcess.Reset();
         m_linearFilterProcess.Reset();
         m_coorReviseProcess.Reset();
         m_coorSpeedProcess.Reset();
         m_coorIIRProcess.Reset();
         m_aftCoorProcess.Reset();
+        m_edgeCoorProcess.CaptureFinal(frame.stylus.runtime);
         m_commit.Commit(frame);
         return true;
     }
@@ -26,11 +29,14 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
     if (frame.stylus.runtime.flow.terminal) {
         m_tiltProcess.Reset();
         m_postPressure.Reset();
+        m_edgeCoorProcess.Reset();
+        m_edgeCoorPostProcess.Reset();
         m_linearFilterProcess.Reset();
         m_coorReviseProcess.Reset();
         m_coorSpeedProcess.Reset();
         m_coorIIRProcess.Reset();
         m_aftCoorProcess.Reset();
+        m_edgeCoorProcess.CaptureFinal(frame.stylus.runtime);
         m_commit.Commit(frame);
         return true;
     }
@@ -39,11 +45,14 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
     if (frame.stylus.runtime.flow.terminal) {
         m_tiltProcess.Reset();
         m_postPressure.Reset();
+        m_edgeCoorProcess.Reset();
+        m_edgeCoorPostProcess.Reset();
         m_linearFilterProcess.Reset();
         m_coorReviseProcess.Reset();
         m_coorSpeedProcess.Reset();
         m_coorIIRProcess.Reset();
         m_aftCoorProcess.Reset();
+        m_edgeCoorProcess.CaptureFinal(frame.stylus.runtime);
         m_commit.Commit(frame);
         return true;
     }
@@ -51,11 +60,14 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
     m_tiltProcess.Process(frame);
     m_pressureSolver.Process(frame);
     m_postPressure.Process(frame);
+    m_edgeCoorProcess.Process(frame);
+    m_edgeCoorPostProcess.Process(frame);
     m_linearFilterProcess.Process(frame);
     m_coorReviseProcess.Process(frame);
     m_coorSpeedProcess.Process(frame);
     m_coorIIRProcess.Process(frame);
     m_aftCoorProcess.Process(frame);
+    m_edgeCoorProcess.CaptureFinal(frame.stylus.runtime);
     m_commit.Commit(frame);
     return true;
 }
@@ -113,6 +125,12 @@ std::vector<ConfigParam> StylusPipeline::GetConfigSchema() const {
     schema.emplace_back("sp.signalFloor", "Signal Floor",
                         ConfigParam::Int, const_cast<uint16_t*>(&m_coordinateSolver.m_signalFloor), 0.0f, 65535.0f)
         .Module("Coordinate");
+    schema.emplace_back("sp.edgeCoorEnabled", "Edge Coor Process Enabled",
+                        ConfigParam::Bool, const_cast<bool*>(&m_edgeCoorProcess.m_enabled))
+        .Module("Data Solve");
+    schema.emplace_back("sp.edgeCoorPostEnabled", "Edge Coor Post Process Enabled",
+                        ConfigParam::Bool, const_cast<bool*>(&m_edgeCoorPostProcess.m_enabled))
+        .Module("Data Solve");
     schema.emplace_back("sp.linearFilterEnabled", "Linear Filter Enabled",
                         ConfigParam::Bool, const_cast<bool*>(&m_linearFilterProcess.m_enabled))
         .Module("Data Solve");
@@ -206,6 +224,8 @@ void StylusPipeline::SaveConfig(std::ostream& out) const {
     out << "sp.btPressSignalSuppressEnterThreshold=" << m_pressureSolver.m_btPressSignalSuppressEnterThreshold << "\n";
     out << "sp.btPressSignalSuppressExitThreshold=" << m_pressureSolver.m_btPressSignalSuppressExitThreshold << "\n";
     out << "sp.signalFloor=" << m_coordinateSolver.m_signalFloor << "\n";
+    out << "sp.edgeCoorEnabled=" << (m_edgeCoorProcess.m_enabled ? "1" : "0") << "\n";
+    out << "sp.edgeCoorPostEnabled=" << (m_edgeCoorPostProcess.m_enabled ? "1" : "0") << "\n";
     out << "sp.linearFilterEnabled=" << (m_linearFilterProcess.m_enabled ? "1" : "0") << "\n";
     out << "sp.coorReviseEnabled=" << (m_coorReviseProcess.m_enabled ? "1" : "0") << "\n";
     out << "sp.coorReviseFactorDim1=" << m_coorReviseProcess.m_factorDim1 << "\n";
@@ -277,6 +297,13 @@ void StylusPipeline::LoadConfig(const std::string& key, const std::string& value
             static_cast<uint16_t>(std::clamp(std::stoi(value), 0, 0xFFFF));
     } else if (key == "sp.signalFloor") {
         m_coordinateSolver.m_signalFloor = static_cast<uint16_t>(std::clamp(std::stoi(value), 0, 0xFFFF));
+    } else if (key == "sp.edgeCoorEnabled") {
+        m_edgeCoorProcess.m_enabled = toBool(value);
+        if (!m_edgeCoorProcess.m_enabled) {
+            m_edgeCoorProcess.Reset();
+        }
+    } else if (key == "sp.edgeCoorPostEnabled") {
+        m_edgeCoorPostProcess.m_enabled = toBool(value);
     } else if (key == "sp.linearFilterEnabled") {
         m_linearFilterProcess.m_enabled = toBool(value);
         if (!m_linearFilterProcess.m_enabled) {

@@ -71,6 +71,8 @@ enum class ServiceConfigField : uint8_t {
     Mode = 0,
     AutoMode = 1,
     StylusVhfEnabled = 2,
+    PenButtonMode = 3,
+    PenButtonRoute = 4,
 };
 
 enum class DebugDerivedSourceIndex : int16_t {
@@ -87,7 +89,9 @@ constexpr uint8_t ToFieldBit(ServiceConfigField field) {
 constexpr uint8_t ToPersistedFieldBits() {
     return Ipc::ToBits(Ipc::ServiceConfigFieldWire::Mode) |
            Ipc::ToBits(Ipc::ServiceConfigFieldWire::AutoMode) |
-           Ipc::ToBits(Ipc::ServiceConfigFieldWire::StylusVhfEnabled);
+           Ipc::ToBits(Ipc::ServiceConfigFieldWire::StylusVhfEnabled) |
+           Ipc::ToBits(Ipc::ServiceConfigFieldWire::PenButtonMode) |
+           Ipc::ToBits(Ipc::ServiceConfigFieldWire::PenButtonRoute);
 }
 
 constexpr uint8_t ToWireServiceMode(ServiceMode mode) {
@@ -277,6 +281,8 @@ bool WriteCanonicalConfig(const std::string& configPath,
                           ServiceMode mode,
                           bool autoMode,
                           bool stylusVhfEnabled,
+                          PenButtonMode penButtonMode,
+                          PenButtonRoute penButtonRoute,
                           const DeviceRuntime& runtime) {
     std::ofstream out(configPath, std::ios::trunc);
     if (!out.is_open()) return false;
@@ -284,7 +290,11 @@ bool WriteCanonicalConfig(const std::string& configPath,
     out << "[Service]\n";
     out << "mode=" << ServiceModeToConfig(mode) << "\n";
     out << "auto_mode=" << (autoMode ? "1" : "0") << "\n";
-    out << "stylus_vhf_enabled=" << (stylusVhfEnabled ? "1" : "0") << "\n\n";
+    out << "stylus_vhf_enabled=" << (stylusVhfEnabled ? "1" : "0") << "\n";
+    out << "pen_button_mode="
+        << static_cast<int>(penButtonMode) << "\n";
+    out << "pen_button_route="
+        << static_cast<int>(penButtonRoute) << "\n\n";
 
     out << "[TouchPipeline]\n";
     runtime.SavePipelineConfig(out);
@@ -367,6 +377,12 @@ ServiceHost::ServiceConfigState ServiceHost::ParseServiceConfig(const std::strin
             parsed.autoMode = ParseBoolValue(val);
         } else if (key == "stylus_vhf_enabled") {
             parsed.stylusVhfEnabled = ParseBoolValue(val);
+        } else if (key == "pen_button_mode") {
+            int ival = std::atoi(val.c_str());
+            parsed.penButtonMode = static_cast<PenButtonMode>(std::clamp(ival, 0, 2));
+        } else if (key == "pen_button_route") {
+            int ival = std::atoi(val.c_str());
+            parsed.penButtonRoute = static_cast<PenButtonRoute>(std::clamp(ival, 0, 2));
         }
     }
 
@@ -376,7 +392,9 @@ ServiceHost::ServiceConfigState ServiceHost::ParseServiceConfig(const std::strin
 void ServiceHost::ApplyServiceConfigToRuntime(const ServiceConfigState& config) {
     if (!m_deviceRuntime) return;
 
-    m_deviceRuntime->ApplyServicePolicy(config.autoMode, config.stylusVhfEnabled);
+    m_deviceRuntime->ApplyServicePolicy(
+        config.autoMode, config.stylusVhfEnabled,
+        config.penButtonMode, config.penButtonRoute);
 }
 
 ServiceHost::ReloadServiceConfigResult ServiceHost::HandleReloadServiceConfig(
@@ -411,11 +429,35 @@ ServiceHost::ReloadServiceConfigResult ServiceHost::HandleReloadServiceConfig(
                  reloadedConfig.stylusVhfEnabled ? 1 : 0);
     }
 
-    if (m_deviceRuntime && (autoModeChanged || stylusVhfChanged)) {
-        m_deviceRuntime->ApplyServicePolicy(reloadedConfig.autoMode, reloadedConfig.stylusVhfEnabled);
+    const bool penButtonModeChanged = (m_configState.penButtonMode != reloadedConfig.penButtonMode);
+    const bool penButtonRouteChanged = (m_configState.penButtonRoute != reloadedConfig.penButtonRoute);
+
+    if (penButtonModeChanged) {
+        result.changedFields |= ToFieldBit(ServiceConfigField::PenButtonMode);
+        LOG_INFO("Service", __func__, "IPC",
+                 "[Service].pen_button_mode reloaded to {} (immediate apply).",
+                 static_cast<int>(reloadedConfig.penButtonMode));
+    }
+
+    if (penButtonRouteChanged) {
+        result.changedFields |= ToFieldBit(ServiceConfigField::PenButtonRoute);
+        LOG_INFO("Service", __func__, "IPC",
+                 "[Service].pen_button_route reloaded to {} (immediate apply).",
+                 static_cast<int>(reloadedConfig.penButtonRoute));
+    }
+
+    const bool policyChanged =
+        autoModeChanged || stylusVhfChanged ||
+        penButtonModeChanged || penButtonRouteChanged;
+    if (m_deviceRuntime && policyChanged) {
+        m_deviceRuntime->ApplyServicePolicy(
+            reloadedConfig.autoMode, reloadedConfig.stylusVhfEnabled,
+            reloadedConfig.penButtonMode, reloadedConfig.penButtonRoute);
         result.appliedFields |= static_cast<uint8_t>(
             (autoModeChanged ? ToFieldBit(ServiceConfigField::AutoMode) : 0u) |
-            (stylusVhfChanged ? ToFieldBit(ServiceConfigField::StylusVhfEnabled) : 0u));
+            (stylusVhfChanged ? ToFieldBit(ServiceConfigField::StylusVhfEnabled) : 0u) |
+            (penButtonModeChanged ? ToFieldBit(ServiceConfigField::PenButtonMode) : 0u) |
+            (penButtonRouteChanged ? ToFieldBit(ServiceConfigField::PenButtonRoute) : 0u));
     }
 
     m_configState = reloadedConfig;
@@ -971,7 +1013,7 @@ void ServiceHost::BuildDefaultPipeline(const std::string& configPath) {
     if (loadResult.migrated) {
         std::string backupPath;
         if (BackupConfigFile(configPath, backupPath)) {
-            if (WriteCanonicalConfig(configPath, m_configState.mode, m_configState.autoMode, m_configState.stylusVhfEnabled, *m_deviceRuntime)) {
+            if (WriteCanonicalConfig(configPath, m_configState.mode, m_configState.autoMode, m_configState.stylusVhfEnabled, m_configState.penButtonMode, m_configState.penButtonRoute, *m_deviceRuntime)) {
                 LOG_INFO("Service", __func__, "Boot",
                          "Migrated legacy pipeline config from {} and rewrote canonical sections. Backup: {}",
                          configPath, backupPath);
@@ -1048,6 +1090,8 @@ void ServiceHost::HandleIpcGetConfigSnapshot(Ipc::IpcResponse& resp) {
     snapshot.activeMode = ToWireServiceMode(m_runtimeMode);
     snapshot.autoMode = m_configState.autoMode ? 1 : 0;
     snapshot.stylusVhfEnabled = m_configState.stylusVhfEnabled ? 1 : 0;
+    snapshot.penButtonMode = static_cast<uint8_t>(m_configState.penButtonMode);
+    snapshot.penButtonRoute = static_cast<uint8_t>(m_configState.penButtonRoute);
 
     std::memcpy(resp.data, &snapshot, sizeof(snapshot));
     resp.dataLen = static_cast<uint16_t>(sizeof(snapshot));
@@ -1084,6 +1128,14 @@ void ServiceHost::HandleIpcApplyConfigPatch(const Ipc::IpcRequest& req, Ipc::Ipc
     if (Ipc::HasField(patch.fieldMask, Ipc::ServiceConfigFieldWire::StylusVhfEnabled)) {
         desired.stylusVhfEnabled = patch.stylusVhfEnabled != 0;
     }
+    if (Ipc::HasField(patch.fieldMask, Ipc::ServiceConfigFieldWire::PenButtonMode)) {
+        desired.penButtonMode = static_cast<PenButtonMode>(
+            std::clamp(static_cast<int>(patch.penButtonMode), 0, 2));
+    }
+    if (Ipc::HasField(patch.fieldMask, Ipc::ServiceConfigFieldWire::PenButtonRoute)) {
+        desired.penButtonRoute = static_cast<PenButtonRoute>(
+            std::clamp(static_cast<int>(patch.penButtonRoute), 0, 2));
+    }
 
     const auto reloadState = HandleReloadServiceConfig(desired);
 
@@ -1103,7 +1155,7 @@ void ServiceHost::HandleIpcPersistConfig(Ipc::IpcResponse& resp) {
         return;
     }
 
-    if (!WriteCanonicalConfig(kConfigPath, m_configState.mode, m_configState.autoMode, m_configState.stylusVhfEnabled, *m_deviceRuntime)) {
+    if (!WriteCanonicalConfig(kConfigPath, m_configState.mode, m_configState.autoMode, m_configState.stylusVhfEnabled, m_configState.penButtonMode, m_configState.penButtonRoute, *m_deviceRuntime)) {
         Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InternalError);
         return;
     }
@@ -1142,7 +1194,7 @@ void ServiceHost::HandleIpcReloadConfig(Ipc::IpcResponse& resp) {
     if (loadResult.migrated || missingCanonicalServiceSection) {
         std::string backupPath;
         if (BackupConfigFile(kConfigPath, backupPath)) {
-            if (WriteCanonicalConfig(kConfigPath, m_configState.mode, m_configState.autoMode, m_configState.stylusVhfEnabled, *m_deviceRuntime)) {
+            if (WriteCanonicalConfig(kConfigPath, m_configState.mode, m_configState.autoMode, m_configState.stylusVhfEnabled, m_configState.penButtonMode, m_configState.penButtonRoute, *m_deviceRuntime)) {
                 LOG_INFO("Service", __func__, "IPC",
                          "Reloaded legacy config from {} and rewrote canonical sections. Backup: {}",
                          kConfigPath, backupPath);
