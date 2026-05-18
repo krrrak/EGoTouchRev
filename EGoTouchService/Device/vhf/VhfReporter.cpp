@@ -207,6 +207,8 @@ VhfReporter::StylusDispatchPacket VhfReporter::BuildStylusPacket(
         config.sensorCols = m_stylusSensorCols;
         config.emitWhenInvalid = m_emitStylusPacketWhenInvalid;
     }
+    config.barrelButton = m_barrelButtonState.exchange(
+        false, std::memory_order_relaxed);
 
     StylusDispatchPacket built{};
     built.packet = VhfStylusPacket::Build(stylus, config);

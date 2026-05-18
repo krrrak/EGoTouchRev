@@ -51,6 +51,10 @@ public:
         m_eraserState.store(v, std::memory_order_relaxed);
     }
 
+    void SetBarrelButtonState(bool pressed) {
+        m_barrelButtonState.store(pressed, std::memory_order_relaxed);
+    }
+
     bool IsDeviceOpen() const;
     void Close();
 
@@ -84,6 +88,7 @@ private:
     std::atomic<bool> m_transpose{false};
     std::atomic<bool> m_hadTouchLastFrame{false};
     std::atomic<uint8_t> m_eraserState{0};
+    std::atomic<bool> m_barrelButtonState{false};
 
     int m_stylusSensorRows = 40;
     int m_stylusSensorCols = 60;

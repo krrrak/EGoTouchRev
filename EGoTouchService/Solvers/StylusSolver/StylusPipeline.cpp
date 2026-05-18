@@ -15,6 +15,9 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
         m_postPressure.Reset();
         m_linearFilterProcess.Reset();
         m_coorReviseProcess.Reset();
+        m_coorSpeedProcess.Reset();
+        m_coorIIRProcess.Reset();
+        m_aftCoorProcess.Reset();
         m_commit.Commit(frame);
         return true;
     }
@@ -25,6 +28,9 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
         m_postPressure.Reset();
         m_linearFilterProcess.Reset();
         m_coorReviseProcess.Reset();
+        m_coorSpeedProcess.Reset();
+        m_coorIIRProcess.Reset();
+        m_aftCoorProcess.Reset();
         m_commit.Commit(frame);
         return true;
     }
@@ -35,6 +41,9 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
         m_postPressure.Reset();
         m_linearFilterProcess.Reset();
         m_coorReviseProcess.Reset();
+        m_coorSpeedProcess.Reset();
+        m_coorIIRProcess.Reset();
+        m_aftCoorProcess.Reset();
         m_commit.Commit(frame);
         return true;
     }
@@ -44,6 +53,9 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
     m_postPressure.Process(frame);
     m_linearFilterProcess.Process(frame);
     m_coorReviseProcess.Process(frame);
+    m_coorSpeedProcess.Process(frame);
+    m_coorIIRProcess.Process(frame);
+    m_aftCoorProcess.Process(frame);
     m_commit.Commit(frame);
     return true;
 }
@@ -113,6 +125,66 @@ std::vector<ConfigParam> StylusPipeline::GetConfigSchema() const {
     schema.emplace_back("sp.coorReviseFactorDim2", "CoorRevise Factor Dim2",
                         ConfigParam::Int, const_cast<int*>(&m_coorReviseProcess.m_factorDim2), 0.0f, 255.0f)
         .Module("Data Solve");
+
+    // ── CoorSpeedProcess ──
+    schema.emplace_back("sp.coorSpeedEnabled", "Coor Speed Enabled",
+                        ConfigParam::Bool, const_cast<bool*>(&m_coorSpeedProcess.m_enabled))
+        .Module("Data Solve");
+
+    // ── CoorIIRProcess ──
+    schema.emplace_back("sp.iirFilterEnabled", "IIR Filter Enabled",
+                        ConfigParam::Bool, const_cast<bool*>(&m_coorIIRProcess.m_enabled))
+        .Module("Data Solve");
+    schema.emplace_back("sp.iirCoefLowInBand", "IIR Coef Low In-Band",
+                        ConfigParam::Int, const_cast<uint8_t*>(&m_coorIIRProcess.m_coefLowInBand), 0.0f, 255.0f)
+        .Module("Data Solve");
+    schema.emplace_back("sp.iirCoefHighInBand", "IIR Coef High In-Band",
+                        ConfigParam::Int, const_cast<uint8_t*>(&m_coorIIRProcess.m_coefHighInBand), 0.0f, 255.0f)
+        .Module("Data Solve");
+    schema.emplace_back("sp.iirSpeedTholdInBand", "IIR Speed Thold In-Band",
+                        ConfigParam::Int, const_cast<uint8_t*>(&m_coorIIRProcess.m_speedTholdInBand), 0.0f, 255.0f)
+        .Module("Data Solve");
+    schema.emplace_back("sp.iirCoefLowEdge", "IIR Coef Low Edge",
+                        ConfigParam::Int, const_cast<uint8_t*>(&m_coorIIRProcess.m_coefLowEdge), 0.0f, 255.0f)
+        .Module("Data Solve");
+    schema.emplace_back("sp.iirCoefHighEdge", "IIR Coef High Edge",
+                        ConfigParam::Int, const_cast<uint8_t*>(&m_coorIIRProcess.m_coefHighEdge), 0.0f, 255.0f)
+        .Module("Data Solve");
+    schema.emplace_back("sp.iirSpeedTholdEdge", "IIR Speed Thold Edge",
+                        ConfigParam::Int, const_cast<uint8_t*>(&m_coorIIRProcess.m_speedTholdEdge), 0.0f, 255.0f)
+        .Module("Data Solve");
+    schema.emplace_back("sp.iirSpeedMax", "IIR Speed Max",
+                        ConfigParam::Int, const_cast<int*>(&m_coorIIRProcess.m_speedMax), 0.0f, 1000.0f)
+        .Module("Data Solve");
+    schema.emplace_back("sp.iirMaxCoef", "IIR Max Coef (Denominator)",
+                        ConfigParam::Int, const_cast<uint8_t*>(&m_coorIIRProcess.m_maxCoef), 0.0f, 255.0f)
+        .Module("Data Solve");
+
+    // ── AftCoorProcess ──
+    schema.emplace_back("sp.aftCoorEnabled", "AFT Coor Process Enabled",
+                        ConfigParam::Bool, const_cast<bool*>(&m_aftCoorProcess.m_enabled))
+        .Module("Data Solve");
+    schema.emplace_back("sp.lockFlashInBandX", "Lock Flash In-Band X",
+                        ConfigParam::Int, const_cast<uint8_t*>(&m_aftCoorProcess.m_lockFlashInBandX), 0.0f, 255.0f)
+        .Module("Data Solve");
+    schema.emplace_back("sp.lockFlashInBandY", "Lock Flash In-Band Y",
+                        ConfigParam::Int, const_cast<uint8_t*>(&m_aftCoorProcess.m_lockFlashInBandY), 0.0f, 255.0f)
+        .Module("Data Solve");
+    schema.emplace_back("sp.lockFlashEdgeX", "Lock Flash Edge X",
+                        ConfigParam::Int, const_cast<uint8_t*>(&m_aftCoorProcess.m_lockFlashEdgeX), 0.0f, 255.0f)
+        .Module("Data Solve");
+    schema.emplace_back("sp.lockFlashEdgeY", "Lock Flash Edge Y",
+                        ConfigParam::Int, const_cast<uint8_t*>(&m_aftCoorProcess.m_lockFlashEdgeY), 0.0f, 255.0f)
+        .Module("Data Solve");
+    schema.emplace_back("sp.lockSensorTxCount", "Lock Sensor TX Count",
+                        ConfigParam::Int, const_cast<int*>(&m_aftCoorProcess.m_sensorTxCount), 1.0f, 200.0f)
+        .Module("Data Solve");
+    schema.emplace_back("sp.lockSensorRxCount", "Lock Sensor RX Count",
+                        ConfigParam::Int, const_cast<int*>(&m_aftCoorProcess.m_sensorRxCount), 1.0f, 200.0f)
+        .Module("Data Solve");
+    schema.emplace_back("sp.lockBypass", "Lock Bypass",
+                        ConfigParam::Bool, const_cast<bool*>(&m_aftCoorProcess.m_bypassLock))
+        .Module("Data Solve");
     return schema;
 }
 
@@ -138,6 +210,24 @@ void StylusPipeline::SaveConfig(std::ostream& out) const {
     out << "sp.coorReviseEnabled=" << (m_coorReviseProcess.m_enabled ? "1" : "0") << "\n";
     out << "sp.coorReviseFactorDim1=" << m_coorReviseProcess.m_factorDim1 << "\n";
     out << "sp.coorReviseFactorDim2=" << m_coorReviseProcess.m_factorDim2 << "\n";
+    out << "sp.coorSpeedEnabled=" << (m_coorSpeedProcess.m_enabled ? "1" : "0") << "\n";
+    out << "sp.iirFilterEnabled=" << (m_coorIIRProcess.m_enabled ? "1" : "0") << "\n";
+    out << "sp.iirCoefLowInBand=" << static_cast<int>(m_coorIIRProcess.m_coefLowInBand) << "\n";
+    out << "sp.iirCoefHighInBand=" << static_cast<int>(m_coorIIRProcess.m_coefHighInBand) << "\n";
+    out << "sp.iirSpeedTholdInBand=" << static_cast<int>(m_coorIIRProcess.m_speedTholdInBand) << "\n";
+    out << "sp.iirCoefLowEdge=" << static_cast<int>(m_coorIIRProcess.m_coefLowEdge) << "\n";
+    out << "sp.iirCoefHighEdge=" << static_cast<int>(m_coorIIRProcess.m_coefHighEdge) << "\n";
+    out << "sp.iirSpeedTholdEdge=" << static_cast<int>(m_coorIIRProcess.m_speedTholdEdge) << "\n";
+    out << "sp.iirSpeedMax=" << m_coorIIRProcess.m_speedMax << "\n";
+    out << "sp.iirMaxCoef=" << static_cast<int>(m_coorIIRProcess.m_maxCoef) << "\n";
+    out << "sp.aftCoorEnabled=" << (m_aftCoorProcess.m_enabled ? "1" : "0") << "\n";
+    out << "sp.lockFlashInBandX=" << static_cast<int>(m_aftCoorProcess.m_lockFlashInBandX) << "\n";
+    out << "sp.lockFlashInBandY=" << static_cast<int>(m_aftCoorProcess.m_lockFlashInBandY) << "\n";
+    out << "sp.lockFlashEdgeX=" << static_cast<int>(m_aftCoorProcess.m_lockFlashEdgeX) << "\n";
+    out << "sp.lockFlashEdgeY=" << static_cast<int>(m_aftCoorProcess.m_lockFlashEdgeY) << "\n";
+    out << "sp.lockSensorTxCount=" << m_aftCoorProcess.m_sensorTxCount << "\n";
+    out << "sp.lockSensorRxCount=" << m_aftCoorProcess.m_sensorRxCount << "\n";
+    out << "sp.lockBypass=" << (m_aftCoorProcess.m_bypassLock ? "1" : "0") << "\n";
 }
 
 void StylusPipeline::LoadConfig(const std::string& key, const std::string& value) {
@@ -201,6 +291,51 @@ void StylusPipeline::LoadConfig(const std::string& key, const std::string& value
         m_coorReviseProcess.m_factorDim1 = std::clamp(std::stoi(value), 0, 255);
     } else if (key == "sp.coorReviseFactorDim2") {
         m_coorReviseProcess.m_factorDim2 = std::clamp(std::stoi(value), 0, 255);
+    } else if (key == "sp.coorSpeedEnabled") {
+        m_coorSpeedProcess.m_enabled = toBool(value);
+        if (!m_coorSpeedProcess.m_enabled) {
+            m_coorSpeedProcess.Reset();
+        }
+    } else if (key == "sp.iirFilterEnabled") {
+        m_coorIIRProcess.m_enabled = toBool(value);
+        if (!m_coorIIRProcess.m_enabled) {
+            m_coorIIRProcess.Reset();
+        }
+    } else if (key == "sp.iirCoefLowInBand") {
+        m_coorIIRProcess.m_coefLowInBand = static_cast<uint8_t>(std::clamp(std::stoi(value), 0, 255));
+    } else if (key == "sp.iirCoefHighInBand") {
+        m_coorIIRProcess.m_coefHighInBand = static_cast<uint8_t>(std::clamp(std::stoi(value), 0, 255));
+    } else if (key == "sp.iirSpeedTholdInBand") {
+        m_coorIIRProcess.m_speedTholdInBand = static_cast<uint8_t>(std::clamp(std::stoi(value), 0, 255));
+    } else if (key == "sp.iirCoefLowEdge") {
+        m_coorIIRProcess.m_coefLowEdge = static_cast<uint8_t>(std::clamp(std::stoi(value), 0, 255));
+    } else if (key == "sp.iirCoefHighEdge") {
+        m_coorIIRProcess.m_coefHighEdge = static_cast<uint8_t>(std::clamp(std::stoi(value), 0, 255));
+    } else if (key == "sp.iirSpeedTholdEdge") {
+        m_coorIIRProcess.m_speedTholdEdge = static_cast<uint8_t>(std::clamp(std::stoi(value), 0, 255));
+    } else if (key == "sp.iirSpeedMax") {
+        m_coorIIRProcess.m_speedMax = std::clamp(std::stoi(value), 0, 1000);
+    } else if (key == "sp.iirMaxCoef") {
+        m_coorIIRProcess.m_maxCoef = static_cast<uint8_t>(std::clamp(std::stoi(value), 0, 255));
+    } else if (key == "sp.aftCoorEnabled") {
+        m_aftCoorProcess.m_enabled = toBool(value);
+        if (!m_aftCoorProcess.m_enabled) {
+            m_aftCoorProcess.Reset();
+        }
+    } else if (key == "sp.lockFlashInBandX") {
+        m_aftCoorProcess.m_lockFlashInBandX = static_cast<uint8_t>(std::clamp(std::stoi(value), 0, 255));
+    } else if (key == "sp.lockFlashInBandY") {
+        m_aftCoorProcess.m_lockFlashInBandY = static_cast<uint8_t>(std::clamp(std::stoi(value), 0, 255));
+    } else if (key == "sp.lockFlashEdgeX") {
+        m_aftCoorProcess.m_lockFlashEdgeX = static_cast<uint8_t>(std::clamp(std::stoi(value), 0, 255));
+    } else if (key == "sp.lockFlashEdgeY") {
+        m_aftCoorProcess.m_lockFlashEdgeY = static_cast<uint8_t>(std::clamp(std::stoi(value), 0, 255));
+    } else if (key == "sp.lockSensorTxCount") {
+        m_aftCoorProcess.m_sensorTxCount = std::max(1, std::stoi(value));
+    } else if (key == "sp.lockSensorRxCount") {
+        m_aftCoorProcess.m_sensorRxCount = std::max(1, std::stoi(value));
+    } else if (key == "sp.lockBypass") {
+        m_aftCoorProcess.m_bypassLock = toBool(value);
     }
 }
 

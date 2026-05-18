@@ -84,6 +84,9 @@ struct PenSemanticState {
 
     bool hasEraserToggle = false;
     uint8_t eraserToggle = 0;
+
+    bool hasCurrentFunc = false;
+    uint8_t currentFunc = 0;
 };
 
 struct PenUsbHeader {

@@ -213,6 +213,18 @@ struct StylusRuntimePost {
     bool linearFilterActive = false;
     int32_t linearFilterDeltaDim1 = 0;
     int32_t linearFilterDeltaDim2 = 0;
+
+    // ── CoorSpeedProcess outputs ──
+    int32_t speedValue = 0;
+    int32_t speedAvgDx = 0;
+    int32_t speedAvgDy = 0;
+    int32_t speedShortAvgDist = 0;
+    int32_t speedFullAvgDist = 0;
+
+    // ── CoorIIRProcess output ──
+    uint16_t iirCoef = 0;
+    bool iirFilterActive = false;
+
 #if EGOTOUCH_DIAG
     float lfLineFitSlopeA = 0.f;
     float lfLineFitInterceptB = 0.f;
@@ -223,6 +235,14 @@ struct StylusRuntimePost {
     bool coorReviseActive = false;
     int16_t coorReviseCorrectionDim1 = 0;
     int16_t coorReviseCorrectionDim2 = 0;
+
+    // ── AftCoorProcess diagnostics ──
+    bool lockActiveX = false;
+    bool lockActiveY = false;
+    int32_t lockOffsetX = 0;
+    int32_t lockOffsetY = 0;
+    int32_t lockThresholdX = 0;
+    int32_t lockThresholdY = 0;
 #endif
 };
 

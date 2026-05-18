@@ -1,16 +1,19 @@
 #pragma once
 
 #include "ConfigSchema.h"
+#include "AftCoorProcess.hpp"
+#include "CoorIIRProcess.hpp"
+#include "CoorReviseProcess.hpp"
+#include "CoorSpeedProcess.hpp"
 #include "CoordinateSolver.hpp"
 #include "GridFeatureExtractor.hpp"
 #include "Hpp3PostPressureProcess.hpp"
+#include "LinearFilterProcess.hpp"
 #include "PressureSolver.hpp"
-#include "TiltProcess.hpp"
 #include "SolverTypes.h"
 #include "StylusFrameParser.hpp"
-#include "CoorReviseProcess.hpp"
-#include "LinearFilterProcess.hpp"
 #include "StylusRuntimeCommit.hpp"
+#include "TiltProcess.hpp"
 
 #include <array>
 #include <mutex>
@@ -47,6 +50,9 @@ public:
     Stylus::Hpp3PostPressureProcess m_postPressure;
     Stylus::LinearFilterProcess m_linearFilterProcess;
     Stylus::CoorReviseProcess m_coorReviseProcess;
+    Stylus::CoorSpeedProcess m_coorSpeedProcess;
+    Stylus::CoorIIRProcess m_coorIIRProcess;
+    Stylus::AftCoorProcess m_aftCoorProcess;
     Stylus::StylusRuntimeCommit m_commit;
 
 private:

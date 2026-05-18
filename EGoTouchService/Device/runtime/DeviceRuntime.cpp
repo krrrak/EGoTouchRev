@@ -483,6 +483,22 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent& ev) {
         break;
     }
 
+    case EC::PenCurrentFunc: {
+        uint8_t func = 0;
+        {
+            std::lock_guard<std::mutex> lk(m_penStateMu);
+            m_penState.hasCurrentFunc = ev.semantic.hasCurrentFunc;
+            m_penState.currentFunc = ev.semantic.hasCurrentFunc ? ev.semantic.currentFunc : 0;
+            func = m_penState.currentFunc;
+        }
+
+        // 笔双击触控按键 → 触发 Barrel Button (momentary, 下一帧自动复位)
+        m_vhfReporter.SetBarrelButtonState(true);
+        LOG_INFO("Runtime", __func__, "MCU",
+                 "PenCurrentFunc: func={} → barrel button pressed (momentary).", func);
+        break;
+    }
+
     case EC::EraserToggle: {
         uint8_t eraserState = 0;
         {

@@ -14,6 +14,7 @@ struct Config {
     int sensorRows = 40;
     int sensorCols = 60;
     bool emitWhenInvalid = true;
+    bool barrelButton = false;
 };
 
 namespace detail {
@@ -78,10 +79,13 @@ inline Solvers::StylusPacket Build(const Solvers::StylusFrameData& stylus,
 
     uint8_t penState = 0;
     if (stylus.output.tipDown) {
-        penState |= 0x01u;
+        penState |= 0x01u;   // Tip Switch
+    }
+    if (config.barrelButton) {
+        penState |= 0x02u;   // Barrel Switch
     }
     if (stylus.output.inRange) {
-        penState |= 0x20u;
+        penState |= 0x20u;   // In Range
     }
     packet.bytes[1] = penState;
     packet.bytes[2] = 0x00u;

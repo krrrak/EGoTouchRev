@@ -474,6 +474,10 @@ void PenEventBridge::OnPacketReceived(const std::vector<uint8_t>& packet) {
                 ev.semantic.hasEraserToggle = true;
                 ev.semantic.eraserToggle = ev.payload[0];
                 break;
+            case PenUsbEventCode::PenCurrentFunc:
+                ev.semantic.hasCurrentFunc = true;
+                ev.semantic.currentFunc = ev.payload[0];
+                break;
             default:
                 break;
             }

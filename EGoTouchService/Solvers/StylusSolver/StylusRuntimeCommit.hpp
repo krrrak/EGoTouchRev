@@ -116,6 +116,17 @@ public:
         stylus.debug.coord.lfStraightBufCount = stylus.runtime.post.lfStraightBufCount;
         stylus.debug.coord.lfDragApplied = stylus.runtime.post.lfDragApplied;
 
+        // ── CoorSpeedProcess ──
+        stylus.debug.coord.speedInstant = static_cast<float>(stylus.runtime.post.speedValue);
+        stylus.debug.coord.speedShortAvg = static_cast<float>(stylus.runtime.post.speedShortAvgDist);
+        stylus.debug.coord.speedFullAvg = static_cast<float>(stylus.runtime.post.speedFullAvgDist);
+
+        // ── CoorIIRProcess ──
+        stylus.debug.coord.iirCoef = static_cast<float>(stylus.runtime.post.iirCoef);
+        stylus.debug.coord.isHover = stylus.runtime.pressure.outputPressure == 0;
+        stylus.debug.coord.isEdge = stylus.runtime.signal.dim1EdgeActive ||
+                                   stylus.runtime.signal.dim2EdgeActive;
+
         // ── CoorReviseProcess ──
         stylus.debug.coord.coorReviserActive = stylus.runtime.post.coorReviseActive;
         stylus.debug.coord.coorRevDeltaX = static_cast<float>(stylus.runtime.post.coorReviseCorrectionDim1);
