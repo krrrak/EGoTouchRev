@@ -19,7 +19,7 @@ struct PenPressureStats {
     uint8_t  freq1    = 0;                ///< BT 跳频频率1
     uint8_t  freq2    = 0;                ///< BT 跳频频率2
     uint8_t  reportType = 0;              ///< 报文类型（通常 'U' = 0x55）
-    PenPressureRangeMode pressureMode = PenPressureRangeMode::Raw14Bit16382;
+    PenPressureRangeMode pressureMode = PenPressureRangeMode::Raw12Bit4096;
     uint16_t pressureMax = 4095;
 };
 
