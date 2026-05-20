@@ -28,6 +28,8 @@ public:
         auto& flow = runtime.flow;
         auto& tx1 = runtime.tx1;
         auto& tx2 = runtime.tx2;
+        const auto dim1Edge = GetAxisEdgeGeometry(runtime.rawGrid.asaGrid.tx1.anchorCol, kSensorCols);
+        const auto dim2Edge = GetAxisEdgeGeometry(runtime.rawGrid.asaGrid.tx1.anchorRow, kSensorRows);
 
         flow.pipelineStage = 4;
         if (!m_enabled || !tx1.feature.peak.valid) {
@@ -35,7 +37,7 @@ public:
             return true;
         }
 
-        tx1.coordinate.localGridCoor = Solve(tx1.feature.projection);
+        tx1.coordinate.localGridCoor = Solve(tx1.feature.projection, dim1Edge, dim2Edge);
         tx1.coordinate.reportGlobalCoor = tx1.coordinate.localGridCoor;
 #if EGOTOUCH_DIAG
         {
@@ -48,7 +50,7 @@ public:
                 tx1.triCenter = static_cast<uint16_t>(std::clamp(proj.dim1[peakIdx], 0, 65535));
                 tx1.triRight = static_cast<uint16_t>(std::clamp(proj.dim1[rightIdx], 0, 65535));
             }
-            int32_t rawDim1 = SolveByTriangle(proj.dim1, proj.peakIdxDim1, kFactoryTriEdgeDim1);
+            int32_t rawDim1 = SolveByTriangle(proj.dim1, proj.peakIdxDim1, kFactoryTriEdgeDim1, dim1Edge);
             if (rawDim1 != kInvalidCoor) {
                 int32_t compDim1 = ApplyPitchCompensation(rawDim1, kFactoryPitchCompDim1);
                 tx1.pitchComp = static_cast<int16_t>(compDim1 - rawDim1);
@@ -83,12 +85,8 @@ public:
         signal.recheckThreshold = m_signalFloor;
         signal.recheckThresholdMulti = static_cast<uint16_t>(std::max<uint16_t>(m_signalFloor, 256));
 
-        signal.dim1EdgeActive =
-            tx1.feature.projection.peakIdxDim1 == 0 ||
-            tx1.feature.projection.peakIdxDim1 == (Asa::kGridDim - 1);
-        signal.dim2EdgeActive =
-            tx1.feature.projection.peakIdxDim2 == 0 ||
-            tx1.feature.projection.peakIdxDim2 == (Asa::kGridDim - 1);
+        signal.dim1EdgeActive = IsAnyEdgePeak(tx1.feature.projection.peakIdxDim1, dim1Edge);
+        signal.dim2EdgeActive = IsAnyEdgePeak(tx1.feature.projection.peakIdxDim2, dim2Edge);
         signal.dim1EdgeSignal = signal.dim1EdgeActive ? signal.signalX : 0;
         signal.dim2EdgeSignal = signal.dim2EdgeActive ? signal.signalY : 0;
 
@@ -123,11 +121,51 @@ private:
         0.0,        0.0,        0.0,        0.0,        0.0,        0.0,        0.0,        0.0,        100.0};
     static constexpr std::array<double, Asa::kMaxSensorDim + 1> kFactoryPitchTableDim2 = {100.0};
 
-    inline Asa::AsaCoorResult Solve(const Asa::AsaProjection& proj) const {
+    struct AxisEdgeGeometry {
+        int lowIdx = -1;
+        int highIdx = -1;
+    };
+
+    static inline bool IsValidLocalIndex(int idx) {
+        return idx >= 0 && idx < Asa::kGridDim;
+    }
+
+    static inline AxisEdgeGeometry GetAxisEdgeGeometry(int anchor, int sensorCount) {
+        AxisEdgeGeometry geometry{};
+        const int lowIdx = kAnchorCenterOffset - anchor;
+        const int highIdx = kAnchorCenterOffset + sensorCount - 1 - anchor;
+        if (IsValidLocalIndex(lowIdx)) geometry.lowIdx = lowIdx;
+        if (IsValidLocalIndex(highIdx)) geometry.highIdx = highIdx;
+        return geometry;
+    }
+
+    static inline bool IsLowEdgePeak(int peakIdx, const AxisEdgeGeometry& geometry) {
+        return peakIdx == 0 || peakIdx == geometry.lowIdx;
+    }
+
+    static inline bool IsHighEdgePeak(int peakIdx, const AxisEdgeGeometry& geometry) {
+        return peakIdx == Asa::kGridDim - 1 || peakIdx == geometry.highIdx;
+    }
+
+    static inline bool IsAnyEdgePeak(int peakIdx, const AxisEdgeGeometry& geometry) {
+        return IsLowEdgePeak(peakIdx, geometry) || IsHighEdgePeak(peakIdx, geometry);
+    }
+
+    static inline bool HasRequiredLowNeighbors(int edgeIdx) {
+        return edgeIdx + 2 < Asa::kGridDim;
+    }
+
+    static inline bool HasRequiredHighNeighbors(int edgeIdx) {
+        return edgeIdx - 2 >= 0;
+    }
+
+    inline Asa::AsaCoorResult Solve(const Asa::AsaProjection& proj,
+                                    const AxisEdgeGeometry& dim1Edge,
+                                    const AxisEdgeGeometry& dim2Edge) const {
         Asa::AsaCoorResult result{};
         if (!kFactoryUseTriangle) return result;
-        int32_t dim1 = SolveByTriangle(proj.dim1, proj.peakIdxDim1, kFactoryTriEdgeDim1);
-        int32_t dim2 = SolveByTriangle(proj.dim2, proj.peakIdxDim2, kFactoryTriEdgeDim2);
+        int32_t dim1 = SolveByTriangle(proj.dim1, proj.peakIdxDim1, kFactoryTriEdgeDim1, dim1Edge);
+        int32_t dim2 = SolveByTriangle(proj.dim2, proj.peakIdxDim2, kFactoryTriEdgeDim2, dim2Edge);
 
         if (dim1 == kInvalidCoor || dim2 == kInvalidCoor) return result;
 
@@ -181,17 +219,22 @@ private:
     }
 
     inline int32_t SolveByTriangle(const int32_t (&signal)[Asa::kGridDim],
-                                   int peakIdx, const TriangleEdgeParams& edge) const {
-        if (peakIdx < 0 || peakIdx >= Asa::kGridDim) return kInvalidCoor;
+                                   int peakIdx,
+                                   const TriangleEdgeParams& edge,
+                                   const AxisEdgeGeometry& geometry) const {
+        if (!IsValidLocalIndex(peakIdx)) return kInvalidCoor;
         const auto s = [&](int i) -> int { return static_cast<int>(std::clamp(signal[i], 0, 65535)); };
 
-        if (peakIdx == 0)
-            return TriangleAlgEdge(s(0), s(1), s(2), edge.ratio, edge.sumThresholdIdx0);
-        if (peakIdx == Asa::kGridDim - 1) {
-            const int e = TriangleAlgEdge(s(Asa::kGridDim - 1), s(Asa::kGridDim - 2),
-                                          s(Asa::kGridDim - 3), edge.ratio, edge.sumThresholdIdxLast);
-            return Asa::kGridDim * Asa::kCoorUnit - e;
+        if (IsLowEdgePeak(peakIdx, geometry) && HasRequiredLowNeighbors(peakIdx)) {
+            return peakIdx * Asa::kCoorUnit +
+                   TriangleAlgEdge(s(peakIdx), s(peakIdx + 1), s(peakIdx + 2), edge.ratio, edge.sumThresholdIdx0);
         }
+        if (IsHighEdgePeak(peakIdx, geometry) && HasRequiredHighNeighbors(peakIdx)) {
+            const int e = TriangleAlgEdge(s(peakIdx), s(peakIdx - 1), s(peakIdx - 2),
+                                          edge.ratio, edge.sumThresholdIdxLast);
+            return (peakIdx + 1) * Asa::kCoorUnit - e;
+        }
+        if (peakIdx == 0 || peakIdx == Asa::kGridDim - 1) return kInvalidCoor;
         const int offset = TriangleAlgUsing3Point(s(peakIdx - 1), s(peakIdx), s(peakIdx + 1));
         return peakIdx * Asa::kCoorUnit + offset;
     }

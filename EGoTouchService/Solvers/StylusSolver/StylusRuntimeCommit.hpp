@@ -24,6 +24,8 @@ public:
         stylus.output.confidence = stylus.runtime.post.confidence;
         stylus.output.pipelineStage = stylus.runtime.flow.pipelineStage;
         stylus.output.point = stylus.runtime.post.point;
+        stylus.output.point.x = static_cast<float>(stylus.runtime.post.finalCoor.dim1);
+        stylus.output.point.y = static_cast<float>(stylus.runtime.post.finalCoor.dim2);
         stylus.output.point.valid = stylus.output.valid;
         stylus.output.point.pressure = stylus.output.pressure;
         stylus.output.point.confidence = stylus.output.confidence;

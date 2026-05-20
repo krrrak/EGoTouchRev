@@ -13,17 +13,17 @@ public:
 
     // ── IIR coefficient selection (GetIIRCoef equivalent) ──
     // In-band mode params (edge NOT active)
-    uint8_t m_coefLowInBand = 10;     // flash[0xA5E]
-    uint8_t m_coefHighInBand = 200;   // flash[0xA5F]
+    uint8_t m_coefLowInBand = 2;      // asa[0xA5E]
+    uint8_t m_coefHighInBand = 16;    // asa[0xA5F]
     uint8_t m_speedTholdInBand = 20;  // 0x14
 
     // Edge mode params (edge active)
-    uint8_t m_coefLowEdge = 10;    // flash[0xA5C]
-    uint8_t m_coefHighEdge = 100;  // flash[0xA5D]
+    uint8_t m_coefLowEdge = 6;     // asa[0xA5C]
+    uint8_t m_coefHighEdge = 18;   // asa[0xA5D]
     uint8_t m_speedTholdEdge = 10; // 0x0A
 
     int m_speedMax = 205;  // 0xCD — speed value at which high coef is fully engaged
-    uint8_t m_maxCoef = 255;  // flash[0xA60] — denominator in IIR formula
+    uint8_t m_maxCoef = 32;   // asa[0xA60] — denominator in IIR formula
 
     // ── Output ──
     uint16_t m_currentCoef = 10;
@@ -36,6 +36,9 @@ public:
         m_prevInRange = false;
         m_frameCount = 0;
         m_currentCoef = m_coefLowInBand;
+        m_counterC = 0;
+        m_counter8 = 0;
+        m_counterA = 0;
     }
 
     inline void Process(HeatmapFrame& frame) {
@@ -48,42 +51,52 @@ public:
             return;
         }
 
-        // ── Detect entry into in-range (from out-of-range) ──
-        if (!m_prevInRange && inRange) {
-            m_frameCount = 0;
-            m_iirFracX = 0;
-            m_iirFracY = 0;
-            m_prevFiltX = coor.dim1;
-            m_prevFiltY = coor.dim2;
+        // ── Update TSACore-aligned static counters ──
+        const bool bHasPressure = runtime.pressure.pressureIsReal;
+        const bool hasPressureValue = runtime.pressure.outputPressure > 0;
+
+        // Default: EnterInRangeMode behavior
+        ++m_counterC;
+
+        if (bHasPressure) {
+            m_counterC = 0;
+            ++m_counter8;
+        } else {
+            m_counter8 = 0;
         }
-        m_prevInRange = inRange;
-        ++m_frameCount;
+
+        if (hasPressureValue) {
+            m_counterC = 0;
+            ++m_counterA;
+        } else {
+            m_counterA = 0;
+        }
 
         // ── GetIIRCoef: speed-adaptive coefficient selection ──
         const bool edgeActive = runtime.signal.dim1EdgeActive ||
                                 runtime.signal.dim2EdgeActive;
-        m_currentCoef = SelectCoef(runtime.post.speedValue, edgeActive, edgeActive);
+        const bool writingMode = bHasPressure || hasPressureValue;
+        m_currentCoef = SelectCoef(runtime.post.speedValue, writingMode, edgeActive);
         runtime.post.iirCoef = m_currentCoef;
 
-        // ── CoorFilterProcess: conditional IIR filtering ──
-        // TSACore gate: filter when (in-range flag set AND counter_c >= 2),
-        // i.e. after 2+ frames of detection (hover OR touch).
-        // Pressure is NOT part of the gate.
-        if (m_frameCount < 2) {
+        // ── CoorFilterProcess: TSACore gate ──
+        const bool bypassGate = (((!m_prevInRange || m_counterC < 2) && m_counter8 < 2) && m_counterA < 2);
+
+        if (bypassGate) {
             m_iirFracX = 0;
             m_iirFracY = 0;
             m_prevFiltX = coor.dim1;
             m_prevFiltY = coor.dim2;
             runtime.post.iirFilterActive = false;
-            return;
+        } else {
+            runtime.post.iirFilterActive = true;
+            ApplyIIR(coor.dim1, coor.dim2);
+            m_prevFiltX = coor.dim1;
+            m_prevFiltY = coor.dim2;
         }
 
-        // Apply IIR filter (active for both hover and touch after warm-up)
-        runtime.post.iirFilterActive = true;
-        ApplyIIR(coor.dim1, coor.dim2);
-
-        m_prevFiltX = coor.dim1;
-        m_prevFiltY = coor.dim2;
+        m_prevInRange = inRange;
+        ++m_frameCount;
     }
 
 private:
@@ -94,25 +107,32 @@ private:
     bool m_prevInRange = false;
     int m_frameCount = 0;
 
-    inline uint16_t SelectCoef(int speedValue, bool edgeActive, bool peakOnEdge) const {
+    // TSACore status counters
+    int m_counterC = 0;
+    int m_counter8 = 0;
+    int m_counterA = 0;
+
+    inline uint16_t SelectCoef(int speedValue, bool writingMode, bool peakOnEdge) const {
         uint8_t coefLow;
         uint8_t coefHigh;
         int speedThreshold;
 
-        if (edgeActive) {
-            coefLow = m_coefLowEdge;
-            coefHigh = m_coefHighEdge;
-            speedThreshold = m_speedTholdEdge;
-        } else {
+        if (!writingMode) {
+            // Hover (no pressure) uses In-band params
             coefLow = m_coefLowInBand;
             coefHigh = m_coefHighInBand;
             speedThreshold = m_speedTholdInBand;
+        } else {
+            // Writing (has pressure) uses Edge params
+            coefLow = m_coefLowEdge;
+            coefHigh = m_coefHighEdge;
+            speedThreshold = m_speedTholdEdge;
         }
 
-        // Peak-on-edge halves the coefficient range
+        // Peak-on-edge overrides coefficients
         if (peakOnEdge) {
-            coefHigh = static_cast<uint8_t>(coefHigh >> 1);
-            coefLow = static_cast<uint8_t>(coefLow >> 1);
+            coefHigh = static_cast<uint8_t>(m_coefHighInBand >> 1); // 16 >> 1 = 8
+            coefLow = static_cast<uint8_t>(m_coefLowInBand >> 1);   // 2 >> 1 = 1
         }
 
         uint16_t selected;
@@ -131,23 +151,22 @@ private:
     }
 
     inline void ApplyIIR(int32_t& dim1, int32_t& dim2) {
-        // Fixed-point IIR: new_sample << 8, old_sample = prev_inner * 256 + prev_frac
-        const int32_t newX = dim1 << 8;
-        const int32_t oldX = (m_prevFiltX << 8) + static_cast<int32_t>(m_iirFracX);
-        const int32_t newY = dim2 << 8;
-        const int32_t oldY = (m_prevFiltY << 8) + static_cast<int32_t>(m_iirFracY);
+        const int64_t newX = static_cast<int64_t>(dim1) << 8;
+        const int64_t oldX = (static_cast<int64_t>(m_prevFiltX) << 8) + static_cast<int64_t>(m_iirFracX);
+        const int64_t newY = static_cast<int64_t>(dim2) << 8;
+        const int64_t oldY = (static_cast<int64_t>(m_prevFiltY) << 8) + static_cast<int64_t>(m_iirFracY);
 
-        const int32_t coef = static_cast<int32_t>(m_currentCoef);
-        const int32_t antiCoef = static_cast<int32_t>(m_maxCoef) - coef;
+        const int64_t coef = static_cast<int64_t>(m_currentCoef);
+        const int64_t antiCoef = static_cast<int64_t>(m_maxCoef) - coef;
+        const int64_t denom = static_cast<int64_t>(m_maxCoef);
 
-        // filtered = (coef * new + (maxCoef - coef) * old) / maxCoef
-        const int32_t filtX = (coef * newX + antiCoef * oldX) / static_cast<int32_t>(m_maxCoef);
-        const int32_t filtY = (coef * newY + antiCoef * oldY) / static_cast<int32_t>(m_maxCoef);
+        const int64_t filtX = (coef * newX + antiCoef * oldX) / denom;
+        const int64_t filtY = (coef * newY + antiCoef * oldY) / denom;
 
-        dim1 = filtX >> 8;
+        dim1 = static_cast<int32_t>(filtX >> 8);
         m_iirFracX = static_cast<uint8_t>(filtX & 0xFF);
 
-        dim2 = filtY >> 8;
+        dim2 = static_cast<int32_t>(filtY >> 8);
         m_iirFracY = static_cast<uint8_t>(filtY & 0xFF);
     }
 };

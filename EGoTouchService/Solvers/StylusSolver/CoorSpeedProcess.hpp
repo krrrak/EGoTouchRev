@@ -22,7 +22,7 @@ public:
 
     inline void Process(HeatmapFrame& frame) {
         auto& runtime = frame.stylus.runtime;
-        const auto& coor = runtime.post.finalCoor;
+        const auto& coor = runtime.tx1.coordinate.reportGlobalCoor;
         const bool pressureActive = runtime.pressure.outputPressure > 0;
 
         if (!m_enabled || !coor.valid) {
@@ -30,7 +30,9 @@ public:
             return;
         }
 
-        // Shift history right, push new coordinate to index 0
+        // Mirror TSACore GetRealTimeCoor2Buf/GetCoorSpeed: speed is derived from the
+        // raw mapped coordinate history, not from the already filtered post chain.
+        // That keeps IIR coefficient selection from being biased by earlier smoothing.
         for (int i = kHistorySize - 1; i > 0; --i) {
             m_xHistory[static_cast<std::size_t>(i)] = m_xHistory[static_cast<std::size_t>(i - 1)];
             m_yHistory[static_cast<std::size_t>(i)] = m_yHistory[static_cast<std::size_t>(i - 1)];
@@ -86,14 +88,35 @@ public:
 
         // Average distance per frame
         runtime.post.speedFullAvgDist = cumDist / lastValidIdx;
-        runtime.post.speedShortAvgDist = runtime.post.speedFullAvgDist;
+
+        int speedShortAvgDist = runtime.post.speedFullAvgDist;
+        if (lastValidIdx > 3) {
+            int dist3X10 = 0;
+            for (int c = 1; c <= 3; ++c) {
+                const int32_t dx = m_xHistory[static_cast<std::size_t>(c - 1)] -
+                                   m_xHistory[static_cast<std::size_t>(c)];
+                const int32_t dy = m_yHistory[static_cast<std::size_t>(c - 1)] -
+                                   m_yHistory[static_cast<std::size_t>(c)];
+                dist3X10 += static_cast<int>(std::sqrt(static_cast<double>(
+                    static_cast<int64_t>(dx) * dx + static_cast<int64_t>(dy) * dy) * 100.0));
+            }
+            speedShortAvgDist = (dist3X10 / 10) / 3;
+        }
+        runtime.post.speedShortAvgDist = speedShortAvgDist;
 
         // Average dx/dy over valid points
         runtime.post.speedAvgDx = std::abs(dxFirst) / lastValidIdx;
         runtime.post.speedAvgDy = std::abs(dyFirst) / lastValidIdx;
 
-        // Speed value: average per-frame distance (drives IIR coefficient selection)
-        runtime.post.speedValue = runtime.post.speedFullAvgDist;
+        // Speed value: 1-frame instant distance (drives IIR coefficient selection)
+        int speedInstant = 0;
+        if (m_historyCount >= 2 && m_xHistory[1] != kInvalidCoord) {
+            const int32_t dx = m_xHistory[0] - m_xHistory[1];
+            const int32_t dy = m_yHistory[0] - m_yHistory[1];
+            speedInstant = static_cast<int>(std::sqrt(static_cast<double>(
+                static_cast<int64_t>(dx) * dx + static_cast<int64_t>(dy) * dy) * 100.0)) / 10;
+        }
+        runtime.post.speedValue = speedInstant;
 
         m_prevPressureActive = pressureActive;
     }

@@ -14,12 +14,12 @@ public:
 
     // ── Lock thresholds (flash params equivalent) ──
     // In-band thresholds (coordinate within sensor interior)
-    uint8_t m_lockFlashInBandX = 10;  // flash[0xA5A]
-    uint8_t m_lockFlashInBandY = 10;  // flash[0xA5B]
+    uint8_t m_lockFlashInBandX = 0;  // flash[0xA5A]
+    uint8_t m_lockFlashInBandY = 0;  // flash[0xA5B]
 
     // Edge thresholds (coordinate near sensor boundary)
-    uint8_t m_lockFlashEdgeX = 20;  // flash[0xA58]
-    uint8_t m_lockFlashEdgeY = 20;  // flash[0xA59]
+    uint8_t m_lockFlashEdgeX = 1;  // flash[0xA58]
+    uint8_t m_lockFlashEdgeY = 2;  // flash[0xA59]
 
     // Sensor dimensions (from asaPrmt)
     int m_sensorTxCount = 60;   // bTxCount
@@ -72,20 +72,12 @@ public:
         if (coor.dim1 < minBound || coor.dim2 < minBound ||
             coor.dim1 >= maxBoundX || coor.dim2 >= maxBoundY) {
             // Near boundary → use edge thresholds (more tolerant)
-            thresholdX = (static_cast<uint32_t>(m_lockFlashEdgeX) *
-                          static_cast<uint32_t>(m_sensorTxCount) * Asa::kCoorUnit) /
-                         static_cast<uint32_t>(std::max(1, m_sensorDim1));
-            thresholdY = (static_cast<uint32_t>(m_lockFlashEdgeY) *
-                          static_cast<uint32_t>(m_sensorRxCount) * Asa::kCoorUnit) /
-                         static_cast<uint32_t>(std::max(1, m_sensorDim2));
+            thresholdX = m_lockFlashEdgeX;
+            thresholdY = m_lockFlashEdgeY;
         } else {
             // Interior → use in-band thresholds
-            thresholdX = (static_cast<uint32_t>(m_lockFlashInBandX) *
-                          static_cast<uint32_t>(m_sensorTxCount) * Asa::kCoorUnit) /
-                         static_cast<uint32_t>(std::max(1, m_sensorDim1));
-            thresholdY = (static_cast<uint32_t>(m_lockFlashInBandY) *
-                          static_cast<uint32_t>(m_sensorRxCount) * Asa::kCoorUnit) /
-                         static_cast<uint32_t>(std::max(1, m_sensorDim2));
+            thresholdX = m_lockFlashInBandX;
+            thresholdY = m_lockFlashInBandY;
         }
 
         // ── Pen-down transition: lock to start position ──

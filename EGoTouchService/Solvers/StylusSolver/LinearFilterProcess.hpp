@@ -29,6 +29,18 @@ public:
     int m_sensorDim2Limit = 40960;
 
     inline void Reset() {
+        ResetStrokeState();
+        m_rawX.fill(kInvalidCoord);
+        m_rawY.fill(kInvalidCoord);
+        m_filtX.fill(kInvalidCoord);
+        m_filtY.fill(kInvalidCoord);
+        m_anchorX = 0;
+        m_anchorY = 0;
+        m_prevPressureActive = false;
+        m_historyCount = 0;
+    }
+
+    inline void ResetStrokeState() {
         m_state = 0;
         m_enterCnt = 0;
         m_exitCnt = 0;
@@ -48,15 +60,10 @@ public:
         m_lastDeltaDim1 = 0;
         m_lastDeltaDim2 = 0;
         m_frame = 0;
-
-        m_rawX.fill(kInvalidCoord);
-        m_rawY.fill(kInvalidCoord);
-        m_filtX.fill(kInvalidCoord);
-        m_filtY.fill(kInvalidCoord);
-        m_anchorX = 0;
-        m_anchorY = 0;
-        m_prevPressureActive = false;
-        m_historyCount = 0;
+#if EGOTOUCH_DIAG
+        m_lastCos1000 = 0;
+        m_lastDragApplied = 0;
+#endif
     }
 
     inline void Process(HeatmapFrame& frame) {
@@ -64,14 +71,12 @@ public:
         const auto& raw = runtime.tx1.coordinate.reportGlobalCoor;
         const bool pressureActive = runtime.pressure.outputPressure > 0;
 
-        if (!m_enabled || !raw.valid || !pressureActive) {
+        if (!m_enabled || !raw.valid) {
             Reset();
             runtime.post.postCoor = raw;
             runtime.post.predictedCoor = raw;
             runtime.post.finalCoor = raw;
             runtime.post.finalValid = raw.valid;
-            runtime.post.point.x = static_cast<float>(raw.dim1);
-            runtime.post.point.y = static_cast<float>(raw.dim2);
             runtime.post.linearFilterState = 0;
             runtime.post.linearFilterActive = false;
             runtime.post.linearFilterDeltaDim1 = 0;
@@ -88,12 +93,12 @@ public:
         }
 
         // ── GetRealTimeCoor2Buf ──
-        // Detect pen-down (pressure 0→non-0 transition) and capture anchor
-        if (!m_prevPressureActive) {
+        // Keep coordinate history live for both hover and contact frames.
+        const bool wasPressureActive = m_prevPressureActive;
+        if (!wasPressureActive && pressureActive) {
             m_anchorX = raw.dim1;
             m_anchorY = raw.dim2;
         }
-        m_prevPressureActive = pressureActive;
 
         // Shift raw history right and push the latest coordinate to index 0
         for (int i = kRawHistorySize - 1; i > 0; --i) {
@@ -151,14 +156,37 @@ public:
         }
         runtime.post.predictedCoor = predicted;
 
-        // ── Linear correction (existing state machine) consuming the 3-point avg ──
+        if (!pressureActive) {
+            if (wasPressureActive) {
+                ResetStrokeState();
+            }
+            m_prevPressureActive = false;
+            runtime.post.finalCoor = raw;
+            runtime.post.finalValid = raw.valid;
+            runtime.post.linearFilterState = 0;
+            runtime.post.linearFilterActive = false;
+            runtime.post.linearFilterDeltaDim1 = 0;
+            runtime.post.linearFilterDeltaDim2 = 0;
+#if EGOTOUCH_DIAG
+            runtime.post.lfLineFitSlopeA = 0.f;
+            runtime.post.lfLineFitInterceptB = 0.f;
+            runtime.post.lfLineFitValid = false;
+            runtime.post.lfCos1000 = 0;
+            runtime.post.lfStraightBufCount = 0;
+            runtime.post.lfDragApplied = 0;
+#endif
+            return;
+        }
+
+        m_prevPressureActive = true;
+
+        // ── Linear correction consumes the live coordinate path. avg3/predicted stay as
+        // diagnostics and side-channel trend data, mirroring the original split.
         const Asa::AsaCoorResult result = Process(
-            avg3, pressureActive, m_sensorDim1Limit, m_sensorDim2Limit);
+            raw, pressureActive, m_sensorDim1Limit, m_sensorDim2Limit);
 
         runtime.post.finalCoor = result;
         runtime.post.finalValid = result.valid;
-        runtime.post.point.x = static_cast<float>(result.dim1);
-        runtime.post.point.y = static_cast<float>(result.dim2);
         runtime.post.linearFilterState = m_state;
         runtime.post.linearFilterActive = m_active;
         runtime.post.linearFilterDeltaDim1 = m_lastDeltaDim1;

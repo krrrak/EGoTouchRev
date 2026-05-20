@@ -30,7 +30,6 @@ public:
     inline void Process(HeatmapFrame& frame) {
         auto& runtime = frame.stylus.runtime;
         auto& finalCoor = runtime.post.finalCoor;
-        auto& point = runtime.post.point;
         const auto& tilt = runtime.tilt;
 
         runtime.flow.pipelineStage = 6;
@@ -50,7 +49,7 @@ public:
         }
         m_prevPressure = runtime.pressure.outputPressure;
 
-        if (!tilt.valid) {
+        if (!tilt.valid || runtime.pressure.outputPressure == 0) {
 #if EGOTOUCH_DIAG
             runtime.post.coorReviseActive = false;
             runtime.post.coorReviseCorrectionDim1 = 0;
@@ -89,8 +88,6 @@ public:
 
         finalCoor.dim1 = correctedDim1;
         finalCoor.dim2 = correctedDim2;
-        point.x = static_cast<float>(correctedDim1);
-        point.y = static_cast<float>(correctedDim2);
 
 #if EGOTOUCH_DIAG
         runtime.post.coorReviseActive = true;

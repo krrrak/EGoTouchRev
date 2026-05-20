@@ -1,4 +1,6 @@
 #include "StylusSolver/CoordinateSolver.hpp"
+#include "StylusSolver/CoorIIRProcess.hpp"
+#include "StylusSolver/CoorSpeedProcess.hpp"
 #include "StylusSolver/GridFeatureExtractor.hpp"
 #include "StylusSolver/LinearFilterProcess.hpp"
 #include "StylusSolver/TiltProcess.hpp"
@@ -418,6 +420,66 @@ void TestCoordinateSolverClampsGlobalCoordinateAtBottomRightEdge() {
             "bottom-right anchored global coordinate should clamp to the physical sensor maximum");
 }
 
+void TestCoordinateSolverUsesPhysicalTopLeftEdgeAtLocalCenter() {
+    Solvers::HeatmapFrame frame{};
+    auto& stylus = frame.stylus;
+    stylus.runtime.tx1.feature.peak.valid = true;
+    stylus.runtime.rawGrid.asaGrid.tx1.anchorRow = 0;
+    stylus.runtime.rawGrid.asaGrid.tx1.anchorCol = 0;
+
+    auto& projection = stylus.runtime.tx1.feature.projection;
+    projection.Clear();
+    projection.peakIdxDim1 = Asa::kGridDim / 2;
+    projection.peakIdxDim2 = Asa::kGridDim / 2;
+    projection.dim1[4] = 300;
+    projection.dim1[5] = 100;
+    projection.dim1[6] = 50;
+    projection.dim2[4] = 300;
+    projection.dim2[5] = 100;
+    projection.dim2[6] = 50;
+
+    Solvers::Stylus::CoordinateSolver solver;
+    solver.Process(frame);
+
+    Require(stylus.runtime.tx1.coordinate.localGridCoor.valid,
+            "top-left physical edge at local center should produce a valid local coordinate");
+    Require(stylus.runtime.tx1.coordinate.reportGlobalCoor.dim1 == 0 &&
+            stylus.runtime.tx1.coordinate.reportGlobalCoor.dim2 == 0,
+            "top-left physical edge at local center should clamp to zero");
+    Require(stylus.runtime.signal.dim1EdgeActive && stylus.runtime.signal.dim2EdgeActive,
+            "top-left physical edge at local center should mark both axes as edge-active");
+}
+
+void TestCoordinateSolverUsesPhysicalBottomRightEdgeAtLocalCenter() {
+    Solvers::HeatmapFrame frame{};
+    auto& stylus = frame.stylus;
+    stylus.runtime.tx1.feature.peak.valid = true;
+    stylus.runtime.rawGrid.asaGrid.tx1.anchorRow = 39;
+    stylus.runtime.rawGrid.asaGrid.tx1.anchorCol = 59;
+
+    auto& projection = stylus.runtime.tx1.feature.projection;
+    projection.Clear();
+    projection.peakIdxDim1 = Asa::kGridDim / 2;
+    projection.peakIdxDim2 = Asa::kGridDim / 2;
+    projection.dim1[4] = 300;
+    projection.dim1[3] = 100;
+    projection.dim1[2] = 50;
+    projection.dim2[4] = 300;
+    projection.dim2[3] = 100;
+    projection.dim2[2] = 50;
+
+    Solvers::Stylus::CoordinateSolver solver;
+    solver.Process(frame);
+
+    Require(stylus.runtime.tx1.coordinate.localGridCoor.valid,
+            "bottom-right physical edge at local center should produce a valid local coordinate");
+    Require(stylus.runtime.tx1.coordinate.reportGlobalCoor.dim1 == 60 * Asa::kCoorUnit - 1 &&
+            stylus.runtime.tx1.coordinate.reportGlobalCoor.dim2 == 40 * Asa::kCoorUnit - 1,
+            "bottom-right physical edge at local center should clamp to the physical sensor maximum");
+    Require(stylus.runtime.signal.dim1EdgeActive && stylus.runtime.signal.dim2EdgeActive,
+            "bottom-right physical edge at local center should mark both axes as edge-active");
+}
+
 void TestTiltProcessUsesTx2RefinedCoordinate() {
     Solvers::HeatmapFrame frame{};
     auto& stylus = frame.stylus;
@@ -749,7 +811,7 @@ void TestPredictedCoorQuadraticExtrapolation() {
             "predicted should update with each new frame");
 }
 
-void TestLinearCorrectionConsumesAvg3() {
+void TestLinearCorrectionUsesRawInputUntilLineConstraintApplies() {
     Solvers::Stylus::LinearFilterProcess filter;
     filter.m_enabled = true;
     ConfigureFastTestFilter(filter);
@@ -773,13 +835,38 @@ void TestLinearCorrectionConsumesAvg3() {
     Require(stylus.runtime.post.postCoor.dim1 == 1030,
             "postCoor should be the 3-point average of jittery raw points");
 
-    // finalCoor should exist and be based on the smoothed postCoor, not the raw jitter
+    // Before the line-fit state starts constraining points, finalCoor should still
+    // follow the current raw coordinate rather than the avg3 side-channel value.
     Require(stylus.runtime.post.finalValid,
             "finalCoor should be valid when processing avg3 input");
-    // With jittery raw values, the raw at frame 3 (1010) differs from avg3 (1030).
-    // The line-fit state machine consumes avg3 (1030), so finalCoor reflects smoothed input.
-    Require(stylus.runtime.post.finalCoor.dim1 != 1010,
-            "finalCoor should not equal raw jittery input at frame 3");
+    Require(stylus.runtime.post.finalCoor.dim1 == 1010 &&
+            stylus.runtime.post.finalCoor.dim2 == 2010,
+            "finalCoor should still track the raw input before any line correction applies");
+}
+
+void TestHoverPathKeepsAvg3OutOfFinalCoor() {
+    Solvers::Stylus::LinearFilterProcess filter;
+    filter.m_enabled = true;
+
+    Solvers::HeatmapFrame frame{};
+    auto& stylus = frame.stylus;
+    stylus.runtime.pressure.outputPressure = 0;
+
+    stylus.runtime.tx1.coordinate.reportGlobalCoor = Coor(1000, 2000);
+    filter.Process(frame);
+
+    stylus.runtime.tx1.coordinate.reportGlobalCoor = Coor(1100, 2100);
+    filter.Process(frame);
+
+    stylus.runtime.tx1.coordinate.reportGlobalCoor = Coor(1200, 2200);
+    filter.Process(frame);
+
+    Require(stylus.runtime.post.postCoor.dim1 == 1100 &&
+            stylus.runtime.post.postCoor.dim2 == 2100,
+            "avg3 diagnostic path should still produce a 3-point average in hover");
+    Require(stylus.runtime.post.finalCoor.dim1 == 1200 &&
+            stylus.runtime.post.finalCoor.dim2 == 2200,
+            "hover finalCoor should bypass avg3 and keep the latest raw coordinate");
 }
 
 void TestPressureInactiveResetsHistoryState() {
@@ -809,17 +896,38 @@ void TestPressureInactiveResetsHistoryState() {
             "pressure inactive should passthrough raw coordinate");
     Require(stylus.runtime.post.linearFilterState == 0,
             "linear filter state should reset to 0 on pressure inactive");
-    Require(stylus.runtime.post.postCoor.dim1 == 999 &&
-            stylus.runtime.post.postCoor.dim2 == 1999,
-            "postCoor should passthrough raw when pressure is inactive");
 
-    // Resume pressure — new history should be clean
+    // Resume pressure — final output should still start from the raw path even though
+    // the avg3 diagnostic history remains live across the pressure gap.
     stylus.runtime.tx1.coordinate.reportGlobalCoor = Coor(700, 1700);
     stylus.runtime.pressure.outputPressure = 300;
     filter.Process(frame);
-    Require(stylus.runtime.post.postCoor.dim1 == 700 &&
-            stylus.runtime.post.postCoor.dim2 == 1700,
-            "first frame after resume should passthrough (history was reset)");
+    Require(stylus.runtime.post.finalCoor.dim1 == 700 &&
+            stylus.runtime.post.finalCoor.dim2 == 1700,
+            "first pressured frame after resume should still follow the raw input");
+}
+
+void TestIirCoefSelectionUsesRawMappedHistorySpeed() {
+    Solvers::Stylus::CoorSpeedProcess speed;
+    Solvers::Stylus::CoorIIRProcess iir;
+
+    Solvers::HeatmapFrame frame{};
+    auto& stylus = frame.stylus;
+
+    const int32_t rawX[3] = {1000, 1200, 1400};
+    for (int i = 0; i < 3; ++i) {
+        stylus.runtime.tx1.coordinate.reportGlobalCoor = Coor(rawX[i], 2000);
+        stylus.runtime.post.finalCoor = Coor(1000, 2000);
+        stylus.runtime.post.finalValid = true;
+
+        speed.Process(frame);
+        iir.Process(frame);
+    }
+
+    Require(stylus.runtime.post.speedValue > 0,
+            "speed path should observe movement from raw mapped history");
+    Require(iir.m_currentCoef > iir.m_coefLowInBand,
+            "IIR coefficient selection should react to raw-history speed, not a frozen finalCoor");
 }
 
 } // namespace
@@ -843,6 +951,8 @@ int main() {
         TestCoordinateSolverUsesFixedDevicePitchTables();
         TestCoordinateSolverClampsGlobalCoordinateAtTopLeftEdge();
         TestCoordinateSolverClampsGlobalCoordinateAtBottomRightEdge();
+        TestCoordinateSolverUsesPhysicalTopLeftEdgeAtLocalCenter();
+        TestCoordinateSolverUsesPhysicalBottomRightEdgeAtLocalCenter();
         TestTiltProcessUsesTx2RefinedCoordinate();
         TestTiltProcessClampsAnchoredCoordinatesBeforeTiltDiff();
         TestTiltProcessProducesTiltAndPostOutput();
@@ -852,8 +962,10 @@ int main() {
         TestAvg3WarmUpPassthrough();
         TestAvg3ThreePointAverage();
         TestPredictedCoorQuadraticExtrapolation();
-        TestLinearCorrectionConsumesAvg3();
+        TestLinearCorrectionUsesRawInputUntilLineConstraintApplies();
+        TestHoverPathKeepsAvg3OutOfFinalCoor();
         TestPressureInactiveResetsHistoryState();
+        TestIirCoefSelectionUsesRawMappedHistorySpeed();
         std::cout << "[TEST] Stylus linear filter process tests passed.\n";
         return 0;
     } catch (const std::exception& ex) {

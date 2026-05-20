@@ -11,28 +11,27 @@ namespace Solvers::Stylus {
 //
 // Replicates TSACore EdgeCoorProcess (0x6baaf250).
 //
-// The original computes an intra-frame delta between two pipeline-stage
-// snapshots stored in the previous frame's ASOutRuntime:
-//   pInnerX[0] = "Before IIR Filter"  (raw coordinate, pre-smoothing)
-//   pInnerX[3] = "Before Jitter Filter" (after line filter + IIR)
+// The original computes an intra-frame delta between reused ASOutRuntime
+// coordinate slots. Those pInner slots are stage scratch space, not stable
+// semantic fields; pInner[3], for example, is written by more than one stage.
 //
-// When |pInnerX[3] - pInnerX[0]| > 0x200 the filter chain made a large
-// correction, indicating edge proximity.  Combined with pen-up in the
-// current frame and the peak sitting on a grid boundary, this signals a
-// high-speed edge exit.  The module then carries the previous frame's
-// pressure into the current frame so downstream stages still treat it as
-// "pen down."
+// This port keeps semantic snapshots instead:
+//   prevPreFilter  = coordinate entering post-processing
+//   prevPostFilter = coordinate after the active post-filter chain
 //
-// In this port:
-//   pInnerX[0]  →  reportGlobalCoor   (post-CoordinateSolver, pre-filter)
-//   pInnerX[3]  →  post.finalCoor      (post-AftCoor, fully filtered)
+// When |prevPostFilter - prevPreFilter| > 0x200, the filter chain made a large
+// correction, indicating edge proximity. Combined with pen-up in the current
+// frame and the peak sitting on a grid boundary, this signals a high-speed
+// edge exit. The module then carries the previous frame's pressure into the
+// current frame so downstream stages still treat it as "pen down."
 //
-// Process() is called mid-pipeline (after PostPressure).  It captures the
-// pre-filter coordinate and performs detection using the stored previous-
-// frame snapshots.
+// Process() is called mid-pipeline after PostPressure. It captures the
+// pre-filter coordinate and performs detection using the stored previous-frame
+// snapshots.
 //
-// CaptureFinal() is called at the very end of the pipeline (after
-// AftCoor).  It stores the fully-filtered coordinate and final pressure.
+// CaptureFinal() stores the post-filter coordinate from the end of the active
+// coordinate filter chain. With AFT disabled, this is post-IIR; if AFT is
+// re-enabled, capture placement should be revisited intentionally.
 
 class EdgeCoorProcess {
 public:

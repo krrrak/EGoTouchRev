@@ -363,7 +363,7 @@ private:
     static inline void FillProjectionAxis(Axis& out, int minIdx, int maxIdx, CellValue cellValue) {
         for (int i = 0; i < Asa::kGridDim; ++i) {
             int32_t sum = 0;
-            for (int j = minIdx; j <= maxIdx; ++j) sum += cellValue(i, j);
+            for (int j = minIdx; j <= maxIdx; ++j) sum += std::max<int32_t>(cellValue(i, j), 0);
             out[i] = sum;
         }
     }

@@ -175,163 +175,158 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
     }
     ImGui::Separator();
 
-    // -- Stylus Pipeline Config (official ASA pipeline) --
     if (ImGui::BeginTabBar("StylusSubTabs")) {
         auto schema = m_proxy->GetStylusPipeline().GetConfigSchema();
         const auto& sd = m_currentFrame.stylus;
         const auto& diag = sd.debug.coord;
+        const auto& point = sd.output.point;
 
-        if (ImGui::BeginTabItem("Solver (Coordinate)")) {
-            ConfigUIRenderer::RenderConfigSchema(schema, "Stylus Solver", Solvers::ConfigParam::Solver);
+        const float activeRows = std::max(1.0f, static_cast<float>(std::max(m_proxy->GetStylusPipeline().GetPacketSensorRows(), 1)) * static_cast<float>(Asa::kCoorUnit));
+        const float activeCols = std::max(1.0f, static_cast<float>(std::max(m_proxy->GetStylusPipeline().GetPacketSensorCols(), 1)) * static_cast<float>(Asa::kCoorUnit));
+        const float clampedY = std::clamp(point.y, 0.0f, activeRows);
+        const float clampedX = std::clamp(point.x, 0.0f, activeCols);
+        const uint16_t screenX = static_cast<uint16_t>(std::clamp(static_cast<int>(std::lround((clampedY / activeRows) * 16000.0f)), 0, 65535));
+        const uint16_t screenY = static_cast<uint16_t>(std::clamp(static_cast<int>(std::lround((1.0f - (clampedX / activeCols)) * 25600.0f)), 0, 65535));
+        const bool finalPointMismatch = diag.valid &&
+            (std::abs(point.x - static_cast<float>(diag.finalDim1)) > 0.5f ||
+             std::abs(point.y - static_cast<float>(diag.finalDim2)) > 0.5f);
+
+        if (ImGui::BeginTabItem("Live Summary")) {
+            ImGui::TextColored(sd.output.valid ? ImVec4(0.2f,0.9f,0.3f,1) : ImVec4(1.0f,0.45f,0.25f,1),
+                "State: %s%s%s",
+                sd.output.valid ? "Valid" : "Invalid",
+                sd.output.inRange ? " | InRange" : "",
+                sd.output.tipDown ? " | TipDown" : "");
+            ImGui::Text("Pipeline Stage: %u", static_cast<unsigned int>(sd.output.pipelineStage));
+            ImGui::Text("Pressure: final=%u  raw=%u  mapped=%u  real=%s  age=%u",
+                sd.output.pressure,
+                diag.rawPressure,
+                diag.mappedPressure,
+                diag.pressureIsReal ? "yes" : "no",
+                static_cast<unsigned int>(diag.predictedAgeFrames));
+            ImGui::Text("Signal: peak=%u  tx1=%u  tx2=%u", diag.peakSignal, sd.interop.signalX, sd.interop.signalY);
 
             ImGui::Separator();
-            ImGui::TextColored(ImVec4(0.4f,0.85f,1.0f,1.f), "[Coord Breakdown] (dim1=Col=X, dim2=Row=Y)");
-            ImGui::Text("  anchorCol(X) = %u   (%u * %.1f = %.1f)",
-                diag.anchorCol, diag.anchorCol,
-                static_cast<float>(Asa::kCoorUnit),
-                static_cast<float>(diag.anchorCol) * Asa::kCoorUnit);
-            ImGui::Text("  anchorRow(Y) = %u   (%u * %.1f = %.1f)",
-                diag.anchorRow, diag.anchorRow,
-                static_cast<float>(Asa::kCoorUnit),
-                static_cast<float>(diag.anchorRow) * Asa::kCoorUnit);
-            ImGui::Text("  rawDim1(X)   = %d", diag.rawDim1);
-            ImGui::Text("  rawDim2(Y)   = %d", diag.rawDim2);
-            ImGui::Text("  finalDim1(X) = %d", diag.finalDim1);
-            ImGui::Text("  finalDim2(Y) = %d", diag.finalDim2);
-            ImGui::Text("  centerOff    = %.1f", diag.centerOff);
-            if (diag.valid) {
-                ImGui::TextColored(ImVec4(0.2f,0.9f,0.4f,1),
-                    "  point.X = anchorCol*kU + finalDim1 - cOff = %.2f", diag.pointX);
-                ImGui::TextColored(ImVec4(0.4f,0.7f,1.0f,1),
-                    "  point.Y = anchorRow*kU + finalDim2 - cOff = %.2f", diag.pointY);
-            } else {
-                ImGui::TextColored(ImVec4(0.7f,0.7f,0.0f,1), "  [coord invalid this frame]");
+            ImGui::TextColored(ImVec4(0.4f,0.85f,1.0f,1.f), "Output Coordinate");
+            ImGui::Text("Sensor: X=%.1f / %.1f  Y=%.1f / %.1f", point.x, activeCols, point.y, activeRows);
+            ImGui::Text("Report: X=%u  Y=%u", static_cast<unsigned int>(point.reportX), static_cast<unsigned int>(point.reportY));
+            ImGui::Text("Screen: X=%u / 16000  Y=%u / 25600", static_cast<unsigned int>(screenX), static_cast<unsigned int>(screenY));
+            if (finalPointMismatch) {
+                ImGui::TextColored(ImVec4(1.0f,0.35f,0.25f,1),
+                    "Final coordinate and output point differ: final=(%d,%d) point=(%.1f,%.1f)",
+                    diag.finalDim1, diag.finalDim2, point.x, point.y);
             }
             ImGui::EndTabItem();
         }
 
-        if (ImGui::BeginTabItem("Filters (Smoothing)")) {
-            // ── Render all 'Filter' category params (auto-generated) ──
-            ConfigUIRenderer::RenderConfigSchema(schema, "Stylus Filters", Solvers::ConfigParam::Filter);
-
-            ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f,0.85f,0.4f,1.f), "[Post-Processing]");
-            ImGui::Text("  Speed: instant=%.1f  short=%.1f  full=%.1f",
-                diag.speedInstant, diag.speedShortAvg, diag.speedFullAvg);
-            ImGui::Text("  IIR Coef: %.3f  %s",
-                diag.iirCoef,
-                diag.iirCoef < 0.3f ? "(strong smooth)" :
-                (diag.iirCoef > 0.8f ? "(fast track)" : "(moderate)"));
-
-            ImGui::Separator();
-            ImGui::TextColored(ImVec4(0.9f,0.9f,0.5f,1.f), "[Linear Filter]");
-            const char* lfStates[] = {
-                "Init","Wait","Collect","CurveLine",
-                "EnterStraight","StraightLine","ExitStraight"};
-            int lfs = std::clamp(static_cast<int>(diag.linearFilterState), 0, 6);
-            ImGui::Text("  State: %d (%s)", lfs, lfStates[lfs]);
-            ImGui::EndTabItem();
-        }
-
-        if (ImGui::BeginTabItem("Behavior (Tilt/Edge)")) {
-            ConfigUIRenderer::RenderConfigSchema(schema, "Stylus Behavior", Solvers::ConfigParam::Behavior);
-
-            ImGui::Separator();
-            ImGui::TextColored(ImVec4(0.8f,0.6f,1.0f,1.f), "[Tilt Diagnostics]");
-            ImGui::Text("  TX1-TX2 Diff: dX=%.1f  dY=%.1f", diag.tiltDiffX, diag.tiltDiffY);
-            ImGui::Text("  Pre-Tilt Angle:  dim1=%d deg  dim2=%d deg",
-                        static_cast<int>(diag.preTiltDim1),
-                        static_cast<int>(diag.preTiltDim2));
-            ImGui::Text("  Report-Tilt Angle: dim1=%d deg  dim2=%d deg",
-                        static_cast<int>(diag.reportTiltDim1),
-                        static_cast<int>(diag.reportTiltDim2));
-            if (diag.tiltAnomalyDamped)
-                ImGui::TextColored(ImVec4(1.0f,0.4f,0.4f,1), "  !! Tilt anomaly damping active");
-            ImGui::Text("  Signal Ratio (TX2/TX1): %u%%", diag.signalRatio);
-
-            ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f,0.85f,0.4f,1.f), "[Edge/Hover]");
-            ImGui::Text("  Mode: %s%s",
-                diag.isHover ? "Hover" : "Write",
-                diag.isEdge  ? " + Edge" : "");
-            const char* lifecycleLabels[] = {"Leave","Hover","Contact","Lifting"};
-            int li = std::clamp(static_cast<int>(diag.penLifecycle), 0, 3);
-            ImGui::Text("  Lifecycle: %s", lifecycleLabels[li]);
-
-            ImGui::Separator();
-            ImGui::TextColored(ImVec4(0.5f,0.9f,1.0f,1.f), "[P3/P4 Pipeline State]");
-            {
-                const char* lcLabels[] = {"Leave","Hover","Contact","Lifting"};
-                int pi = std::clamp(static_cast<int>(diag.penLifecycle), 0, 3);
-                ImGui::Text("  Pen Lifecycle (diag): %s", lcLabels[pi]);
+        if (ImGui::BeginTabItem("Coordinate Pipeline")) {
+            ImGui::TextColored(ImVec4(0.4f,0.85f,1.0f,1.f), "Coordinate Stages (dim1=X/Col, dim2=Y/Row)");
+            ImGui::Text("Anchor: row=%u  col=%u", diag.anchorRow, diag.anchorCol);
+            ImGui::Text("Local:  dim1=%d  dim2=%d", diag.localCoorDim1, diag.localCoorDim2);
+            ImGui::Text("Raw:    dim1=%d  dim2=%d", diag.rawDim1, diag.rawDim2);
+            ImGui::Text("3PtAvg: dim1=%d  dim2=%d", diag.avg3PtDim1, diag.avg3PtDim2);
+            ImGui::Text("Final:  dim1=%d  dim2=%d", diag.finalDim1, diag.finalDim2);
+            ImGui::Text("Point:  x=%.1f  y=%.1f", point.x, point.y);
+            if (finalPointMismatch) {
+                ImGui::TextColored(ImVec4(1.0f,0.35f,0.25f,1), "Final/Point mismatch: downstream finalCoor changes may not be reflected in output.point.");
             }
-            ImGui::Text("  Was Inking: %s", diag.wasInking ? "YES" : "no");
-            ImGui::Text("  Exit Smoothed: %s", diag.exitSmoothed ? "YES" : "no");
-            ImGui::Text("  CMF Enabled: %s", diag.cmfEnabled ? "YES" : "no");
-            if (diag.coorReviserActive) {
-                ImGui::TextColored(ImVec4(0.4f,1.0f,0.6f,1),
-                    "  CoorReviser: ON (dX=%.1f dY=%.1f)",
-                    diag.coorRevDeltaX, diag.coorRevDeltaY);
-            } else {
-                ImGui::Text("  CoorReviser: OFF");
+
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(1.0f,0.85f,0.4f,1.f), "Post Filters");
+            ImGui::Text("Speed: instant=%.1f  short=%.1f  full=%.1f", diag.speedInstant, diag.speedShortAvg, diag.speedFullAvg);
+            ImGui::Text("IIR: coef=%.0f", diag.iirCoef);
+            ImGui::Text("Linear Filter: state=%u", static_cast<unsigned int>(diag.linearFilterState));
+            ImGui::Text("CoorRevise: %s  delta=(%.1f, %.1f)",
+                diag.coorReviserActive ? "on" : "off",
+                diag.coorRevDeltaX,
+                diag.coorRevDeltaY);
+            ImGui::EndTabItem();
+        }
+
+        if (ImGui::BeginTabItem("Tilt / Edge")) {
+            ImGui::TextColored(ImVec4(0.8f,0.6f,1.0f,1.f), "Tilt");
+            ImGui::Text("TX1/TX2 diff: filtered=(%.1f, %.1f)  raw=(%d, %d)",
+                diag.tiltDiffX, diag.tiltDiffY, diag.tiltRawDiffDim1, diag.tiltRawDiffDim2);
+            ImGui::Text("Tilt angle: pre=(%d, %d)  report=(%d, %d)",
+                static_cast<int>(diag.preTiltDim1),
+                static_cast<int>(diag.preTiltDim2),
+                static_cast<int>(diag.reportTiltDim1),
+                static_cast<int>(diag.reportTiltDim2));
+            ImGui::Text("Signal ratio TX2/TX1: %u%%  lenLimit=%u",
+                static_cast<unsigned int>(diag.signalRatio),
+                static_cast<unsigned int>(diag.tiltLenLimit));
+            if (diag.tiltAnomalyDamped) {
+                ImGui::TextColored(ImVec4(1.0f,0.4f,0.4f,1), "Tilt anomaly damping active");
             }
-            ImGui::Text("  3Pt Avg: dim1=%d  dim2=%d", diag.avg3PtDim1, diag.avg3PtDim2);
 
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(1.0f,0.85f,0.4f,1.f), "Edge / Signal Gates");
+            ImGui::Text("Mode: %s%s", diag.isHover ? "Hover" : "Write", diag.isEdge ? " + Edge" : "");
+            ImGui::Text("Edge flags: dim1=%s  dim2=%s", diag.dim1Edge ? "yes" : "no", diag.dim2Edge ? "yes" : "no");
+            ImGui::Text("Peak: tx1=%u sum3x3=%u  tx2=%u sum3x3=%u tx2Valid=%s",
+                diag.tx1PeakValue,
+                diag.tx1Sum3x3,
+                diag.tx2PeakValue,
+                diag.tx2Sum3x3,
+                diag.tx2Valid ? "yes" : "no");
+            ImGui::Text("BT press suppress: %s", diag.btPressSuppressActive ? "active" : "inactive");
+            ImGui::Text("Edge signal low latch: %s", diag.edgeSignalTooLowLatched ? "active" : "inactive");
+            ImGui::Text("Fake pressure decrease: %s  framesLeft=%u",
+                diag.fakePressureDecreaseActive ? "active" : "inactive",
+                static_cast<unsigned int>(diag.fakePressureDecreaseFramesLeft));
             ImGui::EndTabItem();
         }
 
-        if (ImGui::BeginTabItem("Output (HID/Pressure)")) {
-            ConfigUIRenderer::RenderConfigSchema(schema, "Stylus Output", Solvers::ConfigParam::Output);
-            ConfigUIRenderer::RenderConfigSchema(schema, "Stylus General", Solvers::ConfigParam::General);
-
-            ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f,0.5f,0.3f,1.f), "[Pressure Chain]");
-            ImGui::Text("  Peak Signal: %u", diag.peakSignal);
-            ImGui::Text("  Raw Pressure (BT MCU): %u", diag.rawPressure);
-            ImGui::Text("  Mapped Pressure: %u", diag.mappedPressure);
-
-            ImGui::Separator();
-            ImGui::TextColored(ImVec4(0.3f,1.0f,0.8f,1.f), "[VHF Pen State]");
-            uint8_t ps = diag.vhfPenState;
-            bool inRange   = (ps >> 5) & 1;
-            bool tipSwitch = (ps >> 0) & 1;
-            bool barrel    = (ps >> 1) & 1;
-            ImGui::Text("  byte[1] = 0x%02X", ps);
-            ImGui::Text("  InRange=%s  TipSwitch=%s  Barrel=%s",
-                inRange ? "YES" : "no", tipSwitch ? "YES" : "no", barrel ? "YES" : "no");
-            if (inRange && tipSwitch)
-                ImGui::TextColored(ImVec4(0.2f,0.9f,0.3f,1), "  => Writing (ink active)");
-            else if (inRange)
-                ImGui::TextColored(ImVec4(0.6f,0.8f,1.0f,1), "  => Hovering (cursor only)");
-            else
-                ImGui::TextColored(ImVec4(0.5f,0.5f,0.5f,1), "  => Out of range");
-
-            ImGui::Separator();
-            ImGui::TextColored(ImVec4(0.4f,0.85f,1.0f,1.f), "[Full Screen Coordinate]");
-            const auto& point = sd.output.point;
-            const float activeRows = std::max(1.0f, static_cast<float>(std::max(m_proxy->GetStylusPipeline().GetPacketSensorRows(), 1)) * static_cast<float>(Asa::kCoorUnit));
-            const float activeCols = std::max(1.0f, static_cast<float>(std::max(m_proxy->GetStylusPipeline().GetPacketSensorCols(), 1)) * static_cast<float>(Asa::kCoorUnit));
-            const float clampedY = std::clamp(point.y, 0.0f, activeRows);
-            const float clampedX = std::clamp(point.x, 0.0f, activeCols);
-            const uint16_t screenX = static_cast<uint16_t>(std::clamp(static_cast<int>(std::lround((clampedY / activeRows) * 16000.0f)), 0, 65535));
-            const uint16_t screenY = static_cast<uint16_t>(std::clamp(static_cast<int>(std::lround((1.0f - (clampedX / activeCols)) * 25600.0f)), 0, 65535));
-            ImGui::Text("  Sensor: X=%.1f / %.1f  Y=%.1f / %.1f", point.x, activeCols, point.y, activeRows);
-            ImGui::Text("  Full Screen: X=%u / 16000  Y=%u / 25600", static_cast<unsigned int>(screenX), static_cast<unsigned int>(screenY));
-
-            ImGui::Separator();
-            const char* stageNames[] = {
-                "OK", "SlaveParseErr", "TX1Invalid", "NoPeak",
-                "CoordFail", "NoiseReject"};
-            int si = std::clamp(static_cast<int>(sd.output.pipelineStage), 0, 5);
-            if (sd.output.pipelineStage == 0)
-                ImGui::TextColored(ImVec4(0.2f,0.9f,0.3f,1), "Pipeline Status: %s", stageNames[si]);
-            else
-                ImGui::TextColored(ImVec4(1.0f,0.3f,0.3f,1), "Pipeline Status: %s (%d)", stageNames[si], si);
-
+        if (ImGui::BeginTabItem("Config")) {
+            if (ImGui::BeginTabBar("StylusConfigTabs")) {
+                static const char* modules[] = {"Frame Parser", "Data Solve", "Pressure", "Coordinate", "Output"};
+                for (const char* module : modules) {
+                    if (ImGui::BeginTabItem(module)) {
+                        ConfigUIRenderer::RenderConfigSchemaByModule(schema, module);
+                        ImGui::Separator();
+                        if (ImGui::Button("Save & Apply")) {
+                            m_proxy->SaveConfig();
+                        }
+                        ImGui::EndTabItem();
+                    }
+                }
+                ImGui::EndTabBar();
+            }
             ImGui::EndTabItem();
         }
 
-        if (ImGui::BeginTabItem("Pipeline Internals")) {
+        if (ImGui::BeginTabItem("Advanced Debug")) {
+            ImGui::TextColored(ImVec4(0.9f,0.9f,0.5f,1.f), "Linear Filter Internals");
+            ImGui::Text("State=%u  lfState=%u  cos=%d  straightCount=%d  drag=%d",
+                static_cast<unsigned int>(diag.linearFilterState),
+                static_cast<unsigned int>(diag.lfStateMachine),
+                diag.lfCos1000,
+                diag.lfStraightBufCount,
+                diag.lfDragApplied);
+            ImGui::Text("Line fit: valid=%s  slope=%.4f  intercept=%.4f",
+                diag.lfLineFitValid ? "yes" : "no",
+                diag.lfLineFitSlopeA,
+                diag.lfLineFitInterceptB);
+
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(1.0f,0.5f,0.3f,1.f), "Pressure Internals");
+            ImGui::Text("BT raw=%u  preIIR=%u  polySegment=%u  freqDebounceLeft=%u",
+                diag.btRawPressure,
+                diag.preIirPressure,
+                static_cast<unsigned int>(diag.polySegment),
+                static_cast<unsigned int>(diag.btFreqShiftDebounceFramesLeft));
+
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(0.5f,0.9f,1.0f,1.f), "Legacy / Derived Flags");
+            ImGui::Text("lifecycle=%u  wasInking=%s  exitSmoothed=%s  cmf=%s  sigSuppress=%s  vhfPenState=0x%02X",
+                static_cast<unsigned int>(diag.penLifecycle),
+                diag.wasInking ? "yes" : "no",
+                diag.exitSmoothed ? "yes" : "no",
+                diag.cmfEnabled ? "yes" : "no",
+                diag.sigSuppressActive ? "yes" : "no",
+                static_cast<unsigned int>(diag.vhfPenState));
+
+            ImGui::Separator();
             DrawDynamicDebugPanel();
             ImGui::EndTabItem();
         }
