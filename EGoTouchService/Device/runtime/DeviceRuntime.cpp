@@ -13,6 +13,7 @@
 namespace {
 constexpr std::size_t kMaxHistoryItems = 512;
 constexpr std::chrono::milliseconds kEventDebounce{400};
+constexpr std::chrono::milliseconds kDisplayOffSuspendDelay{2000};
 } // namespace
 
 // --------------- ToString helpers ---------------
@@ -66,8 +67,12 @@ bool DeviceRuntime::Start() {
     if (m_running.exchange(true)) return false;
     m_stopReason.store(StopReason::None);  // ← critical: clear stop reason for restart
     SetState(workerState::ready);
-    m_needSuspendDeinit = false;
+    m_needSuspendDeinit.store(false, std::memory_order_release);
     m_recoverCount = 0;
+    {
+        std::lock_guard<std::mutex> lk(m_mu);
+        m_displayOffSuspendPending = false;
+    }
     m_lastNote = "Runtime started";
     m_thread = std::thread(&DeviceRuntime::WorkerMain, this);
     LOG_INFO("Runtime", __func__, "ready", "Worker thread launched.");
@@ -190,37 +195,80 @@ uint64_t DeviceRuntime::SubmitCommand(
 
 void DeviceRuntime::IngestPolicyEvent(
         const RuntimePolicyEvent& ev) {
+    using EventType = RuntimePolicyEvent::Type;
+
     const auto now = std::chrono::steady_clock::now();
+    const bool isWakeEvent =
+        ev.type == EventType::DisplayOn ||
+        ev.type == EventType::LidOn ||
+        ev.type == EventType::ResumeAutomatic;
     {
         std::lock_guard<std::mutex> lk(m_mu);
         const int key = static_cast<int>(ev.type);
         auto it = m_lastEventByType.find(key);
         if (it != m_lastEventByType.end() &&
-            now - it->second < kEventDebounce) return;
+            now - it->second < kEventDebounce &&
+            !(isWakeEvent && m_displayOffSuspendPending)) {
+            return;
+        }
         m_lastEventByType[key] = now;
     }
 
-    using EventType = RuntimePolicyEvent::Type;
     switch (ev.type) {
     case EventType::DisplayOff:
+        {
+            std::lock_guard<std::mutex> lk(m_mu);
+            m_displayOffSuspendPending = true;
+            m_displayOffSuspendDeadline = now + kDisplayOffSuspendDelay;
+        }
+        LOG_INFO(
+            "Runtime",
+            __func__,
+            "Policy",
+            "DisplayOff pending; suspend delayed by {} ms.",
+            kDisplayOffSuspendDelay.count());
+        m_chip.CancelPendingFrameRead();
+        break;
     case EventType::LidOff:
+        {
+            std::lock_guard<std::mutex> lk(m_mu);
+            m_displayOffSuspendPending = false;
+        }
         LOG_INFO("Runtime", __func__, "Policy", "Sleep event ({}), requesting suspend.", ToString(ev.type));
-        m_chip.CancelPendingFrameRead();  // abort any blocking GetFrame NOW
+        m_chip.CancelPendingFrameRead();
         m_stopReason.store(StopReason::ScreenOff);
         break;
     case EventType::DisplayOn:
     case EventType::LidOn:
     case EventType::ResumeAutomatic:
-        LOG_INFO("Runtime", __func__, "Policy", "Wake event ({}), attempting resume.", ToString(ev.type));
-        // suspend 状态下直接恢复，无需重建线程
-        if (m_state.load() == workerState::suspend) {
-            SetState(workerState::ready);
-            LOG_INFO("Runtime", __func__, "Policy", "Resumed from suspend -> ready (zero-cost wakeup).");
-        } else if (IsRunning()) {
-            Stop();
-            Start();
-        } else {
-            LOG_INFO("Runtime", __func__, "Policy", "Wake event ignored because runtime is stopped.");
+        {
+            bool cancelledDisplayOff = false;
+            {
+                std::lock_guard<std::mutex> lk(m_mu);
+                cancelledDisplayOff = m_displayOffSuspendPending;
+                m_displayOffSuspendPending = false;
+            }
+
+            StopReason expected = StopReason::ScreenOff;
+            const bool clearedScreenOff = m_stopReason.compare_exchange_strong(expected, StopReason::None);
+            m_needSuspendDeinit.store(false, std::memory_order_release);
+
+            LOG_INFO("Runtime", __func__, "Policy", "Wake event ({}), attempting resume.", ToString(ev.type));
+            if (cancelledDisplayOff) {
+                LOG_INFO("Runtime", __func__, "Policy", "Wake event cancelled pending DisplayOff suspend.");
+            }
+            if (clearedScreenOff) {
+                LOG_INFO("Runtime", __func__, "Policy", "Wake event cleared pending ScreenOff stop reason.");
+            }
+
+            if (m_state.load() == workerState::suspend) {
+                SetState(workerState::ready);
+                LOG_INFO("Runtime", __func__, "Policy", "Resumed from suspend -> ready (zero-cost wakeup).");
+            } else if (IsRunning()) {
+                LOG_INFO("Runtime", __func__, "Policy", "Runtime already active; wake event does not restart worker.");
+            } else {
+                LOG_INFO("Runtime", __func__, "Policy", "Wake event ignored because runtime is stopped.");
+            }
         }
         break;
     case EventType::Shutdown:
@@ -313,6 +361,29 @@ bool DeviceRuntime::DrainCommands() {
 
 ThreadResult DeviceRuntime::WorkerMain() {
     while (true) {
+        bool displayOffSuspendDue = false;
+        {
+            std::lock_guard<std::mutex> lk(m_mu);
+            if (m_displayOffSuspendPending &&
+                std::chrono::steady_clock::now() >= m_displayOffSuspendDeadline &&
+                m_stopReason.load(std::memory_order_acquire) != StopReason::Shutdown) {
+                m_displayOffSuspendPending = false;
+                SetState(workerState::suspend);
+                m_needSuspendDeinit.store(true, std::memory_order_release);
+                m_cmdQueue.clear();
+                displayOffSuspendDue = true;
+            }
+        }
+        if (displayOffSuspendDue) {
+            LOG_INFO(
+                "Runtime",
+                __func__,
+                "Policy",
+                "DisplayOff remained active for {} ms; entering suspend.",
+                kDisplayOffSuspendDelay.count());
+            continue;
+        }
+
         // ── 检查停止请求，根据 StopReason 分流到 suspend 或 quit ──
         auto reason = m_stopReason.exchange(StopReason::None,
                                             std::memory_order_acq_rel);
@@ -320,7 +391,7 @@ ThreadResult DeviceRuntime::WorkerMain() {
             if (reason == StopReason::ScreenOff) {
                 LOG_INFO("Runtime", __func__, "StopReq", "StopReason::ScreenOff consumed -> suspend");
                 SetState(workerState::suspend);
-                m_needSuspendDeinit = true;   // 延迟到 OnSuspend 首次进入时执行
+                m_needSuspendDeinit.store(true, std::memory_order_release);
             } else {
                 LOG_INFO("Runtime", __func__, "StopReq", "StopReason::Shutdown consumed -> quit");
                 SetState(workerState::quit);
@@ -364,6 +435,16 @@ void DeviceRuntime::OnReady() {
 }
 
 void DeviceRuntime::OnStreaming() {
+    bool displayOffSuspendPending = false;
+    {
+        std::lock_guard<std::mutex> lk(m_mu);
+        displayOffSuspendPending = m_displayOffSuspendPending;
+    }
+    if (displayOffSuspendPending) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        return;
+    }
+
     auto res = m_chip.GetFrame();
     if (res == std::unexpected(ChipError::Timeout)) return;
     if (!res) {
@@ -565,9 +646,8 @@ bool DeviceRuntime::OnQuit() {
 
 void DeviceRuntime::OnSuspend() {
     // 首次进入 suspend 时执行 HoldReset（拉低 reset，关闭中断通道）
-    if (m_needSuspendDeinit) {
+    if (m_needSuspendDeinit.exchange(false, std::memory_order_acq_rel)) {
         m_chip.HoldReset();
-        m_needSuspendDeinit = false;
         LOG_INFO("Runtime", __func__, "suspend", "Entered suspend, chip reset held low. Waiting for wake event.");
     }
     // 低功耗等待，每 100ms 检查一次状态变更
@@ -581,7 +661,7 @@ void DeviceRuntime::OnRecover() {
     if (m_recoverCount > 30) {
         LOG_ERROR("Runtime", __func__, "Recover", "Exceeded 30 recovery attempts, entering suspend.");
         m_recoverCount = 0;
-        m_needSuspendDeinit = true;
+        m_needSuspendDeinit.store(true, std::memory_order_release);
         SetState(workerState::suspend);
         return;
     }

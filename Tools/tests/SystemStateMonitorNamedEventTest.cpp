@@ -31,6 +31,33 @@ void ResetAllNamedEventsBestEffort() {
     }
 }
 
+std::vector<HANDLE> OpenAllNamedEventsForTest() {
+    std::vector<HANDLE> handles;
+    const auto& named_events = Host::SystemStateMonitor::NamedEventList();
+    handles.reserve(Host::SystemStateMonitor::kEventCount);
+
+    for (const wchar_t* event_name : named_events) {
+        HANDLE event_handle = CreateEventW(nullptr, TRUE, FALSE, event_name);
+        if (event_handle == nullptr) {
+            for (HANDLE handle : handles) {
+                CloseHandle(handle);
+            }
+            handles.clear();
+            return handles;
+        }
+        handles.push_back(event_handle);
+    }
+
+    return handles;
+}
+
+void CloseHandles(std::vector<HANDLE>& handles) {
+    for (HANDLE handle : handles) {
+        CloseHandle(handle);
+    }
+    handles.clear();
+}
+
 bool ExpectSequence(const std::vector<Host::SystemStateEventType>& expected,
                     const std::vector<Host::SystemStateEventType>& actual) {
     if (actual.size() < expected.size()) {
@@ -86,7 +113,7 @@ bool RunNamedEventSequenceTest() {
             std::cerr << "[TEST] Failed to signal named event in sequence test.\n";
             return false;
         }
-        std::this_thread::sleep_for(20ms);
+        std::this_thread::sleep_for(80ms);
     }
 
     const std::vector<Host::SystemStateEventType> expected = {
@@ -112,6 +139,72 @@ bool RunNamedEventSequenceTest() {
 
     if (!ExpectSequence(expected, observed)) {
         std::cerr << "[TEST] Event sequence mismatch.\n";
+        for (std::size_t i = 0; i < observed.size(); ++i) {
+            std::cerr << "  observed[" << i << "]=" << Host::ToString(observed[i]) << "\n";
+        }
+        return false;
+    }
+
+    return true;
+}
+
+bool RunDisplayBurstCoalescingTest() {
+    using namespace std::chrono_literals;
+
+    auto event_handles = OpenAllNamedEventsForTest();
+    if (event_handles.size() != Host::SystemStateMonitor::kEventCount) {
+        std::cerr << "[TEST] Failed to create named events in display burst coalescing test.\n";
+        return false;
+    }
+
+    ResetAllNamedEventsBestEffort();
+
+    SetEvent(event_handles[Host::ToIndex(Host::SystemStateNamedEventId::MonitorConsoleDisplayOff)]);
+    SetEvent(event_handles[Host::ToIndex(Host::SystemStateNamedEventId::MonitorConsoleDisplayOn)]);
+
+    Host::SystemStateMonitor monitor;
+
+    std::mutex mu;
+    std::condition_variable cv;
+    std::vector<Host::SystemStateEventType> observed;
+
+    const bool started = monitor.Start([&](const Host::SystemStateEvent& event) {
+        {
+            std::lock_guard<std::mutex> lock(mu);
+            observed.push_back(event.type);
+        }
+        cv.notify_all();
+    });
+
+    if (!started) {
+        CloseHandles(event_handles);
+        std::cerr << "[TEST] SystemStateMonitor start failed in display burst coalescing test.\n";
+        return false;
+    }
+
+    {
+        std::unique_lock<std::mutex> lock(mu);
+        const bool received_event = cv.wait_for(lock, 2s, [&] {
+            return !observed.empty();
+        });
+        if (!received_event) {
+            monitor.Stop();
+            CloseHandles(event_handles);
+            std::cerr << "[TEST] Timeout waiting for display burst event.\n";
+            return false;
+        }
+    }
+
+    std::this_thread::sleep_for(150ms);
+    monitor.Stop();
+    CloseHandles(event_handles);
+
+    const std::vector<Host::SystemStateEventType> expected = {
+        Host::SystemStateEventType::DisplayOn,
+    };
+
+    if (!ExpectSequence(expected, observed) || observed.size() != expected.size()) {
+        std::cerr << "[TEST] Display burst coalescing mismatch.\n";
         for (std::size_t i = 0; i < observed.size(); ++i) {
             std::cerr << "  observed[" << i << "]=" << Host::ToString(observed[i]) << "\n";
         }
@@ -240,12 +333,16 @@ int main() {
         return 1;
     }
 
-    if (!RunCallbackExceptionContainmentTest()) {
+    if (!RunDisplayBurstCoalescingTest()) {
         return 2;
     }
 
-    if (!RunCallbackReentrantStopTest()) {
+    if (!RunCallbackExceptionContainmentTest()) {
         return 3;
+    }
+
+    if (!RunCallbackReentrantStopTest()) {
+        return 4;
     }
 
     std::cout << "[TEST] SystemStateMonitor named-event tests passed.\n";

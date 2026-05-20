@@ -232,7 +232,7 @@ private:
     Solvers::StylusPipeline m_stylusPipeline;
     VhfReporter m_vhfReporter;
     uint8_t m_recoverCount = 0;
-    bool m_needSuspendDeinit = false;  // suspend 首次进入时执行 Deinit
+    std::atomic<bool> m_needSuspendDeinit{false};
 
     // GetFrame 连续非Timeout失败计数（容忍 AFE 命令后的短暂 bus 异常）
     static constexpr int kMaxConsecutiveFrameErrors = 3;
@@ -240,6 +240,8 @@ private:
 
     mutable std::mutex m_mu;
     std::deque<QueuedCommand> m_cmdQueue;
+    bool m_displayOffSuspendPending = false;
+    std::chrono::steady_clock::time_point m_displayOffSuspendDeadline{};
 
     std::vector<HistoryEntry> m_history;
     std::unordered_map<int, std::chrono::steady_clock::time_point>

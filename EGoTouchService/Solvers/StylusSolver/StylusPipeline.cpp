@@ -15,7 +15,6 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
         m_postPressure.Reset();
         m_edgeCoorProcess.Reset();
         m_edgeCoorPostProcess.Reset();
-        m_noisePostProcess.Reset();
         m_linearFilterProcess.Reset();
         m_coorReviseProcess.Reset();
         m_coorSpeedProcess.Reset();
@@ -32,7 +31,6 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
         m_postPressure.Reset();
         m_edgeCoorProcess.Reset();
         m_edgeCoorPostProcess.Reset();
-        m_noisePostProcess.Reset();
         m_linearFilterProcess.Reset();
         m_coorReviseProcess.Reset();
         m_coorSpeedProcess.Reset();
@@ -49,7 +47,6 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
         m_postPressure.Reset();
         m_edgeCoorProcess.Reset();
         m_edgeCoorPostProcess.Reset();
-        m_noisePostProcess.Reset();
         m_linearFilterProcess.Reset();
         m_coorReviseProcess.Reset();
         m_coorSpeedProcess.Reset();
@@ -63,7 +60,6 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
     m_tiltProcess.Process(frame);
     m_pressureSolver.Process(frame);
     m_postPressure.Process(frame);
-    m_noisePostProcess.Process(frame);
     m_edgeCoorProcess.Process(frame);
     m_edgeCoorPostProcess.Process(frame);
     m_linearFilterProcess.Process(frame);

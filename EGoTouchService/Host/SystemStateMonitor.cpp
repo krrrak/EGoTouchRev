@@ -263,6 +263,10 @@ void DispatchNormalizedBatch(
         }
     }
 
+    const bool displayBurstHasOnAndOff =
+        entries[ToIndex(SystemStateEventType::DisplayOn)].present &&
+        entries[ToIndex(SystemStateEventType::DisplayOff)].present;
+
     for (std::size_t position = 0; position < batchCount; ++position) {
         const std::size_t eventIndex = batchIndices[position];
         const SystemStateNamedEventSpec* spec = TryGetNamedEventSpec(eventIndex);
@@ -281,6 +285,15 @@ void DispatchNormalizedBatch(
                 "Suppressing named event[{}] as duplicate transport for type={}.",
                 eventIndex,
                 ToString(type));
+            continue;
+        }
+
+        if (displayBurstHasOnAndOff && entry.event.type == SystemStateEventType::DisplayOff) {
+            LOG_INFO(
+                "Host",
+                __func__,
+                "Normalize",
+                "Suppressing DisplayOff from mixed display burst; DisplayOn wins for transient display changes.");
             continue;
         }
 
