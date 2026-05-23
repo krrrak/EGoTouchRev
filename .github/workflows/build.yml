@@ -47,3 +47,28 @@ jobs:
           if (Test-Path "HostSystemStateMonitorTest.exe") {
             .\HostSystemStateMonitorTest.exe
           }
+
+      - name: Determine Version
+        id: version
+        run: |
+          $version = "1.0.0"
+          if ($env:GITHUB_REF -match "^refs/tags/v?(.*)$") {
+            $version = $matches[1]
+          }
+          echo "APP_VERSION=$version" >> $env:GITHUB_ENV
+          echo "Resolved Version: $version"
+
+      - name: Install WiX Toolset
+        run: dotnet tool install --global wix
+
+      - name: Build Installer (Release & Test)
+        run: |
+          wix extension add -g WixToolset.UI.wixext
+          wix build -ext WixToolset.UI.wixext -arch arm64 -d BuildVersion=$env:APP_VERSION scripts\EGoTouchSetup.wxs -loc scripts\zh-CN.wxl -out build\EGoTouchSetup_arm64.msi
+          wix build -ext WixToolset.UI.wixext -arch arm64 -d BuildVersion=$env:APP_VERSION scripts\EGoTouchTestSetup.wxs -loc scripts\zh-CN.wxl -out build\EGoTouchTestSetup_arm64.msi
+
+      - name: Upload Installer Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: EGoTouch-Installers-ARM64
+          path: build\*.msi

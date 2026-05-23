@@ -4,7 +4,7 @@
     测试版本安装包声明区：
     包含完整的诊断上位机与测试工具。
   -->
-  <Package Name="!(loc.ProductNameTest)" Manufacturer="!(loc.Manufacturer)" Version="1.9.9"
+  <Package Name="!(loc.ProductNameTest)" Manufacturer="!(loc.Manufacturer)" Version="$(var.BuildVersion)"
            UpgradeCode="434AC770-0762-431A-9ABC-DB2F9DB289AD" 
            Scope="perMachine"
            Language="!(loc.Language)">
