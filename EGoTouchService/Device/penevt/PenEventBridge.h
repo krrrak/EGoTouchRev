@@ -1,6 +1,7 @@
 #pragma once
 
 #include "btmcu/BtHidChannel.h"
+#include "btmcu/PenUsbInitSession.h"
 #include "btmcu/PenUsbTypes.h"
 
 #include <cstdint>
@@ -15,7 +16,7 @@ namespace Himax::Pen {
 ///
 /// 负责：
 ///   - USB HID col00 设备发现（SetupDi GUID 枚举）
-///   - 初始握手 (0x7101 + 0x7701)
+///   - 初始握手 (0x7101 + 0x7701 + 0x7701)
 ///   - 事件帧读取 + 自动 ACK (0x8001)
 ///   - 0x7B InitParam → 0x7D01 回显
 ///   - 上层事件回调分发
@@ -36,7 +37,7 @@ public:
     /// 设置状态事件句柄（用于通知 App 侧刷新状态）
     void SetNotifyEvent(NativeEventHandle h) { m_notifyEvent = h; }
 
-    /// 手动触发握手（0x7101 + 0x7701），通常无需手动调用。
+    /// 手动触发握手（0x7101 + 0x7701 + 0x7701），通常无需手动调用。
     void RunHandshake();
 
 protected:
@@ -46,18 +47,11 @@ protected:
     const char* ChannelName() const override { return "PenEventBridge"; }
 
 private:
-    enum class SessionPhase : uint8_t {
-        AwaitingPenStatus = 0,
-        AwaitingMcuStatus,
-        AwaitingInitParamRequest,
-        Running,
-    };
-
     static int GetAckCode(uint8_t eventCode);
 
     bool SendRawPacket(const std::vector<uint8_t>& pkt);
     void SendAck(uint8_t ackCode);
-    void ResetSessionState();
+    void ExecuteInitAction(PenUsbInitAction action);
     void AdvanceSessionFromEvent(uint8_t eventCode);
 
     bool SendQueryPenStatus();
@@ -70,13 +64,7 @@ private:
     mutable std::mutex m_txMutex;
     PenEventCallback m_eventCallback;
     NativeEventHandle m_notifyEvent = nullptr;
-    SessionPhase m_sessionPhase = SessionPhase::AwaitingPenStatus;
-    bool m_initParamSent = false;
-    bool m_penStatusQuerySent = false;
-    bool m_firstMcuStatusQuerySent = false;
-    bool m_secondMcuStatusQuerySent = false;
-    bool m_receivedPenCurStatus = false;
-    bool m_receivedPenTypeInfo = false;
+    PenUsbInitSession m_initSession;
 };
 
 } // namespace Himax::Pen

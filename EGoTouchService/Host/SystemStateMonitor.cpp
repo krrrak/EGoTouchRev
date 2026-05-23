@@ -86,6 +86,8 @@ const char* ToString(SystemStateEventType type) noexcept {
         return "LidOn";
     case SystemStateEventType::LidOff:
         return "LidOff";
+    case SystemStateEventType::Suspend:
+        return "Suspend";
     case SystemStateEventType::Shutdown:
         return "Shutdown";
     case SystemStateEventType::ResumeAutomatic:

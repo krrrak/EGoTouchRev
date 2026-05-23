@@ -324,6 +324,9 @@ RuntimePolicyEvent TranslateSystemStateEvent(const Host::SystemStateEvent& event
     case Host::SystemStateEventType::LidOff:
         translated.type = RuntimePolicyEvent::Type::LidOff;
         break;
+    case Host::SystemStateEventType::Suspend:
+        translated.type = RuntimePolicyEvent::Type::Suspend;
+        break;
     case Host::SystemStateEventType::Shutdown:
         translated.type = RuntimePolicyEvent::Type::Shutdown;
         break;

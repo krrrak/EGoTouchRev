@@ -61,6 +61,7 @@ public:
         DisplayOff,
         LidOn,
         LidOff,
+        Suspend,
         Shutdown,
         ResumeAutomatic,
     };
@@ -250,6 +251,7 @@ private:
     std::deque<QueuedCommand> m_cmdQueue;
     bool m_displayOffSuspendPending = false;
     std::chrono::steady_clock::time_point m_displayOffSuspendDeadline{};
+    std::atomic<bool> m_systemSuspendObserved{false};
 
     std::vector<HistoryEntry> m_history;
     std::unordered_map<int, std::chrono::steady_clock::time_point>

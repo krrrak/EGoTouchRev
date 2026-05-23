@@ -104,7 +104,9 @@ bool RunNamedEventSequenceTest() {
         {Host::SystemStateNamedEventId::MonitorConsoleDisplayOff, Host::SystemStateEventType::DisplayOff},
         {Host::SystemStateNamedEventId::MonitorConsoleDisplayOn, Host::SystemStateEventType::DisplayOn},
         {Host::SystemStateNamedEventId::MonitorLidOff, Host::SystemStateEventType::LidOff},
+        {Host::SystemStateNamedEventId::PbtApmSuspend, Host::SystemStateEventType::Suspend},
         {Host::SystemStateNamedEventId::PbtApmResumeAutomatic, Host::SystemStateEventType::ResumeAutomatic},
+        {Host::SystemStateNamedEventId::PbtApmResumeSuspend, Host::SystemStateEventType::ResumeAutomatic},
     };
 
     for (const auto& step : script) {
@@ -120,6 +122,8 @@ bool RunNamedEventSequenceTest() {
         Host::SystemStateEventType::DisplayOff,
         Host::SystemStateEventType::DisplayOn,
         Host::SystemStateEventType::LidOff,
+        Host::SystemStateEventType::Suspend,
+        Host::SystemStateEventType::ResumeAutomatic,
         Host::SystemStateEventType::ResumeAutomatic,
     };
 

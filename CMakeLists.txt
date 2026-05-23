@@ -319,6 +319,16 @@ if (EGO_BUILD_TESTS)
     )
     target_link_libraries(PenUsbProtocolTest PRIVATE Device Common)
 
+    add_executable(PenUsbInitSessionTest
+        Tools/tests/PenUsbInitSessionTest.cpp
+    )
+    target_link_libraries(PenUsbInitSessionTest PRIVATE Device Common)
+
+    add_executable(DeviceRuntimeSystemPowerPolicyTest
+        Tools/tests/DeviceRuntimeSystemPowerPolicyTest.cpp
+    )
+    target_link_libraries(DeviceRuntimeSystemPowerPolicyTest PRIVATE Device Common)
+
     add_executable(PenFactoryStatusFlagsTest
         Tools/tests/PenFactoryStatusFlagsTest.cpp
     )
@@ -339,6 +349,8 @@ if (EGO_BUILD_TESTS)
     add_test(NAME StylusHpp3PostPressureProcessTest COMMAND StylusHpp3PostPressureProcessTest)
     add_test(NAME VhfReporterStylusPacketTest COMMAND VhfReporterStylusPacketTest)
     add_test(NAME PenUsbProtocolTest COMMAND PenUsbProtocolTest)
+    add_test(NAME PenUsbInitSessionTest COMMAND PenUsbInitSessionTest)
+    add_test(NAME DeviceRuntimeSystemPowerPolicyTest COMMAND DeviceRuntimeSystemPowerPolicyTest)
     add_test(NAME PenFactoryStatusFlagsTest COMMAND PenFactoryStatusFlagsTest)
     add_test(NAME PenPressurePacketParserTest COMMAND PenPressurePacketParserTest)
 endif()

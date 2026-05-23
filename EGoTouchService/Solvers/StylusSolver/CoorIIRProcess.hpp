@@ -47,6 +47,7 @@ public:
         const bool inRange = coor.valid;  // stylus detected (hover OR touch)
 
         if (!m_enabled || !inRange) {
+            runtime.post.postIirCoor = coor;
             Reset();
             return;
         }
@@ -89,6 +90,7 @@ public:
             m_prevFiltY = coor.dim2;
         }
 
+        runtime.post.postIirCoor = coor;
         m_prevInRange = inRange;
         ++m_frameCount;
     }

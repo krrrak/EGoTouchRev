@@ -14,6 +14,7 @@ enum class SystemStateEventType : uint8_t {
     DisplayOff,
     LidOn,
     LidOff,
+    Suspend,
     Shutdown,
     ResumeAutomatic,
 };
@@ -31,7 +32,9 @@ enum class SystemStateNamedEventId : uint8_t {
     MonitorLidOn,
     MonitorLidOff,
     MonitorShutDown,
+    PbtApmSuspend,
     PbtApmResumeAutomatic,
+    PbtApmResumeSuspend,
     Count,
 };
 
@@ -58,7 +61,9 @@ inline constexpr SystemStateNamedEventSpec kSystemStateNamedEventSpecs[kSystemSt
     {SystemStateNamedEventId::MonitorLidOn, L"Global\\MonitorLidOnEvent", SystemStateEventType::LidOn, SystemStateTransportRole::Canonical},
     {SystemStateNamedEventId::MonitorLidOff, L"Global\\MonitorLidOffEvent", SystemStateEventType::LidOff, SystemStateTransportRole::Canonical},
     {SystemStateNamedEventId::MonitorShutDown, L"Global\\MonitorShutDownEvent", SystemStateEventType::Shutdown, SystemStateTransportRole::Canonical},
+    {SystemStateNamedEventId::PbtApmSuspend, L"Global\\PBT_APMSUSPEND", SystemStateEventType::Suspend, SystemStateTransportRole::Canonical},
     {SystemStateNamedEventId::PbtApmResumeAutomatic, L"Global\\PBT_APMRESUMEAUTOMATIC", SystemStateEventType::ResumeAutomatic, SystemStateTransportRole::Canonical},
+    {SystemStateNamedEventId::PbtApmResumeSuspend, L"Global\\PBT_APMRESUMESUSPEND", SystemStateEventType::ResumeAutomatic, SystemStateTransportRole::Canonical},
 };
 
 constexpr size_t ToIndex(SystemStateNamedEventId id) noexcept {

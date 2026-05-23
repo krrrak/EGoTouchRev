@@ -102,7 +102,7 @@
 | `0x74` | `PEN_ROATE_ANGLE` | 更新旋转角 | `0x03` | **Confirmed** |
 | `0x75` | `PEN_TOUCH_MODE` | 更新 touch mode | `0x04` | **Confirmed** |
 | `0x76` | `PEN_GLOBAL_PREVENT_MODE` | 更新 prevent mode | `0x05` | **Confirmed** |
-| `0x77` | 未命名事件 | 仅回 ACK | `0x06` | **Confirmed** |
+| `0x77` | `PEN_SCREEN_STATUS` | 初始化中推动第二次 `0x7701`，平时回 ACK | `0x06` | **Confirmed** |
 | `0x78` | `PEN_HOLSTER` | 更新 holster | `0x07` | **Confirmed** |
 | `0x79` | `PEN_FREQ_JUMP` | 记录/通知 | `0x08` | **Confirmed** |
 | `0x7B` | `PEN_REP_PARAM` | 仅记录/ACK | `0x0A` | **Confirmed** |
@@ -157,14 +157,14 @@ ServiceInterface[+0xA8]
 - 两者在时序上相关，但**不是同一个 switch 分支里的直接同步响应**
 
 ### 5.3 当前项目中唯一已确认的 exact payload（Confirmed）
-当前代码在 `PenEventBridge.cpp:376-398` 固定发送了一份 exact factory capture：
+当前代码通过 `BuildFactoryInitProtocolParamsCommand()` 固定发送了一份 exact factory capture：
 
 ```text
 Header:
 07 01 02 00 01 7D 11 20
 
 Payload:
-33 33 33 33 E7 02 12 04 58 02 8D 20 0F 01 02 00
+33 33 33 33 E7 02 12 04 58 02 1A 41 0F 01 01 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 ```
 
@@ -180,19 +180,11 @@ Payload:
 | `3` | `[hex(d1d2), hex(d0)]` |
 | `4` | `[hex(d2d3), hex(d0d1)]` |
 
-按该规则反推，`PenEventBridge.cpp:385-393` 的 exact payload 对应 token 序列应为：
+按该规则反推，exact payload 对应 token 序列应为：
 
 ```text
-3333,3333,2e7,412,258,208d,10f,2,
+3333,3333,2e7,412,258,411a,10f,1,
 ```
-
-这与 `PenEventBridge.cpp` 里旧注释中的：
-
-```text
-3333,3333,2e7,412,258,411a,0f,1,
-```
-
-**并不一致**。因此在重新抓到更强证据前，应优先相信 exact payload，而不是旧注释字符串。
 
 ---
 
@@ -202,15 +194,15 @@ Payload:
 |---|---|
 | `PenUsbTypes.h` | 当前桥接层复用的 ACK 映射表、接收帧过滤和 factory status flags helper |
 | `PenEventBridge.cpp` | 当前桥接层 `0x8001` ACK 发送 |
-| `PenEventBridge.cpp` | 当前桥接层把首次 `0x7B` 作为触发点，发送 `0x7D01` |
-| `PenEventBridge.cpp` | 当前握手序列：`0x7101 -> 0x7701 -> 0x7701` |
-| `PenEventBridge.cpp` | 当前唯一已确认的 `0x7D01` exact factory payload |
+| `PenUsbInitSession.h` | 当前握手状态机：连接后 `0x7101 -> 0x7701 #1`，`0x77 -> 0x7701 #2`，`0x7B -> 0x7D01` |
+| `PenEventBridge.cpp` | 当前桥接层执行状态机动作并发送 `0x8001` ACK / `0x7D01` |
+| `PenUsbPacketBuilder.h` | 当前唯一已确认的 `0x7D01` exact factory payload |
 
 ---
 
 ## 7. 仍待深挖的问题
 
 1. 接收帧 `byte[0..3] / byte[6] / byte[7]` 的精确定义仍未最终命名。
-2. `0x77` 事件目前只看到 ACK，没有看见业务语义。
+2. `0x77` 除初始化握手含义外的普通运行期业务语义仍待确认。
 3. 需要更多抓包来确认：`0x7B` 的 event payload 本身是否携带可用于选择 `0x7D01` 模板的信息。
 4. `0x6F -> 0x0B` 已从当前 ACK 表移除；如后续抓包确认该事件，再重新加入。

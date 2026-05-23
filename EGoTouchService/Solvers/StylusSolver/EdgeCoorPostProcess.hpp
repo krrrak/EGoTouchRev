@@ -32,14 +32,20 @@ public:
     inline void Process(HeatmapFrame& frame) const {
         auto& runtime = frame.stylus.runtime;
 
+        const auto& raw = runtime.tx1.coordinate.reportGlobalCoor;
+        runtime.post.edgePostCoor = raw;
+        runtime.post.finalCoor = raw;
+        runtime.post.finalValid = raw.valid;
+
         if (!m_enabled) return;
         if (runtime.pressure.outputPressure == 0) return;
 
-        auto& coor = runtime.tx1.coordinate.reportGlobalCoor;
+        auto& coor = runtime.post.edgePostCoor;
         if (!coor.valid) return;
 
         RemapAxis(coor.dim1, m_sensorTxCount);
         RemapAxis(coor.dim2, m_sensorRxCount);
+        runtime.post.finalCoor = coor;
     }
 
 private:

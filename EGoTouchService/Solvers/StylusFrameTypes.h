@@ -209,6 +209,8 @@ struct StylusRuntimeDecision {
 struct StylusRuntimePost {
     Asa::AsaCoorResult postCoor{};
     Asa::AsaCoorResult finalCoor{};
+    Asa::AsaCoorResult edgePostCoor{};
+    Asa::AsaCoorResult postIirCoor{};
     Asa::AsaCoorResult predictedCoor{};
     StylusSolvePoint point{};
     bool finalValid = false;

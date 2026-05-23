@@ -157,38 +157,28 @@ void PenEventBridge::SendAck(uint8_t ackCode) {
     }
 }
 
-void PenEventBridge::ResetSessionState() {
-    std::lock_guard<std::mutex> sessionLock(m_sessionMutex);
-    m_sessionPhase = SessionPhase::AwaitingPenStatus;
-    m_initParamSent = false;
-    m_penStatusQuerySent = false;
-    m_firstMcuStatusQuerySent = false;
-    m_secondMcuStatusQuerySent = false;
-    m_receivedPenCurStatus = false;
-    m_receivedPenTypeInfo = false;
+void PenEventBridge::ExecuteInitAction(PenUsbInitAction action) {
+    switch (action) {
+    case PenUsbInitAction::None:
+        return;
+    case PenUsbInitAction::SendInitialQueries:
+        (void)SendQueryPenStatus();
+        (void)SendFirstMcuStatusQuery();
+        return;
+    case PenUsbInitAction::SendSecondMcuStatusQuery:
+        (void)SendSecondMcuStatusQuery();
+        return;
+    case PenUsbInitAction::SendInitProtocolParams:
+        (void)SendInitProtocolParams();
+        return;
+    }
 }
 
 bool PenEventBridge::SendQueryPenStatus() {
-    {
-        std::lock_guard<std::mutex> sessionLock(m_sessionMutex);
-        if (m_penStatusQuerySent) {
-            return false;
-        }
-    }
-
     const auto query = BuildPenUsbCommand(PenUsbCommandId::QueryPenStatus);
     if (!SendRawPacket(query)) {
         LOG_WARN("PenEvent", __func__, "MCU", "Failed to send 0x7101 CheckPenStatus.");
         return false;
-    }
-
-    {
-        std::lock_guard<std::mutex> sessionLock(m_sessionMutex);
-        if (m_penStatusQuerySent) {
-            return true;
-        }
-        m_penStatusQuerySent = true;
-        m_sessionPhase = SessionPhase::AwaitingPenStatus;
     }
 
     LOG_INFO("PenEvent", __func__, "MCU", "Sent 0x7101 CheckPenStatus.");
@@ -196,26 +186,10 @@ bool PenEventBridge::SendQueryPenStatus() {
 }
 
 bool PenEventBridge::SendFirstMcuStatusQuery() {
-    {
-        std::lock_guard<std::mutex> sessionLock(m_sessionMutex);
-        if (m_firstMcuStatusQuerySent) {
-            return false;
-        }
-    }
-
     const auto query = BuildPenUsbCommand(PenUsbCommandId::QueryPenInfo);
     if (!SendRawPacket(query)) {
         LOG_WARN("PenEvent", __func__, "MCU", "Failed to send first 0x7701 CheckMcuStatus.");
         return false;
-    }
-
-    {
-        std::lock_guard<std::mutex> sessionLock(m_sessionMutex);
-        if (m_firstMcuStatusQuerySent) {
-            return true;
-        }
-        m_firstMcuStatusQuerySent = true;
-        m_sessionPhase = SessionPhase::AwaitingMcuStatus;
     }
 
     LOG_INFO("PenEvent", __func__, "MCU", "Sent 0x7701 CheckMcuStatus (#1/2).");
@@ -223,26 +197,10 @@ bool PenEventBridge::SendFirstMcuStatusQuery() {
 }
 
 bool PenEventBridge::SendSecondMcuStatusQuery() {
-    {
-        std::lock_guard<std::mutex> sessionLock(m_sessionMutex);
-        if (m_secondMcuStatusQuerySent) {
-            return false;
-        }
-    }
-
     const auto query = BuildPenUsbCommand(PenUsbCommandId::QueryPenInfo);
     if (!SendRawPacket(query)) {
         LOG_WARN("PenEvent", __func__, "MCU", "Failed to send second 0x7701 CheckMcuStatus.");
         return false;
-    }
-
-    {
-        std::lock_guard<std::mutex> sessionLock(m_sessionMutex);
-        if (m_secondMcuStatusQuerySent) {
-            return true;
-        }
-        m_secondMcuStatusQuerySent = true;
-        m_sessionPhase = SessionPhase::AwaitingInitParamRequest;
     }
 
     LOG_INFO("PenEvent", __func__, "MCU", "Sent 0x7701 CheckMcuStatus (#2/2).");
@@ -250,112 +208,30 @@ bool PenEventBridge::SendSecondMcuStatusQuery() {
 }
 
 void PenEventBridge::AdvanceSessionFromEvent(uint8_t eventCode) {
-    bool sendFirstMcuStatusQuery = false;
-    bool sendSecondMcuStatusQuery = false;
-    bool sendInitParams = false;
-    bool duplicateInitParamRequest = false;
-    bool waitingForInitParamRequest = false;
-    bool ignoredUnexpectedEvent = false;
-    SessionPhase phaseAtEvent = SessionPhase::Running;
-
+    PenUsbInitAction action = PenUsbInitAction::None;
     {
         std::lock_guard<std::mutex> sessionLock(m_sessionMutex);
-        phaseAtEvent = m_sessionPhase;
-
-        switch (m_sessionPhase) {
-        case SessionPhase::AwaitingPenStatus:
-            if (eventCode == static_cast<uint8_t>(PenUsbEventCode::PenConnStatus)) {
-                sendFirstMcuStatusQuery = !m_firstMcuStatusQuerySent;
-            } else if (eventCode != static_cast<uint8_t>(PenUsbEventCode::PenRepParam)) {
-                ignoredUnexpectedEvent = true;
-            }
-            break;
-
-        case SessionPhase::AwaitingMcuStatus:
-            if (eventCode == static_cast<uint8_t>(PenUsbEventCode::PenCurStatus)) {
-                m_receivedPenCurStatus = true;
-            } else if (eventCode == static_cast<uint8_t>(PenUsbEventCode::PenTypeInfo)) {
-                m_receivedPenTypeInfo = true;
-            } else if (eventCode != static_cast<uint8_t>(PenUsbEventCode::PenRepParam)) {
-                ignoredUnexpectedEvent = true;
-            }
-
-            if (m_firstMcuStatusQuerySent &&
-                !m_secondMcuStatusQuerySent &&
-                m_receivedPenCurStatus &&
-                m_receivedPenTypeInfo) {
-                sendSecondMcuStatusQuery = true;
-            }
-            break;
-
-        case SessionPhase::AwaitingInitParamRequest:
-            if (eventCode == static_cast<uint8_t>(PenUsbEventCode::PenRepParam)) {
-                if (!m_initParamSent) {
-                    sendInitParams = true;
-                } else {
-                    duplicateInitParamRequest = true;
-                }
-            } else {
-                waitingForInitParamRequest = true;
-            }
-            break;
-
-        case SessionPhase::Running:
-            if (eventCode == static_cast<uint8_t>(PenUsbEventCode::PenRepParam)) {
-                if (m_initParamSent) {
-                    duplicateInitParamRequest = true;
-                } else {
-                    sendInitParams = true;
-                }
-            }
-            break;
-        }
+        action = m_initSession.OnEvent(static_cast<PenUsbEventCode>(eventCode));
     }
 
-    if (sendFirstMcuStatusQuery) {
+    switch (action) {
+    case PenUsbInitAction::SendSecondMcuStatusQuery:
         LOG_INFO("PenEvent", __func__, "MCU",
-                 "0x71 PEN_CONN_STATUS received while awaiting pen status; issuing first 0x7701 query.");
-        (void)SendFirstMcuStatusQuery();
-        return;
-    }
-
-    if (sendSecondMcuStatusQuery) {
-        LOG_INFO("PenEvent", __func__, "MCU",
-                 "Received expected MCU status pair (0x72 + 0x73); issuing second 0x7701 query.");
-        (void)SendSecondMcuStatusQuery();
-        return;
-    }
-
-    if (sendInitParams) {
+                 "0x77 PEN_SCREEN_STATUS received after first 0x7701; issuing second 0x7701 query.");
+        break;
+    case PenUsbInitAction::SendInitProtocolParams:
         LOG_INFO("PenEvent", __func__, "MCU",
                  "0x7B PEN_REP_PARAM received after handshake; sending 0x7D01 InitParam.");
-        (void)SendInitProtocolParams();
-        return;
+        break;
+    default:
+        break;
     }
 
-    if (duplicateInitParamRequest) {
-        LOG_INFO("PenEvent", __func__, "MCU",
-                 "0x7B PEN_REP_PARAM received → InitParam already sent, skipping.");
-        return;
-    }
-
-    if (waitingForInitParamRequest && phaseAtEvent == SessionPhase::AwaitingInitParamRequest) {
-        LOG_INFO("PenEvent", __func__, "MCU",
-                 "Ignoring event 0x{:02X} while waiting for MCU 0x7B before InitParam.",
-                 eventCode);
-        return;
-    }
-
-    if (ignoredUnexpectedEvent) {
-        LOG_INFO("PenEvent", __func__, "MCU",
-                 "Ignoring event 0x{:02X}; session phase remains {}.",
-                 eventCode, static_cast<int>(phaseAtEvent));
-    }
+    ExecuteInitAction(action);
 }
 
 // ── BtHidChannel hooks ────────────────────────────────────────────────────
 void PenEventBridge::OnConnected() {
-    ResetSessionState();
     RunHandshake();
 }
 
@@ -435,14 +311,12 @@ void PenEventBridge::OnPacketReceived(const std::vector<uint8_t>& packet) {
 
 // ── 握手 ──────────────────────────────────────────────────────────────────
 // API Monitor 抓包验证的原厂初始化序列:
-//   #49  0x7101 CheckPenStatus    (8B, USB HID)
-//   #54  0x7701 CheckMcuStatus    (8B, USB HID)
-//        ← MCU 事件 1+2, 各发 ACK (事件循环处理)
-//   #117 0x7701 CheckMcuStatus    (8B, USB HID, 重发!)
-//        ← MCU 事件 3 (4.7s 等待)
-//   #155 "-connect" → Named Pipe IPC (不是 USB)
-//   #899 0x7D01 InitProtocolParams (40B = 8 header + 32 payload, USB HID)
-//        发送时间: 握手开始后约 2.8 秒
+//   0x7101 CheckPenStatus
+//   0x7701 CheckMcuStatus
+//        ← 0x77 PEN_SCREEN_STATUS, ACK 0x06
+//   0x7701 CheckMcuStatus (重发)
+//        ← 等待 0x7B PEN_REP_PARAM
+//   0x7D01 InitProtocolParams (40B = 8 header + 32 payload, USB HID)
 void PenEventBridge::RunHandshake() {
     if (!IsRunning() || !IsTransportOpen()) {
         LOG_INFO("PenEvent", __func__, "MCU",
@@ -452,14 +326,18 @@ void PenEventBridge::RunHandshake() {
 
     LOG_INFO("PenEvent", __func__, "MCU",
              "Starting event-driven init sequence: 0x7101 → 0x7701 → 0x7701, with 0x7D01 deferred until MCU 0x7B.");
-    if (!SendQueryPenStatus()) {
-        LOG_WARN("PenEvent", __func__, "MCU", "Failed to start handshake with 0x7101 query.");
+
+    PenUsbInitAction action = PenUsbInitAction::None;
+    {
+        std::lock_guard<std::mutex> sessionLock(m_sessionMutex);
+        action = m_initSession.OnConnected();
     }
+    ExecuteInitAction(action);
 }
 
 // ── 初始协议参数 ──────────────────────────────────────────────────────────
 // 原厂 ApDaemon::GetProtocolPrmtMode1/2 → GetProtocolInfo → ReportBluetoothPenInfo
-// 输出: "3333,3333,2e7,412,258,411a,0f,1,"
+// 输出: "3333,3333,2e7,412,258,411a,10f,1,"
 // 这些参数通过 BtPen_GetReportInfo(event_class=2) → HandleInitParamEvent
 // 被编码为 0x7D01 二进制包发送给 MCU。
 //
@@ -475,12 +353,6 @@ bool PenEventBridge::SendInitProtocolParams() {
     if (!SendRawPacket(pkt)) {
         LOG_WARN("PenEvent", __func__, "MCU", "Failed to send 0x7D01 InitProtocolParams.");
         return false;
-    }
-
-    {
-        std::lock_guard<std::mutex> sessionLock(m_sessionMutex);
-        m_initParamSent = true;
-        m_sessionPhase = SessionPhase::Running;
     }
 
     LOG_INFO("PenEvent", __func__, "MCU",

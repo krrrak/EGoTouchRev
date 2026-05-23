@@ -72,15 +72,16 @@ public:
 
     inline void Process(HeatmapFrame& frame) {
         auto& runtime = frame.stylus.runtime;
-        const auto& raw = runtime.tx1.coordinate.reportGlobalCoor;
+        const auto& historyRaw = runtime.tx1.coordinate.reportGlobalCoor;
+        const auto& filterInput = runtime.post.edgePostCoor.valid ? runtime.post.edgePostCoor : historyRaw;
         const bool pressureActive = runtime.pressure.outputPressure > 0;
 
-        if (!m_enabled || !raw.valid) {
+        if (!m_enabled || !historyRaw.valid || !filterInput.valid) {
             Reset();
-            runtime.post.postCoor = raw;
-            runtime.post.predictedCoor = raw;
-            runtime.post.finalCoor = raw;
-            runtime.post.finalValid = raw.valid;
+            runtime.post.postCoor = historyRaw;
+            runtime.post.predictedCoor = historyRaw;
+            runtime.post.finalCoor = historyRaw;
+            runtime.post.finalValid = historyRaw.valid;
             runtime.post.linearFilterState = 0;
             runtime.post.linearFilterActive = false;
             runtime.post.linearFilterDeltaDim1 = 0;
@@ -100,11 +101,11 @@ public:
         // Keep coordinate history live for both hover and contact frames.
         const bool wasPressureActive = m_prevPressureActive;
         if (!wasPressureActive && pressureActive) {
-            m_anchorX = raw.dim1;
-            m_anchorY = raw.dim2;
+            m_anchorX = historyRaw.dim1;
+            m_anchorY = historyRaw.dim2;
         }
 
-        PushRawHistory(raw.dim1, raw.dim2);
+        PushRawHistory(historyRaw.dim1, historyRaw.dim2);
 
         // ── Get3PointAvgFilter ──
         // 3-point moving average with sentinel guard (INT32_MAX = invalid/missing data)
@@ -126,7 +127,7 @@ public:
                 avg3.dim2 = RawY(0);
             }
         } else {
-            avg3 = raw;
+            avg3 = historyRaw;
         }
 
         PushFilteredHistory(avg3.dim1, avg3.dim2);
@@ -148,8 +149,8 @@ public:
                 ResetStrokeState();
             }
             m_prevPressureActive = false;
-            runtime.post.finalCoor = raw;
-            runtime.post.finalValid = raw.valid;
+            runtime.post.finalCoor = historyRaw;
+            runtime.post.finalValid = historyRaw.valid;
             runtime.post.linearFilterState = 0;
             runtime.post.linearFilterActive = false;
             runtime.post.linearFilterDeltaDim1 = 0;
@@ -167,10 +168,10 @@ public:
 
         m_prevPressureActive = true;
 
-        // ── Linear correction consumes the live coordinate path. avg3/predicted stay as
+        // ── Linear correction consumes the staged coordinate path. avg3/predicted stay as
         // diagnostics and side-channel trend data, mirroring the original split.
         const Asa::AsaCoorResult result = Process(
-            raw, pressureActive, m_sensorDim1Limit, m_sensorDim2Limit);
+            filterInput, pressureActive, m_sensorDim1Limit, m_sensorDim2Limit);
 
         runtime.post.finalCoor = result;
         runtime.post.finalValid = result.valid;

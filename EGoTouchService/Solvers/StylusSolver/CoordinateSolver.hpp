@@ -85,8 +85,8 @@ public:
         signal.recheckThreshold = m_signalFloor;
         signal.recheckThresholdMulti = static_cast<uint16_t>(std::max<uint16_t>(m_signalFloor, 256));
 
-        signal.dim1EdgeActive = tx1.feature.dim1SelectedPeakOnEdge;
-        signal.dim2EdgeActive = tx1.feature.dim2SelectedPeakOnEdge;
+        signal.dim1EdgeActive = IsEdgeCoordinateCell(tx1.coordinate.reportGlobalCoor.dim1, kSensorCols);
+        signal.dim2EdgeActive = IsEdgeCoordinateCell(tx1.coordinate.reportGlobalCoor.dim2, kSensorRows);
         signal.dim1EdgeSignal = signal.dim1EdgeActive ? tx1.feature.dim1SelectedPeakNetSignal : 0;
         signal.dim2EdgeSignal = signal.dim2EdgeActive ? tx1.feature.dim2SelectedPeakNetSignal : 0;
 
@@ -149,6 +149,10 @@ private:
 
     static inline bool IsAnyEdgePeak(int peakIdx, const AxisEdgeGeometry& geometry) {
         return IsLowEdgePeak(peakIdx, geometry) || IsHighEdgePeak(peakIdx, geometry);
+    }
+
+    static inline bool IsEdgeCoordinateCell(int32_t coord, int sensorCount) {
+        return coord < Asa::kCoorUnit || coord >= (sensorCount - 1) * Asa::kCoorUnit;
     }
 
     static inline bool HasRequiredLowNeighbors(int edgeIdx) {

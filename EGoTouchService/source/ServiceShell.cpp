@@ -82,10 +82,21 @@ DWORD WINAPI ServiceShell::SvcCtrlHandlerEx(
         return NO_ERROR;
 
     case SERVICE_CONTROL_POWEREVENT: {
-        // Handle PBT_APMRESUMEAUTOMATIC (system resumed from sleep)
+        if (evtType == PBT_APMSUSPEND) {
+            LOG_INFO("Service", __func__, "Power", "PBT_APMSUSPEND");
+            signalEvent(Host::SystemStateNamedEventId::PbtApmSuspend);
+            return NO_ERROR;
+        }
+
         if (evtType == PBT_APMRESUMEAUTOMATIC) {
             LOG_INFO("Service", __func__, "Power", "PBT_APMRESUMEAUTOMATIC");
             signalEvent(Host::SystemStateNamedEventId::PbtApmResumeAutomatic);
+            return NO_ERROR;
+        }
+
+        if (evtType == PBT_APMRESUMESUSPEND) {
+            LOG_INFO("Service", __func__, "Power", "PBT_APMRESUMESUSPEND");
+            signalEvent(Host::SystemStateNamedEventId::PbtApmResumeSuspend);
             return NO_ERROR;
         }
 
