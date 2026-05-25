@@ -4,8 +4,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <iomanip>
-#include <sstream>
 #include <vector>
 
 namespace App {
@@ -510,26 +508,6 @@ void DiagnosticsWorkbench::DrawCoordinateTable() {
     } else {
         ImGui::TextDisabled("No contacts in current frame.");
     }
-
-    ImGui::Separator();
-    auto drawTouchPacket = [&](const char* label, const Solvers::TouchPacket& packet) {
-        ImGui::Text("%s: %s (RID=0x%02X Len=%u)", label, packet.valid ? "Valid" : "Invalid",
-                    packet.reportId, packet.length);
-        if (!packet.valid) {
-            return;
-        }
-        std::ostringstream oss;
-        oss << std::hex << std::setfill('0');
-        for (size_t i = 0; i < packet.bytes.size(); ++i) {
-            oss << std::setw(2) << static_cast<unsigned int>(packet.bytes[i]);
-            if (i + 1 < packet.bytes.size()) {
-                oss << " ";
-            }
-        }
-        ImGui::TextUnformatted(oss.str().c_str());
-    };
-    drawTouchPacket("TouchPacket[0]", m_currentFrame.touchPackets[0]);
-    drawTouchPacket("TouchPacket[1]", m_currentFrame.touchPackets[1]);
 }
 
 void DiagnosticsWorkbench::DrawStylusPanel() {

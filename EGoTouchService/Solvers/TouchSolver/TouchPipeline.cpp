@@ -13,7 +13,7 @@ bool TouchPipeline::ProcessMasterParserOnly(HeatmapFrame& frame) {
 
 bool TouchPipeline::Process(HeatmapFrame& frame) {
     const size_t desiredContactCapacity = static_cast<size_t>(
-        std::max(m_zoneExp.m_maxTouches, m_tracker.m_maxTouchCount));
+        std::max(m_contactExtractor.m_zoneExp.m_maxTouches, m_tracker.m_maxTouchCount));
     if (frame.contacts.capacity() < desiredContactCapacity) {
         frame.contacts.reserve(desiredContactCapacity);
     }
@@ -37,48 +37,51 @@ bool TouchPipeline::Process(HeatmapFrame& frame) {
     m_cmf.Process(frame);
     m_gridIIR.Process(frame);
 
-    // ── Phase 3: Feature Extraction ─────────────────────────────────
+    // ── Phase 3: Candidate Generation ───────────────────────────────
     frame.contacts.clear();
-    // 3.1 Macro Zone Detection (BFS connected components)
     m_macroZoneDet.Process(frame, m_peakDet.m_threshold);
-
-    // 3.2 Palm analysis — classify zones without deleting them
-    m_palmReject.Process(m_macroZoneDet.GetMutableMacroZones(), frame);
-
-    // 3.3 Peak Detection (local maxima within macro zones)
     m_peakDet.Detect(frame, m_macroZoneDet.GetMacroZones());
 
     const auto peaks = m_peakDet.GetPeaks();
 
-    // 3.4 Peak evaluation (palm/finger classification without deletion)
-    m_peakEval.Process(frame, peaks, m_palmReject.GetZoneFeatures());
-    const auto peakEvaluations = m_peakEval.GetEvaluations();
+    // ── Phase 4: Candidate Classification ───────────────────────────
+    m_touchClassifier.Process(frame, m_macroZoneDet.GetMacroZones(), peaks);
+    const auto peakEvaluations = m_touchClassifier.GetPeakEvaluations();
 
-    // 3.5 Micro Zone Segmentation (Voronoi/Watershed)
-    m_microZoneSeg.Process(frame, m_macroZoneDet.GetMacroZones(), peaks);
+    // Diagnostic segmentation remains separate from contact generation.
+    m_contactExtractor.ProcessDiagnostics(frame, m_macroZoneDet.GetMacroZones(), peaks);
 
-    // ── Phase 4: Zone Processing & Contact Generation ──────────
-    // 4.1 Zone expansion (BFS flood-fill from peaks → contacts)
-    m_zoneExp.m_palmAwareExpansionEnabled = m_peakEval.m_palmAwareExpansionEnabled;
-    m_zoneExp.m_fingerInPalmThresholdRatio = m_peakEval.m_fingerInPalmThresholdRatio;
-    m_zoneExp.m_fingerInPalmMaxRadius = m_peakEval.m_fingerInPalmMaxRadius;
-    m_zoneExp.Process(frame, peaks, m_peakDet.m_threshold, peakEvaluations);
+    // ── Phase 5: Contact Extraction ─────────────────────────────────
+    m_contactExtractor.m_zoneExp.m_palmAwareExpansionEnabled = m_touchClassifier.m_palmAwareExpansionEnabled;
+    m_contactExtractor.m_zoneExp.m_fingerInPalmThresholdRatio = m_touchClassifier.m_fingerInPalmThresholdRatio;
+    m_contactExtractor.m_zoneExp.m_fingerInPalmMaxRadius = m_touchClassifier.m_fingerInPalmMaxRadius;
+    m_contactExtractor.Process(frame, peaks, m_peakDet.m_threshold, peakEvaluations);
 
-    // 4.2 Edge Compensation (LUT-based boundary correction)
-    m_edgeComp.Process(frame.contacts,
-                       m_zoneExp.GetEdgeInfos(),
-                       m_zoneExp.m_edgeBounds);
-
-    // 4.3 Touch Size calculation (signalSum → radius in mm)
-    m_touchSize.Process(frame.contacts);
-
-    // 4.4 Edge Rejection (suppress new touches at sensor boundary)
-    m_edgeReject.Process(frame.contacts,
-                         m_zoneExp.GetEdgeInfos(),
-                         m_zoneExp.m_edgeBounds);
+    // ── Phase 6: Contact Post-Processing ─────────────────────────────
+    // Compatibility bridge: legacy StylusSuppress* config keys still map to
+    // TouchTracker fields, while pre-tracking suppression logic lives here.
+    m_stylusSuppress.m_stylusSuppressGlobalEnabled = m_tracker.m_stylusSuppressGlobalEnabled;
+    m_stylusSuppress.m_stylusSuppressLocalEnabled = m_tracker.m_stylusSuppressLocalEnabled;
+    m_stylusSuppress.m_stylusSuppressLocalDistance = m_tracker.m_stylusSuppressLocalDistance;
+    m_stylusSuppress.m_stylusSuppressPenPeakThreshold = m_tracker.m_stylusSuppressPenPeakThreshold;
+    m_stylusSuppress.m_stylusSuppressTouchSignalKeep = m_tracker.m_stylusSuppressTouchSignalKeep;
+    m_stylusSuppress.m_stylusSuppressTouchAreaKeep = m_tracker.m_stylusSuppressTouchAreaKeep;
+    m_stylusSuppress.m_stylusAftEnabled = m_tracker.m_stylusAftEnabled;
+    m_stylusSuppress.m_stylusAftDebounceFrames = m_tracker.m_stylusAftDebounceFrames;
+    m_stylusSuppress.m_stylusAftWeakSignalThreshold = m_tracker.m_stylusAftWeakSignalThreshold;
+    m_stylusSuppress.m_stylusAftWeakSizeThresholdMm = m_tracker.m_stylusAftWeakSizeThresholdMm;
+    m_stylusSuppress.m_stylusAftSuppressFrames = m_tracker.m_stylusAftSuppressFrames;
+    m_stylusSuppress.m_fallbackSizeMm = m_tracker.m_fallbackSizeMm;
+    m_stylusSuppress.m_sizeAreaScale = m_tracker.m_sizeAreaScale;
+    m_stylusSuppress.m_sizeSignalScale = m_tracker.m_sizeSignalScale;
+    const auto& edgeInfos = m_contactExtractor.GetEdgeInfos();
+    const auto& edgeBounds = m_contactExtractor.GetEdgeBounds();
+    m_edgeComp.Process(frame.contacts, edgeInfos, edgeBounds);
+    m_edgeReject.Process(frame.contacts, edgeInfos, edgeBounds);
+    m_stylusSuppress.Process(frame);
 
     m_cachedPeakCount.store(static_cast<int>(peaks.size()), std::memory_order_relaxed);
-    m_cachedZoneCount.store(m_zoneExp.GetZoneCount(), std::memory_order_relaxed);
+    m_cachedZoneCount.store(m_contactExtractor.GetZoneCount(), std::memory_order_relaxed);
     m_cachedContactCount.store(static_cast<int>(frame.contacts.size()), std::memory_order_relaxed);
 
     // ── Update diagnostic caches ────────────────────────────────
@@ -95,7 +98,7 @@ bool TouchPipeline::Process(HeatmapFrame& frame) {
         }
     }
 
-    frame.peakZones = m_microZoneSeg.GetPeakZones();
+    frame.peakZones = m_contactExtractor.GetPeakZones();
 
     if (frame.peaks.capacity() < peaks.size()) {
         frame.peaks.reserve(peaks.size());
@@ -112,7 +115,7 @@ bool TouchPipeline::Process(HeatmapFrame& frame) {
         }
         m_diagPeaks.assign(peaks.begin(), peaks.end());
         m_diagTouchZones = frame.touchZones;
-        m_diagZoneEdge = m_zoneExp.GetZoneEdge();
+        m_diagZoneEdge = m_contactExtractor.GetZoneEdge();
     }
 #endif
 
@@ -240,67 +243,67 @@ std::vector<ConfigParam> TouchPipeline::GetConfigSchema() const {
 
     // ── Zone & Contact ──
     s.emplace_back("DilateErode", "Dilate Erode Enabled",
-                   ConfigParam::Bool, const_cast<bool*>(&m_zoneExp.m_dilateErode)).Module("Zone & Contact");
+                   ConfigParam::Bool, const_cast<bool*>(&m_contactExtractor.m_zoneExp.m_dilateErode)).Module("Zone & Contact");
     s.emplace_back("ZoneTholdScale", "Zone Thold Numer",
-                   ConfigParam::Int, const_cast<int*>(&m_zoneExp.m_tholdScaleNumer), 0, 255).Module("Zone & Contact");
+                   ConfigParam::Int, const_cast<int*>(&m_contactExtractor.m_zoneExp.m_tholdScaleNumer), 0, 255).Module("Zone & Contact");
     s.emplace_back("ZoneTholdShift", "Zone Thold Shift",
-                   ConfigParam::Int, const_cast<int*>(&m_zoneExp.m_tholdScaleShift), 0, 15).Module("Zone & Contact");
+                   ConfigParam::Int, const_cast<int*>(&m_contactExtractor.m_zoneExp.m_tholdScaleShift), 0, 15).Module("Zone & Contact");
     s.emplace_back("MaxTouches", "Max Contact Outputs",
-                   ConfigParam::Int, const_cast<int*>(&m_zoneExp.m_maxTouches), 1, 50).Module("Zone & Contact");
+                   ConfigParam::Int, const_cast<int*>(&m_contactExtractor.m_zoneExp.m_maxTouches), 1, 50).Module("Zone & Contact");
     s.emplace_back("ECEnabled", "Edge Compensation Enabled",
                    ConfigParam::Bool, const_cast<bool*>(&m_edgeComp.m_enabled)).Module("Zone & Contact");
     s.emplace_back("ECBlendRange", "EC Blend Range",
                    ConfigParam::Float, const_cast<float*>(&m_edgeComp.m_ecBlendRange), 0.0f, 5.0f).Module("Zone & Contact");
 
-    // ── Palm Rejection ──
-    s.emplace_back("PalmEnabled", "Palm Rejection Enabled",
-                   ConfigParam::Bool, const_cast<bool*>(&m_palmReject.m_enabled)).Module("Palm Rejection");
+    // ── Touch Classification ──
+    s.emplace_back("PalmEnabled", "Touch Classification Enabled",
+                   ConfigParam::Bool, const_cast<bool*>(&m_touchClassifier.m_enabled)).Module("Touch Classification");
     s.emplace_back("PalmAreaThreshold", "Palm Area Threshold",
-                   ConfigParam::Int, const_cast<int*>(&m_palmReject.m_areaThreshold), 5, 300).Module("Palm Rejection");
+                   ConfigParam::Int, const_cast<int*>(&m_touchClassifier.m_areaThreshold), 5, 300).Module("Touch Classification");
     s.emplace_back("PalmSignalSumThreshold", "Palm SignalSum Threshold",
-                   ConfigParam::Int, const_cast<int*>(&m_palmReject.m_signalSumThreshold), 1000, 500000).Module("Palm Rejection");
+                   ConfigParam::Int, const_cast<int*>(&m_touchClassifier.m_signalSumThreshold), 1000, 500000).Module("Touch Classification");
     s.emplace_back("PalmDensityThresholdLow", "Palm Density Low Threshold",
-                   ConfigParam::Float, const_cast<float*>(&m_palmReject.m_densityThresholdLow), 50.0f, 2000.0f).Module("Palm Rejection");
+                   ConfigParam::Float, const_cast<float*>(&m_touchClassifier.m_densityThresholdLow), 50.0f, 2000.0f).Module("Touch Classification");
     s.emplace_back("PalmAreaMinForDensity", "Palm Density Min Area",
-                   ConfigParam::Int, const_cast<int*>(&m_palmReject.m_areaMinForDensity), 3, 100).Module("Palm Rejection");
+                   ConfigParam::Int, const_cast<int*>(&m_touchClassifier.m_areaMinForDensity), 3, 100).Module("Touch Classification");
     s.emplace_back("PalmElongatedEnabled", "Elongated Press Reject",
-                   ConfigParam::Bool, const_cast<bool*>(&m_palmReject.m_elongatedEnabled)).Module("Palm Rejection");
+                   ConfigParam::Bool, const_cast<bool*>(&m_touchClassifier.m_elongatedEnabled)).Module("Touch Classification");
     s.emplace_back("PalmElongatedMinArea", "Elongated Min Area",
-                   ConfigParam::Int, const_cast<int*>(&m_palmReject.m_elongatedMinArea), 3, 100).Module("Palm Rejection");
+                   ConfigParam::Int, const_cast<int*>(&m_touchClassifier.m_elongatedMinArea), 3, 100).Module("Touch Classification");
     s.emplace_back("PalmElongatedAspectRatio", "Elongated Aspect Ratio",
-                   ConfigParam::Float, const_cast<float*>(&m_palmReject.m_elongatedAspectRatio), 1.5f, 10.0f).Module("Palm Rejection");
+                   ConfigParam::Float, const_cast<float*>(&m_touchClassifier.m_elongatedAspectRatio), 1.5f, 10.0f).Module("Touch Classification");
     s.emplace_back("PalmAnalyzerEnabled", "Palm Analyzer Enabled",
-                   ConfigParam::Bool, const_cast<bool*>(&m_palmReject.m_analyzerEnabled)).Module("Palm Rejection");
+                   ConfigParam::Bool, const_cast<bool*>(&m_touchClassifier.m_analyzerEnabled)).Module("Touch Classification");
     s.emplace_back("PalmCandidateAreaThreshold", "Palm Candidate Area",
-                   ConfigParam::Int, const_cast<int*>(&m_palmReject.m_candidateAreaThreshold), 5, 300).Module("Palm Rejection");
+                   ConfigParam::Int, const_cast<int*>(&m_touchClassifier.m_candidateAreaThreshold), 5, 300).Module("Touch Classification");
     s.emplace_back("PalmCandidateSignalThreshold", "Palm Candidate Signal",
-                   ConfigParam::Int, const_cast<int*>(&m_palmReject.m_candidateSignalThreshold), 1000, 500000).Module("Palm Rejection");
+                   ConfigParam::Int, const_cast<int*>(&m_touchClassifier.m_candidateSignalThreshold), 1000, 500000).Module("Touch Classification");
     s.emplace_back("PalmLikelyAreaThreshold", "Palm Likely Area",
-                   ConfigParam::Int, const_cast<int*>(&m_palmReject.m_likelyAreaThreshold), 5, 300).Module("Palm Rejection");
+                   ConfigParam::Int, const_cast<int*>(&m_touchClassifier.m_likelyAreaThreshold), 5, 300).Module("Touch Classification");
     s.emplace_back("PalmFillRatioThreshold", "Palm Fill Ratio",
-                   ConfigParam::Float, const_cast<float*>(&m_palmReject.m_fillRatioThreshold), 0.0f, 1.0f).Module("Palm Rejection");
+                   ConfigParam::Float, const_cast<float*>(&m_touchClassifier.m_fillRatioThreshold), 0.0f, 1.0f).Module("Touch Classification");
     s.emplace_back("PalmFlatSharpnessThreshold", "Palm Flat Sharpness",
-                   ConfigParam::Float, const_cast<float*>(&m_palmReject.m_flatSharpnessThreshold), 1.0f, 4.0f).Module("Palm Rejection");
+                   ConfigParam::Float, const_cast<float*>(&m_touchClassifier.m_flatSharpnessThreshold), 1.0f, 4.0f).Module("Touch Classification");
     s.emplace_back("PalmStrongPeakProminence", "Palm Strong Peak Prominence",
-                   ConfigParam::Int, const_cast<int*>(&m_palmReject.m_strongPeakProminence), 0, 5000).Module("Palm Rejection");
+                   ConfigParam::Int, const_cast<int*>(&m_touchClassifier.m_strongPeakProminence), 0, 5000).Module("Touch Classification");
     s.emplace_back("PeakEvalEnabled", "Peak Eval Enabled",
-                   ConfigParam::Bool, const_cast<bool*>(&m_peakEval.m_enabled)).Module("Palm Rejection");
+                   ConfigParam::Bool, const_cast<bool*>(&m_touchClassifier.m_peakEvalEnabled)).Module("Touch Classification");
     s.emplace_back("PeakEvalFingerProminence", "Peak Eval Finger Prominence",
-                   ConfigParam::Int, const_cast<int*>(&m_peakEval.m_fingerProminence), 0, 2000).Module("Palm Rejection");
+                   ConfigParam::Int, const_cast<int*>(&m_touchClassifier.m_fingerProminence), 0, 2000).Module("Touch Classification");
     s.emplace_back("PeakEvalFingerSharpness", "Peak Eval Finger Sharpness",
-                   ConfigParam::Float, const_cast<float*>(&m_peakEval.m_fingerSharpness), 1.0f, 5.0f).Module("Palm Rejection");
+                   ConfigParam::Float, const_cast<float*>(&m_touchClassifier.m_fingerSharpness), 1.0f, 5.0f).Module("Touch Classification");
     s.emplace_back("PeakEvalPalmSharpnessMax", "Peak Eval Palm Sharpness Max",
-                   ConfigParam::Float, const_cast<float*>(&m_peakEval.m_palmSharpnessMax), 1.0f, 5.0f).Module("Palm Rejection");
+                   ConfigParam::Float, const_cast<float*>(&m_touchClassifier.m_palmSharpnessMax), 1.0f, 5.0f).Module("Touch Classification");
     s.emplace_back("PeakEvalAmbiguousMargin", "Peak Eval Ambiguous Margin",
-                   ConfigParam::Float, const_cast<float*>(&m_peakEval.m_ambiguousMargin), 0.0f, 1.0f).Module("Palm Rejection");
+                   ConfigParam::Float, const_cast<float*>(&m_touchClassifier.m_ambiguousMargin), 0.0f, 1.0f).Module("Touch Classification");
     s.emplace_back("PalmAwareExpansionEnabled", "Palm Aware Expansion Enabled",
-                   ConfigParam::Bool, const_cast<bool*>(&m_peakEval.m_palmAwareExpansionEnabled)).Module("Palm Rejection");
+                   ConfigParam::Bool, const_cast<bool*>(&m_touchClassifier.m_palmAwareExpansionEnabled)).Module("Touch Classification");
     s.emplace_back("PalmFingerInPalmThresholdRatio", "Finger In Palm Threshold Ratio",
-                   ConfigParam::Float, const_cast<float*>(&m_peakEval.m_fingerInPalmThresholdRatio), 0.0f, 1.0f).Module("Palm Rejection");
+                   ConfigParam::Float, const_cast<float*>(&m_touchClassifier.m_fingerInPalmThresholdRatio), 0.0f, 1.0f).Module("Touch Classification");
     s.emplace_back("PalmFingerInPalmMaxRadius", "Finger In Palm Max Radius",
-                   ConfigParam::Int, const_cast<int*>(&m_peakEval.m_fingerInPalmMaxRadius), 0, 10).Module("Palm Rejection");
+                   ConfigParam::Int, const_cast<int*>(&m_touchClassifier.m_fingerInPalmMaxRadius), 0, 10).Module("Touch Classification");
     s.emplace_back("PalmLikelyAllowContact", "Palm Likely Allow Contact",
-                   ConfigParam::Bool, const_cast<bool*>(&m_peakEval.m_palmLikelyAllowContact)).Module("Palm Rejection");
+                   ConfigParam::Bool, const_cast<bool*>(&m_touchClassifier.m_palmLikelyAllowContact)).Module("Touch Classification");
 
     // ── Tracking ──
     s.emplace_back("TrackerEnabled", "Tracker Enabled",
@@ -464,38 +467,38 @@ void TouchPipeline::SaveConfig(std::ostream& out) const {
     out << "PressureDriftDebounce=" << m_peakDet.m_pressureDriftDebounceLimit << "\n";
     out << "MacroZoneMinArea=" << m_peakDet.m_macroZoneMinArea << "\n";
     // Phase 4: ZoneExpander
-    out << "DilateErode=" << (m_zoneExp.m_dilateErode?"1":"0") << "\n";
-    out << "ZoneTholdScale=" << m_zoneExp.m_tholdScaleNumer << "\n";
-    out << "ZoneTholdShift=" << m_zoneExp.m_tholdScaleShift << "\n";
-    out << "MaxTouches=" << m_zoneExp.m_maxTouches << "\n";
+    out << "DilateErode=" << (m_contactExtractor.m_zoneExp.m_dilateErode?"1":"0") << "\n";
+    out << "ZoneTholdScale=" << m_contactExtractor.m_zoneExp.m_tholdScaleNumer << "\n";
+    out << "ZoneTholdShift=" << m_contactExtractor.m_zoneExp.m_tholdScaleShift << "\n";
+    out << "MaxTouches=" << m_contactExtractor.m_zoneExp.m_maxTouches << "\n";
     // Phase 4: EdgeCompensation
     out << "ECEnabled=" << (m_edgeComp.m_enabled?"1":"0") << "\n";
     out << "ECBlendRange=" << m_edgeComp.m_ecBlendRange << "\n";
-    // Phase 3: PalmRejector
-    out << "PalmEnabled=" << (m_palmReject.m_enabled?"1":"0") << "\n";
-    out << "PalmAreaThreshold=" << m_palmReject.m_areaThreshold << "\n";
-    out << "PalmSignalSumThreshold=" << m_palmReject.m_signalSumThreshold << "\n";
-    out << "PalmDensityThresholdLow=" << m_palmReject.m_densityThresholdLow << "\n";
-    out << "PalmAreaMinForDensity=" << m_palmReject.m_areaMinForDensity << "\n";
-    out << "PalmElongatedEnabled=" << (m_palmReject.m_elongatedEnabled?"1":"0") << "\n";
-    out << "PalmElongatedMinArea=" << m_palmReject.m_elongatedMinArea << "\n";
-    out << "PalmElongatedAspectRatio=" << m_palmReject.m_elongatedAspectRatio << "\n";
-    out << "PalmAnalyzerEnabled=" << (m_palmReject.m_analyzerEnabled?"1":"0") << "\n";
-    out << "PalmCandidateAreaThreshold=" << m_palmReject.m_candidateAreaThreshold << "\n";
-    out << "PalmCandidateSignalThreshold=" << m_palmReject.m_candidateSignalThreshold << "\n";
-    out << "PalmLikelyAreaThreshold=" << m_palmReject.m_likelyAreaThreshold << "\n";
-    out << "PalmFillRatioThreshold=" << m_palmReject.m_fillRatioThreshold << "\n";
-    out << "PalmFlatSharpnessThreshold=" << m_palmReject.m_flatSharpnessThreshold << "\n";
-    out << "PalmStrongPeakProminence=" << m_palmReject.m_strongPeakProminence << "\n";
-    out << "PeakEvalEnabled=" << (m_peakEval.m_enabled?"1":"0") << "\n";
-    out << "PeakEvalFingerProminence=" << m_peakEval.m_fingerProminence << "\n";
-    out << "PeakEvalFingerSharpness=" << m_peakEval.m_fingerSharpness << "\n";
-    out << "PeakEvalPalmSharpnessMax=" << m_peakEval.m_palmSharpnessMax << "\n";
-    out << "PeakEvalAmbiguousMargin=" << m_peakEval.m_ambiguousMargin << "\n";
-    out << "PalmAwareExpansionEnabled=" << (m_peakEval.m_palmAwareExpansionEnabled?"1":"0") << "\n";
-    out << "PalmFingerInPalmThresholdRatio=" << m_peakEval.m_fingerInPalmThresholdRatio << "\n";
-    out << "PalmFingerInPalmMaxRadius=" << m_peakEval.m_fingerInPalmMaxRadius << "\n";
-    out << "PalmLikelyAllowContact=" << (m_peakEval.m_palmLikelyAllowContact?"1":"0") << "\n";
+    // Phase 3: TouchClassifier
+    out << "PalmEnabled=" << (m_touchClassifier.m_enabled?"1":"0") << "\n";
+    out << "PalmAreaThreshold=" << m_touchClassifier.m_areaThreshold << "\n";
+    out << "PalmSignalSumThreshold=" << m_touchClassifier.m_signalSumThreshold << "\n";
+    out << "PalmDensityThresholdLow=" << m_touchClassifier.m_densityThresholdLow << "\n";
+    out << "PalmAreaMinForDensity=" << m_touchClassifier.m_areaMinForDensity << "\n";
+    out << "PalmElongatedEnabled=" << (m_touchClassifier.m_elongatedEnabled?"1":"0") << "\n";
+    out << "PalmElongatedMinArea=" << m_touchClassifier.m_elongatedMinArea << "\n";
+    out << "PalmElongatedAspectRatio=" << m_touchClassifier.m_elongatedAspectRatio << "\n";
+    out << "PalmAnalyzerEnabled=" << (m_touchClassifier.m_analyzerEnabled?"1":"0") << "\n";
+    out << "PalmCandidateAreaThreshold=" << m_touchClassifier.m_candidateAreaThreshold << "\n";
+    out << "PalmCandidateSignalThreshold=" << m_touchClassifier.m_candidateSignalThreshold << "\n";
+    out << "PalmLikelyAreaThreshold=" << m_touchClassifier.m_likelyAreaThreshold << "\n";
+    out << "PalmFillRatioThreshold=" << m_touchClassifier.m_fillRatioThreshold << "\n";
+    out << "PalmFlatSharpnessThreshold=" << m_touchClassifier.m_flatSharpnessThreshold << "\n";
+    out << "PalmStrongPeakProminence=" << m_touchClassifier.m_strongPeakProminence << "\n";
+    out << "PeakEvalEnabled=" << (m_touchClassifier.m_peakEvalEnabled?"1":"0") << "\n";
+    out << "PeakEvalFingerProminence=" << m_touchClassifier.m_fingerProminence << "\n";
+    out << "PeakEvalFingerSharpness=" << m_touchClassifier.m_fingerSharpness << "\n";
+    out << "PeakEvalPalmSharpnessMax=" << m_touchClassifier.m_palmSharpnessMax << "\n";
+    out << "PeakEvalAmbiguousMargin=" << m_touchClassifier.m_ambiguousMargin << "\n";
+    out << "PalmAwareExpansionEnabled=" << (m_touchClassifier.m_palmAwareExpansionEnabled?"1":"0") << "\n";
+    out << "PalmFingerInPalmThresholdRatio=" << m_touchClassifier.m_fingerInPalmThresholdRatio << "\n";
+    out << "PalmFingerInPalmMaxRadius=" << m_touchClassifier.m_fingerInPalmMaxRadius << "\n";
+    out << "PalmLikelyAllowContact=" << (m_touchClassifier.m_palmLikelyAllowContact?"1":"0") << "\n";
     // Phase 5: TouchTracker (same keys as old TouchTracker)
     out << "TrackerEnabled=" << (m_tracker.m_enabled?"1":"0") << "\n";
     out << "UseHungarian=" << (m_tracker.m_useHungarian?"1":"0") << "\n";
@@ -600,38 +603,38 @@ void TouchPipeline::LoadConfig(const std::string& key,
     else if (key=="PressureDriftDebounce")   m_peakDet.m_pressureDriftDebounceLimit = std::stoi(value);
     else if (key=="MacroZoneMinArea")        m_peakDet.m_macroZoneMinArea = std::stoi(value);
     // Phase 4: ZoneExpander
-    else if (key=="DilateErode")             m_zoneExp.m_dilateErode = toBool(value);
-    else if (key=="ZoneTholdScale")          m_zoneExp.m_tholdScaleNumer = std::stoi(value);
-    else if (key=="ZoneTholdShift")          m_zoneExp.m_tholdScaleShift = std::stoi(value);
-    else if (key=="MaxTouches")              m_zoneExp.m_maxTouches = std::stoi(value);
+    else if (key=="DilateErode")             m_contactExtractor.m_zoneExp.m_dilateErode = toBool(value);
+    else if (key=="ZoneTholdScale")          m_contactExtractor.m_zoneExp.m_tholdScaleNumer = std::stoi(value);
+    else if (key=="ZoneTholdShift")          m_contactExtractor.m_zoneExp.m_tholdScaleShift = std::stoi(value);
+    else if (key=="MaxTouches")              m_contactExtractor.m_zoneExp.m_maxTouches = std::stoi(value);
     // Phase 4: EdgeCompensation
     else if (key=="ECEnabled")               m_edgeComp.m_enabled = toBool(value);
     else if (key=="ECBlendRange")            m_edgeComp.m_ecBlendRange = std::stof(value);
-    // Phase 3: PalmRejector
-    else if (key=="PalmEnabled")             m_palmReject.m_enabled = toBool(value);
-    else if (key=="PalmAreaThreshold")       m_palmReject.m_areaThreshold = std::stoi(value);
-    else if (key=="PalmSignalSumThreshold")  m_palmReject.m_signalSumThreshold = std::stoi(value);
-    else if (key=="PalmDensityThresholdLow") m_palmReject.m_densityThresholdLow = std::stof(value);
-    else if (key=="PalmAreaMinForDensity")   m_palmReject.m_areaMinForDensity = std::stoi(value);
-    else if (key=="PalmElongatedEnabled")    m_palmReject.m_elongatedEnabled = toBool(value);
-    else if (key=="PalmElongatedMinArea")    m_palmReject.m_elongatedMinArea = std::stoi(value);
-    else if (key=="PalmElongatedAspectRatio")m_palmReject.m_elongatedAspectRatio = std::stof(value);
-    else if (key=="PalmAnalyzerEnabled")      m_palmReject.m_analyzerEnabled = toBool(value);
-    else if (key=="PalmCandidateAreaThreshold") m_palmReject.m_candidateAreaThreshold = std::stoi(value);
-    else if (key=="PalmCandidateSignalThreshold") m_palmReject.m_candidateSignalThreshold = std::stoi(value);
-    else if (key=="PalmLikelyAreaThreshold")  m_palmReject.m_likelyAreaThreshold = std::stoi(value);
-    else if (key=="PalmFillRatioThreshold")   m_palmReject.m_fillRatioThreshold = std::stof(value);
-    else if (key=="PalmFlatSharpnessThreshold") m_palmReject.m_flatSharpnessThreshold = std::stof(value);
-    else if (key=="PalmStrongPeakProminence") m_palmReject.m_strongPeakProminence = std::stoi(value);
-    else if (key=="PeakEvalEnabled")          m_peakEval.m_enabled = toBool(value);
-    else if (key=="PeakEvalFingerProminence") m_peakEval.m_fingerProminence = std::stoi(value);
-    else if (key=="PeakEvalFingerSharpness")  m_peakEval.m_fingerSharpness = std::stof(value);
-    else if (key=="PeakEvalPalmSharpnessMax") m_peakEval.m_palmSharpnessMax = std::stof(value);
-    else if (key=="PeakEvalAmbiguousMargin")  m_peakEval.m_ambiguousMargin = std::stof(value);
-    else if (key=="PalmAwareExpansionEnabled") m_peakEval.m_palmAwareExpansionEnabled = toBool(value);
-    else if (key=="PalmFingerInPalmThresholdRatio") m_peakEval.m_fingerInPalmThresholdRatio = std::stof(value);
-    else if (key=="PalmFingerInPalmMaxRadius") m_peakEval.m_fingerInPalmMaxRadius = std::stoi(value);
-    else if (key=="PalmLikelyAllowContact")   m_peakEval.m_palmLikelyAllowContact = toBool(value);
+    // Phase 3: TouchClassifier
+    else if (key=="PalmEnabled")             m_touchClassifier.m_enabled = toBool(value);
+    else if (key=="PalmAreaThreshold")       m_touchClassifier.m_areaThreshold = std::stoi(value);
+    else if (key=="PalmSignalSumThreshold")  m_touchClassifier.m_signalSumThreshold = std::stoi(value);
+    else if (key=="PalmDensityThresholdLow") m_touchClassifier.m_densityThresholdLow = std::stof(value);
+    else if (key=="PalmAreaMinForDensity")   m_touchClassifier.m_areaMinForDensity = std::stoi(value);
+    else if (key=="PalmElongatedEnabled")    m_touchClassifier.m_elongatedEnabled = toBool(value);
+    else if (key=="PalmElongatedMinArea")    m_touchClassifier.m_elongatedMinArea = std::stoi(value);
+    else if (key=="PalmElongatedAspectRatio")m_touchClassifier.m_elongatedAspectRatio = std::stof(value);
+    else if (key=="PalmAnalyzerEnabled")      m_touchClassifier.m_analyzerEnabled = toBool(value);
+    else if (key=="PalmCandidateAreaThreshold") m_touchClassifier.m_candidateAreaThreshold = std::stoi(value);
+    else if (key=="PalmCandidateSignalThreshold") m_touchClassifier.m_candidateSignalThreshold = std::stoi(value);
+    else if (key=="PalmLikelyAreaThreshold")  m_touchClassifier.m_likelyAreaThreshold = std::stoi(value);
+    else if (key=="PalmFillRatioThreshold")   m_touchClassifier.m_fillRatioThreshold = std::stof(value);
+    else if (key=="PalmFlatSharpnessThreshold") m_touchClassifier.m_flatSharpnessThreshold = std::stof(value);
+    else if (key=="PalmStrongPeakProminence") m_touchClassifier.m_strongPeakProminence = std::stoi(value);
+    else if (key=="PeakEvalEnabled")          m_touchClassifier.m_peakEvalEnabled = toBool(value);
+    else if (key=="PeakEvalFingerProminence") m_touchClassifier.m_fingerProminence = std::stoi(value);
+    else if (key=="PeakEvalFingerSharpness")  m_touchClassifier.m_fingerSharpness = std::stof(value);
+    else if (key=="PeakEvalPalmSharpnessMax") m_touchClassifier.m_palmSharpnessMax = std::stof(value);
+    else if (key=="PeakEvalAmbiguousMargin")  m_touchClassifier.m_ambiguousMargin = std::stof(value);
+    else if (key=="PalmAwareExpansionEnabled") m_touchClassifier.m_palmAwareExpansionEnabled = toBool(value);
+    else if (key=="PalmFingerInPalmThresholdRatio") m_touchClassifier.m_fingerInPalmThresholdRatio = std::stof(value);
+    else if (key=="PalmFingerInPalmMaxRadius") m_touchClassifier.m_fingerInPalmMaxRadius = std::stoi(value);
+    else if (key=="PalmLikelyAllowContact")   m_touchClassifier.m_palmLikelyAllowContact = toBool(value);
     // Phase 5: TouchTracker
     else if (key=="TrackerEnabled")          m_tracker.m_enabled = toBool(value);
     else if (key=="UseHungarian")            m_tracker.m_useHungarian = toBool(value);
@@ -664,19 +667,52 @@ void TouchPipeline::LoadConfig(const std::string& key,
     else if (key=="RxGhostLineDelta")        m_tracker.m_rxGhostLineDelta = std::stoi(value);
     else if (key=="RxGhostWeakRatio")        m_tracker.m_rxGhostWeakRatio = std::stof(value);
     else if (key=="RxGhostOnlyNew")          m_tracker.m_rxGhostOnlyNew = toBool(value);
-    else if (key=="StylusSuppressGlobalEnabled")  m_tracker.m_stylusSuppressGlobalEnabled = toBool(value);
-    else if (key=="StylusSuppressLocalEnabled")   m_tracker.m_stylusSuppressLocalEnabled = toBool(value);
-    else if (key=="StylusSuppressLocalDistance")  m_tracker.m_stylusSuppressLocalDistance = std::stof(value);
-    else if (key=="StylusSuppressPenPeakThreshold") m_tracker.m_stylusSuppressPenPeakThreshold = std::stoi(value);
-    else if (key=="StylusSuppressTouchSignalKeep") m_tracker.m_stylusSuppressTouchSignalKeep = std::stoi(value);
-    else if (key=="StylusSuppressTouchAreaKeep")   m_tracker.m_stylusSuppressTouchAreaKeep = std::stoi(value);
-    else if (key=="StylusAftEnabled")        m_tracker.m_stylusAftEnabled = toBool(value);
+    else if (key=="StylusSuppressGlobalEnabled") {
+        m_tracker.m_stylusSuppressGlobalEnabled = toBool(value);
+        m_stylusSuppress.m_stylusSuppressGlobalEnabled = m_tracker.m_stylusSuppressGlobalEnabled;
+    }
+    else if (key=="StylusSuppressLocalEnabled") {
+        m_tracker.m_stylusSuppressLocalEnabled = toBool(value);
+        m_stylusSuppress.m_stylusSuppressLocalEnabled = m_tracker.m_stylusSuppressLocalEnabled;
+    }
+    else if (key=="StylusSuppressLocalDistance") {
+        m_tracker.m_stylusSuppressLocalDistance = std::stof(value);
+        m_stylusSuppress.m_stylusSuppressLocalDistance = m_tracker.m_stylusSuppressLocalDistance;
+    }
+    else if (key=="StylusSuppressPenPeakThreshold") {
+        m_tracker.m_stylusSuppressPenPeakThreshold = std::stoi(value);
+        m_stylusSuppress.m_stylusSuppressPenPeakThreshold = m_tracker.m_stylusSuppressPenPeakThreshold;
+    }
+    else if (key=="StylusSuppressTouchSignalKeep") {
+        m_tracker.m_stylusSuppressTouchSignalKeep = std::stoi(value);
+        m_stylusSuppress.m_stylusSuppressTouchSignalKeep = m_tracker.m_stylusSuppressTouchSignalKeep;
+    }
+    else if (key=="StylusSuppressTouchAreaKeep") {
+        m_tracker.m_stylusSuppressTouchAreaKeep = std::stoi(value);
+        m_stylusSuppress.m_stylusSuppressTouchAreaKeep = m_tracker.m_stylusSuppressTouchAreaKeep;
+    }
+    else if (key=="StylusAftEnabled") {
+        m_tracker.m_stylusAftEnabled = toBool(value);
+        m_stylusSuppress.m_stylusAftEnabled = m_tracker.m_stylusAftEnabled;
+    }
     else if (key=="StylusAftRecentFrames")   m_tracker.m_stylusAftRecentFrames = std::stoi(value);
     else if (key=="StylusAftRadius")         m_tracker.m_stylusAftRadius = std::stof(value);
-    else if (key=="StylusAftDebounceFrames") m_tracker.m_stylusAftDebounceFrames = std::stoi(value);
-    else if (key=="StylusAftWeakSignalThreshold") m_tracker.m_stylusAftWeakSignalThreshold = std::stoi(value);
-    else if (key=="StylusAftWeakSizeThresholdMm") m_tracker.m_stylusAftWeakSizeThresholdMm = std::stof(value);
-    else if (key=="StylusAftSuppressFrames") m_tracker.m_stylusAftSuppressFrames = std::stoi(value);
+    else if (key=="StylusAftDebounceFrames") {
+        m_tracker.m_stylusAftDebounceFrames = std::stoi(value);
+        m_stylusSuppress.m_stylusAftDebounceFrames = m_tracker.m_stylusAftDebounceFrames;
+    }
+    else if (key=="StylusAftWeakSignalThreshold") {
+        m_tracker.m_stylusAftWeakSignalThreshold = std::stoi(value);
+        m_stylusSuppress.m_stylusAftWeakSignalThreshold = m_tracker.m_stylusAftWeakSignalThreshold;
+    }
+    else if (key=="StylusAftWeakSizeThresholdMm") {
+        m_tracker.m_stylusAftWeakSizeThresholdMm = std::stof(value);
+        m_stylusSuppress.m_stylusAftWeakSizeThresholdMm = m_tracker.m_stylusAftWeakSizeThresholdMm;
+    }
+    else if (key=="StylusAftSuppressFrames") {
+        m_tracker.m_stylusAftSuppressFrames = std::stoi(value);
+        m_stylusSuppress.m_stylusAftSuppressFrames = m_tracker.m_stylusAftSuppressFrames;
+    }
     else if (key=="StylusAftPalmSuppressFrames") m_tracker.m_stylusAftPalmSuppressFrames = std::stoi(value);
     else if (key=="StylusAftPalmAreaThreshold") m_tracker.m_stylusAftPalmAreaThreshold = std::stoi(value);
     else if (key=="StylusAftPalmSizeThresholdMm") m_tracker.m_stylusAftPalmSizeThresholdMm = std::stof(value);

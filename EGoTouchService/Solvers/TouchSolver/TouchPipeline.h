@@ -20,16 +20,13 @@
 
 // ── Phase 3: Feature Extraction ──
 #include "MacroZoneDetector.hpp"
-#include "PalmRejector.hpp"
 #include "PeakDetector.hpp"
-#include "PeakEvaluator.hpp"
-#include "MicroZoneSegmenter.hpp"
+#include "TouchClassifier.hpp"
 
-// ── Phase 4: Zone & Contact ──
-#include "ZoneExpander.hpp"
+// ── Phase 4: Contact Extraction & Post-Processing ──
+#include "ContactExtractor.hpp"
 #include "EdgeCompensation.hpp"
-#include "TouchSize.hpp"
-#include "EdgeRejection.hpp"
+#include "StylusTouchSuppressor.hpp"
 
 // ── Phase 5: Tracking & Coordinate Filtering ──
 #include "TouchTracker.hpp"
@@ -82,14 +79,12 @@ public:
     Touch::CMFProcessor              m_cmf;
     Touch::GridIIRProcessor          m_gridIIR;
     Touch::MacroZoneDetector         m_macroZoneDet;
-    Touch::PalmRejector              m_palmReject;
     Touch::PeakDetector              m_peakDet;
-    Touch::PeakEvaluator             m_peakEval;
-    Touch::MicroZoneSegmenter        m_microZoneSeg;
-    Touch::ZoneExpander              m_zoneExp;
+    Touch::TouchClassifier           m_touchClassifier;
+    Touch::ContactExtractor          m_contactExtractor;
     Touch::EdgeCompensator           m_edgeComp;
-    Touch::TouchSizeCalculator       m_touchSize;
     Touch::EdgeRejector              m_edgeReject;
+    Touch::StylusTouchSuppressor     m_stylusSuppress;
     Touch::TouchTracker              m_tracker;
     Touch::CoordinateFilter          m_coordFilter;
     Touch::TouchGestureStateMachine  m_gesture;

@@ -4,7 +4,7 @@
 // TSACore Peak_Process: detect local maxima, filter, sort, track IDs.
 
 #include "SolverTypes.h"
-#include "PalmTypes.hpp"
+#include "MSType.hpp"
 #include <array>
 #include <algorithm>
 #include <cstdint>
@@ -13,26 +13,6 @@
 #include <span>
 
 namespace Solvers { namespace Touch {
-
-struct Peak {
-    int r = 0, c = 0;
-    int16_t z = 0;
-    int neighborSignalSum = 0;
-    uint8_t id = 0;
-    int tzAge = 0;
-    int macroZoneIndex = -1;
-    int macroZoneArea = 0;
-    int macroZoneSignalSum = 0;
-    float localMean3x3 = 0.0f;
-    float localMean5x5 = 0.0f;
-    float prominence = 0.0f;
-    float sharpness = 0.0f;
-    PalmClass zonePalmClass = PalmClass::Unknown;
-    PalmClass peakPalmClass = PalmClass::Unknown;
-    float palmScore = 0.0f;
-    float fingerScore = 0.0f;
-    uint32_t evalFlags = 0;
-};
 
 class PeakDetector {
 public:

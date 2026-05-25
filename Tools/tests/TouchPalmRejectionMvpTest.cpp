@@ -1,5 +1,4 @@
-#include "TouchSolver/PalmRejector.hpp"
-#include "TouchSolver/PeakEvaluator.hpp"
+#include "TouchSolver/TouchClassifier.hpp"
 #include "TouchSolver/TouchPipeline.h"
 #include "TouchSolver/ZoneExpander.hpp"
 
@@ -44,7 +43,7 @@ void LoadFromSavedText(Solvers::TouchPipeline& pipeline, const std::string& save
     }
 }
 
-void TestPalmRejectorPreservesMacroZone() {
+void TestTouchClassifierPreservesMacroZone() {
     Solvers::HeatmapFrame frame;
     std::vector<int> pixels;
     for (int r = 10; r < 18; ++r) {
@@ -58,19 +57,19 @@ void TestPalmRejectorPreservesMacroZone() {
     zone.signalSum = static_cast<int>(pixels.size()) * 200;
     std::vector<Solvers::MacroZone> zones{zone};
 
-    Solvers::Touch::PalmRejector rejector;
+    Solvers::Touch::TouchClassifier rejector;
     rejector.m_areaThreshold = 10;
     rejector.m_signalSumThreshold = 1000;
-    const int rejected = rejector.Process(zones, frame);
+    const int rejected = rejector.AnalyzeZones(frame, zones);
 
-    Require(rejected == 0, "PalmRejector should no longer reject zones early");
-    Require(zones.size() == 1, "PalmRejector should preserve palm-like MacroZone");
-    Require(rejector.GetZoneFeatures().size() == 1, "PalmRejector should record zone features");
+    Require(rejected == 0, "TouchClassifier should no longer reject zones early");
+    Require(zones.size() == 1, "TouchClassifier should preserve palm-like MacroZone");
+    Require(rejector.GetZoneFeatures().size() == 1, "TouchClassifier should record zone features");
     Require(rejector.GetZoneFeatures()[0].palmClass == Solvers::Touch::PalmClass::PalmLikely,
             "large preserved MacroZone should be classified as palm likely");
 }
 
-void TestPeakEvaluatorKeepsSharpPeakInPalmCandidate() {
+void TestTouchClassifierKeepsSharpPeakInPalmCandidate() {
     Solvers::HeatmapFrame frame;
     for (int r = 18; r <= 22; ++r) {
         for (int c = 18; c <= 22; ++c) {
@@ -93,17 +92,17 @@ void TestPeakEvaluatorKeepsSharpPeakInPalmCandidate() {
     zone.palmScore = 0.65f;
     std::vector<Solvers::Touch::MacroZoneFeature> zones{zone};
 
-    Solvers::Touch::PeakEvaluator evaluator;
-    evaluator.Process(frame, peaks, zones);
+    Solvers::Touch::TouchClassifier evaluator;
+    evaluator.EvaluatePeaks(frame, peaks, zones);
     const auto evals = evaluator.GetEvaluations();
 
-    Require(evals.size() == 1, "PeakEvaluator should emit one evaluation per peak");
+    Require(evals.size() == 1, "TouchClassifier should emit one evaluation per peak");
     Require(evals[0].palmClass == Solvers::Touch::PalmClass::FingerLikely,
             "sharp peak in palm candidate should be finger likely");
     Require(evals[0].allowContact, "finger-like peak in palm candidate should remain eligible");
 }
 
-void TestPeakEvaluatorSuppressesFlatPalmPeak() {
+void TestTouchClassifierSuppressesFlatPalmPeak() {
     Solvers::HeatmapFrame frame;
     for (int r = 18; r <= 22; ++r) {
         for (int c = 18; c <= 22; ++c) {
@@ -126,8 +125,8 @@ void TestPeakEvaluatorSuppressesFlatPalmPeak() {
     zone.palmScore = 0.9f;
     std::vector<Solvers::Touch::MacroZoneFeature> zones{zone};
 
-    Solvers::Touch::PeakEvaluator evaluator;
-    evaluator.Process(frame, peaks, zones);
+    Solvers::Touch::TouchClassifier evaluator;
+    evaluator.EvaluatePeaks(frame, peaks, zones);
     const auto evals = evaluator.GetEvaluations();
 
     Require(evals[0].palmClass == Solvers::Touch::PalmClass::PalmLikely,
@@ -136,7 +135,7 @@ void TestPeakEvaluatorSuppressesFlatPalmPeak() {
     Require(evals[0].palmEvidenceOnly, "suppressed palm peak should remain palm evidence");
 }
 
-void TestPeakEvaluatorSuppressesBroadPalmPressurePeak() {
+void TestTouchClassifierSuppressesBroadPalmPressurePeak() {
     Solvers::HeatmapFrame frame;
     for (int r = 18; r <= 22; ++r) {
         for (int c = 18; c <= 22; ++c) {
@@ -159,8 +158,8 @@ void TestPeakEvaluatorSuppressesBroadPalmPressurePeak() {
     zone.palmScore = 0.75f;
     std::vector<Solvers::Touch::MacroZoneFeature> zones{zone};
 
-    Solvers::Touch::PeakEvaluator evaluator;
-    evaluator.Process(frame, peaks, zones);
+    Solvers::Touch::TouchClassifier evaluator;
+    evaluator.EvaluatePeaks(frame, peaks, zones);
     const auto evals = evaluator.GetEvaluations();
 
     Require(evals[0].palmClass == Solvers::Touch::PalmClass::PalmLikely,
@@ -196,30 +195,30 @@ void TestZoneExpanderSkipsPalmLikelyPeak() {
 
 void TestPalmConfigRoundTrip() {
     Solvers::TouchPipeline pipeline;
-    pipeline.m_palmReject.m_enabled = false;
-    pipeline.m_palmReject.m_areaThreshold = 77;
-    pipeline.m_palmReject.m_signalSumThreshold = 123456;
-    pipeline.m_palmReject.m_densityThresholdLow = 321.5f;
-    pipeline.m_palmReject.m_areaMinForDensity = 22;
-    pipeline.m_palmReject.m_elongatedEnabled = false;
-    pipeline.m_palmReject.m_elongatedMinArea = 12;
-    pipeline.m_palmReject.m_elongatedAspectRatio = 3.25f;
-    pipeline.m_palmReject.m_analyzerEnabled = false;
-    pipeline.m_palmReject.m_candidateAreaThreshold = 44;
-    pipeline.m_palmReject.m_candidateSignalThreshold = 65432;
-    pipeline.m_palmReject.m_likelyAreaThreshold = 66;
-    pipeline.m_palmReject.m_fillRatioThreshold = 0.55f;
-    pipeline.m_palmReject.m_flatSharpnessThreshold = 1.22f;
-    pipeline.m_palmReject.m_strongPeakProminence = 222;
-    pipeline.m_peakEval.m_enabled = false;
-    pipeline.m_peakEval.m_fingerProminence = 333;
-    pipeline.m_peakEval.m_fingerSharpness = 1.77f;
-    pipeline.m_peakEval.m_palmSharpnessMax = 1.11f;
-    pipeline.m_peakEval.m_ambiguousMargin = 0.25f;
-    pipeline.m_peakEval.m_palmAwareExpansionEnabled = false;
-    pipeline.m_peakEval.m_fingerInPalmThresholdRatio = 0.8f;
-    pipeline.m_peakEval.m_fingerInPalmMaxRadius = 4;
-    pipeline.m_peakEval.m_palmLikelyAllowContact = true;
+    pipeline.m_touchClassifier.m_enabled = false;
+    pipeline.m_touchClassifier.m_areaThreshold = 77;
+    pipeline.m_touchClassifier.m_signalSumThreshold = 123456;
+    pipeline.m_touchClassifier.m_densityThresholdLow = 321.5f;
+    pipeline.m_touchClassifier.m_areaMinForDensity = 22;
+    pipeline.m_touchClassifier.m_elongatedEnabled = false;
+    pipeline.m_touchClassifier.m_elongatedMinArea = 12;
+    pipeline.m_touchClassifier.m_elongatedAspectRatio = 3.25f;
+    pipeline.m_touchClassifier.m_analyzerEnabled = false;
+    pipeline.m_touchClassifier.m_candidateAreaThreshold = 44;
+    pipeline.m_touchClassifier.m_candidateSignalThreshold = 65432;
+    pipeline.m_touchClassifier.m_likelyAreaThreshold = 66;
+    pipeline.m_touchClassifier.m_fillRatioThreshold = 0.55f;
+    pipeline.m_touchClassifier.m_flatSharpnessThreshold = 1.22f;
+    pipeline.m_touchClassifier.m_strongPeakProminence = 222;
+    pipeline.m_touchClassifier.m_peakEvalEnabled = false;
+    pipeline.m_touchClassifier.m_fingerProminence = 333;
+    pipeline.m_touchClassifier.m_fingerSharpness = 1.77f;
+    pipeline.m_touchClassifier.m_palmSharpnessMax = 1.11f;
+    pipeline.m_touchClassifier.m_ambiguousMargin = 0.25f;
+    pipeline.m_touchClassifier.m_palmAwareExpansionEnabled = false;
+    pipeline.m_touchClassifier.m_fingerInPalmThresholdRatio = 0.8f;
+    pipeline.m_touchClassifier.m_fingerInPalmMaxRadius = 4;
+    pipeline.m_touchClassifier.m_palmLikelyAllowContact = true;
 
     std::ostringstream out;
     pipeline.SaveConfig(out);
@@ -233,48 +232,48 @@ void TestPalmConfigRoundTrip() {
     Solvers::TouchPipeline loaded;
     LoadFromSavedText(loaded, saved);
 
-    Require(!loaded.m_palmReject.m_enabled, "old PalmEnabled key should round-trip");
-    Require(loaded.m_palmReject.m_areaThreshold == 77, "old palm area key should round-trip");
-    Require(loaded.m_palmReject.m_signalSumThreshold == 123456, "old palm signal key should round-trip");
-    RequireNear(loaded.m_palmReject.m_densityThresholdLow, 321.5f, 0.0001f,
+    Require(!loaded.m_touchClassifier.m_enabled, "old PalmEnabled key should round-trip");
+    Require(loaded.m_touchClassifier.m_areaThreshold == 77, "old palm area key should round-trip");
+    Require(loaded.m_touchClassifier.m_signalSumThreshold == 123456, "old palm signal key should round-trip");
+    RequireNear(loaded.m_touchClassifier.m_densityThresholdLow, 321.5f, 0.0001f,
                 "old palm density key should round-trip");
-    Require(!loaded.m_palmReject.m_elongatedEnabled, "old palm elongated key should round-trip");
-    Require(!loaded.m_palmReject.m_analyzerEnabled, "new analyzer enabled key should round-trip");
-    Require(loaded.m_palmReject.m_areaMinForDensity == 22, "old palm density min area key should round-trip");
-    Require(loaded.m_palmReject.m_elongatedMinArea == 12, "old palm elongated min area key should round-trip");
-    RequireNear(loaded.m_palmReject.m_elongatedAspectRatio, 3.25f, 0.0001f,
+    Require(!loaded.m_touchClassifier.m_elongatedEnabled, "old palm elongated key should round-trip");
+    Require(!loaded.m_touchClassifier.m_analyzerEnabled, "new analyzer enabled key should round-trip");
+    Require(loaded.m_touchClassifier.m_areaMinForDensity == 22, "old palm density min area key should round-trip");
+    Require(loaded.m_touchClassifier.m_elongatedMinArea == 12, "old palm elongated min area key should round-trip");
+    RequireNear(loaded.m_touchClassifier.m_elongatedAspectRatio, 3.25f, 0.0001f,
                 "old palm elongated aspect key should round-trip");
-    Require(loaded.m_palmReject.m_candidateAreaThreshold == 44, "new candidate area key should round-trip");
-    Require(loaded.m_palmReject.m_candidateSignalThreshold == 65432, "new candidate signal key should round-trip");
-    Require(loaded.m_palmReject.m_likelyAreaThreshold == 66, "new likely area key should round-trip");
-    RequireNear(loaded.m_palmReject.m_fillRatioThreshold, 0.55f, 0.0001f,
+    Require(loaded.m_touchClassifier.m_candidateAreaThreshold == 44, "new candidate area key should round-trip");
+    Require(loaded.m_touchClassifier.m_candidateSignalThreshold == 65432, "new candidate signal key should round-trip");
+    Require(loaded.m_touchClassifier.m_likelyAreaThreshold == 66, "new likely area key should round-trip");
+    RequireNear(loaded.m_touchClassifier.m_fillRatioThreshold, 0.55f, 0.0001f,
                 "new fill ratio key should round-trip");
-    RequireNear(loaded.m_palmReject.m_flatSharpnessThreshold, 1.22f, 0.0001f,
+    RequireNear(loaded.m_touchClassifier.m_flatSharpnessThreshold, 1.22f, 0.0001f,
                 "new flat sharpness key should round-trip");
-    Require(loaded.m_palmReject.m_strongPeakProminence == 222, "new strong peak key should round-trip");
-    Require(!loaded.m_peakEval.m_enabled, "new peak evaluator enabled key should round-trip");
-    Require(loaded.m_peakEval.m_fingerProminence == 333, "new peak evaluator prominence key should round-trip");
-    RequireNear(loaded.m_peakEval.m_fingerSharpness, 1.77f, 0.0001f,
+    Require(loaded.m_touchClassifier.m_strongPeakProminence == 222, "new strong peak key should round-trip");
+    Require(!loaded.m_touchClassifier.m_peakEvalEnabled, "new peak evaluator enabled key should round-trip");
+    Require(loaded.m_touchClassifier.m_fingerProminence == 333, "new peak evaluator prominence key should round-trip");
+    RequireNear(loaded.m_touchClassifier.m_fingerSharpness, 1.77f, 0.0001f,
                 "new peak evaluator sharpness key should round-trip");
-    RequireNear(loaded.m_peakEval.m_palmSharpnessMax, 1.11f, 0.0001f,
+    RequireNear(loaded.m_touchClassifier.m_palmSharpnessMax, 1.11f, 0.0001f,
                 "new peak evaluator palm max key should round-trip");
-    RequireNear(loaded.m_peakEval.m_ambiguousMargin, 0.25f, 0.0001f,
+    RequireNear(loaded.m_touchClassifier.m_ambiguousMargin, 0.25f, 0.0001f,
                 "new peak evaluator ambiguous key should round-trip");
-    Require(!loaded.m_peakEval.m_palmAwareExpansionEnabled, "new palm-aware expansion key should round-trip");
-    RequireNear(loaded.m_peakEval.m_fingerInPalmThresholdRatio, 0.8f, 0.0001f,
+    Require(!loaded.m_touchClassifier.m_palmAwareExpansionEnabled, "new palm-aware expansion key should round-trip");
+    RequireNear(loaded.m_touchClassifier.m_fingerInPalmThresholdRatio, 0.8f, 0.0001f,
                 "new finger-in-palm threshold key should round-trip");
-    Require(loaded.m_peakEval.m_fingerInPalmMaxRadius == 4, "new finger-in-palm radius key should round-trip");
-    Require(loaded.m_peakEval.m_palmLikelyAllowContact, "new palm allow contact key should round-trip");
+    Require(loaded.m_touchClassifier.m_fingerInPalmMaxRadius == 4, "new finger-in-palm radius key should round-trip");
+    Require(loaded.m_touchClassifier.m_palmLikelyAllowContact, "new palm allow contact key should round-trip");
 }
 
 } // namespace
 
 int main() {
     try {
-        TestPalmRejectorPreservesMacroZone();
-        TestPeakEvaluatorKeepsSharpPeakInPalmCandidate();
-        TestPeakEvaluatorSuppressesFlatPalmPeak();
-        TestPeakEvaluatorSuppressesBroadPalmPressurePeak();
+        TestTouchClassifierPreservesMacroZone();
+        TestTouchClassifierKeepsSharpPeakInPalmCandidate();
+        TestTouchClassifierSuppressesFlatPalmPeak();
+        TestTouchClassifierSuppressesBroadPalmPressurePeak();
         TestZoneExpanderSkipsPalmLikelyPeak();
         TestPalmConfigRoundTrip();
         std::cout << "[TEST] Touch palm rejection MVP tests passed.\n";

@@ -1,17 +1,13 @@
 #pragma once
-// ── TouchPipeline Module: MicroZoneSegmenter ──
-// Header-only. Priority-queue watershed: assigns each MacroZone pixel to the nearest peak
-// by signal strength (steepest-ascent flood fill), 8-connected.
-// Optimized: pre-allocated heap buffer, no std::priority_queue per-frame allocation.
 
 #include "SolverTypes.h"
-#include "PeakDetector.hpp"
-#include <vector>
+#include "MSType.hpp"
+#include "ZoneExpander.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
-#include <cstring>
-#include <algorithm>
 #include <span>
+#include <vector>
 
 namespace Solvers { namespace Touch {
 
@@ -19,14 +15,13 @@ class MicroZoneSegmenter {
 public:
     static constexpr int kRows = 40;
     static constexpr int kCols = 60;
-    static constexpr int kGridSize = kRows * kCols; // 2400
+    static constexpr int kGridSize = kRows * kCols;
 
     inline void Process(const HeatmapFrame& frame,
                         const std::vector<MacroZone>& macroZones,
                         std::span<const Peak> peaks) {
         m_peakZones.fill(0);
 
-        // Create a boolean map of all valid grid cells that belong to ANY MacroZone.
         bool validPixels[kGridSize] = {false};
         for (const auto& mz : macroZones) {
             for (int idx : mz.pixels) {
@@ -34,13 +29,10 @@ public:
             }
         }
 
-        // Use pre-allocated heap buffer
         m_heapSize = 0;
-
-        // Seed the heap with all peaks
         for (size_t i = 0; i < peaks.size(); ++i) {
             int idx = peaks[i].r * kCols + peaks[i].c;
-            uint8_t zoneId = static_cast<uint8_t>(i + 1); // 1-indexed
+            uint8_t zoneId = static_cast<uint8_t>(i + 1);
 
             if (validPixels[idx]) {
                 m_peakZones[idx] = zoneId;
@@ -51,10 +43,8 @@ public:
         static constexpr int dr[] = {-1, 1, 0, 0, -1, -1, 1, 1};
         static constexpr int dc[] = {0, 0, -1, 1, -1, 1, -1, 1};
 
-        // Run steepest ascent / priority flood fill
         while (m_heapSize > 0) {
             Node curr = heapPop();
-
             int r = curr.idx / kCols;
             int c = curr.idx % kCols;
 
@@ -81,7 +71,6 @@ public:
 private:
     std::array<uint8_t, kGridSize> m_peakZones{};
 
-    // Pre-allocated max-heap buffer (eliminates std::priority_queue heap alloc)
     struct Node {
         int idx;
         int16_t sig;
@@ -94,7 +83,6 @@ private:
     inline void heapPush(Node n) {
         if (m_heapSize >= kGridSize) return;
         m_heap[m_heapSize] = n;
-        // Sift up
         int i = m_heapSize++;
         while (i > 0) {
             int parent = (i - 1) / 2;
@@ -108,7 +96,6 @@ private:
     inline Node heapPop() {
         Node top = m_heap[0];
         m_heap[0] = m_heap[--m_heapSize];
-        // Sift down
         int i = 0;
         while (true) {
             int l = 2 * i + 1, r = 2 * i + 2, largest = i;
@@ -120,6 +107,61 @@ private:
         }
         return top;
     }
+};
+
+class ContactExtractor {
+public:
+    class TouchSizeCalculator {
+    public:
+        float m_pixelPitchMm = 4.5f;
+        int   m_unitPerSigMm2 = 128;
+        uint8_t m_fallbackSizeMm = 5;
+
+        inline void Process(std::vector<TouchContact>& contacts) {
+            for (auto& tc : contacts) {
+                uint8_t sizeMm = GetSizeInMM(tc.signalSum, m_unitPerSigMm2);
+                if (sizeMm == 0) sizeMm = m_fallbackSizeMm;
+                tc.sizeMm = static_cast<float>(sizeMm);
+            }
+        }
+
+    private:
+        static inline uint8_t GetSizeInMM(int sigSum, int scale) {
+            if (sigSum >= 0x200000) return 0xFF;
+            uint8_t r = 1;
+            int shifted = sigSum << 10;
+            while (r < 15) {
+                int threshold = scale * r * (r + r * r);
+                if (threshold > shifted) break;
+                r++;
+            }
+            return r;
+        }
+    };
+
+    MicroZoneSegmenter m_microZoneSeg;
+    ZoneExpander m_zoneExp;
+    TouchSizeCalculator m_touchSize;
+
+    inline void ProcessDiagnostics(const HeatmapFrame& frame,
+                                   const std::vector<MacroZone>& macroZones,
+                                   std::span<const Peak> peaks) {
+        m_microZoneSeg.Process(frame, macroZones, peaks);
+    }
+
+    inline void Process(HeatmapFrame& frame,
+                        std::span<const Peak> peaks,
+                        int16_t sigThold,
+                        std::span<const PeakEvaluation> evaluations = {}) {
+        m_zoneExp.Process(frame, peaks, sigThold, evaluations);
+        m_touchSize.Process(frame.contacts);
+    }
+
+    const std::array<uint8_t, MicroZoneSegmenter::kGridSize>& GetPeakZones() const { return m_microZoneSeg.GetPeakZones(); }
+    const std::vector<ZoneEdgeInfo>& GetEdgeInfos() const { return m_zoneExp.GetEdgeInfos(); }
+    const std::array<uint8_t, ZoneExpander::kGridSize>& GetZoneEdge() const { return m_zoneExp.GetZoneEdge(); }
+    const EdgeBounds& GetEdgeBounds() const { return m_zoneExp.m_edgeBounds; }
+    int GetZoneCount() const { return m_zoneExp.GetZoneCount(); }
 };
 
 }} // namespace Solvers::Touch

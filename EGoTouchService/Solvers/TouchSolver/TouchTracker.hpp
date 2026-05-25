@@ -1,8 +1,8 @@
 #pragma once
 
 #include "SolverTypes.h"
+#include "GhostSuppressor.hpp"
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -109,7 +109,6 @@ private:
 
     static inline float DistanceSq(float x1, float y1, float x2, float y2);
     static inline bool IsEdgeTouch(float x, float y, int cols, int rows, float em);
-    static inline bool HasLifeFlag(const TouchContact& touch, uint32_t flag);
     inline void GetMatchReference(const TrackState& track, float& outX, float& outY) const;
     inline float EstimateSizeMm(int area, int signalSum) const;
     inline int ComputeTouchDownDebounceFrames(const TouchContact& touch) const;
@@ -123,7 +122,6 @@ private:
     inline StylusNoiseEvidence BuildStylusNoiseEvidence(const HeatmapFrame& frame,
                                                         int recheckThreshold) const;
     inline bool IsStrongTouchCandidate(const TouchContact& touch) const;
-    inline bool ApplyStylusTouchSuppression(HeatmapFrame& frame);
     inline bool ResolveStylusAftContext(const HeatmapFrame& frame, float& outX, float& outY);
     inline bool ShouldStylusAftSuppress(const TouchContact& touch, int touchAge, float stylusX, float stylusY, int& outHoldFrames) const;
     inline void SolveAssignment(const float* cost, int n, int m, int* rowToCol) const;
@@ -137,10 +135,6 @@ inline float TouchTracker::DistanceSq(float x1, float y1, float x2, float y2) {
 
 inline bool TouchTracker::IsEdgeTouch(float x, float y, int cols, int rows, float em) {
     return (x <= em) || (y <= em) || (x >= float(cols) - em) || (y >= float(rows) - em);
-}
-
-inline bool TouchTracker::HasLifeFlag(const TouchContact& touch, uint32_t flag) {
-    return (touch.lifeFlags & flag) != 0;
 }
 
 inline void TouchTracker::GetMatchReference(const TrackState& track, float& outX, float& outY) const {
@@ -380,81 +374,6 @@ inline bool TouchTracker::IsStrongTouchCandidate(const TouchContact& touch) cons
            (touch.area >= m_stylusSuppressTouchAreaKeep);
 }
 
-inline bool TouchTracker::ApplyStylusTouchSuppression(HeatmapFrame& frame) {
-    auto& interop = frame.stylus.interop;
-    interop.recheckEnabled =
-        interop.recheckEnabled || m_stylusSuppressLocalEnabled || m_stylusAftEnabled;
-    interop.recheckOverlap = false;
-    const int baseThreshold =
-        (interop.recheckThreshold > 0)
-            ? static_cast<int>(interop.recheckThreshold)
-            : m_stylusSuppressPenPeakThreshold;
-    const int multiThreshold =
-        (interop.recheckThresholdMulti > 0)
-            ? static_cast<int>(interop.recheckThresholdMulti)
-            : std::max(baseThreshold, 1200);
-    const int finalThreshold =
-        (frame.contacts.size() > 2) ? multiThreshold : baseThreshold;
-    interop.recheckThreshold =
-        static_cast<uint16_t>(std::clamp(finalThreshold, 0, 0xFFFF));
-    interop.touchNullLike = false;
-    interop.touchSuppressActive = false;
-    interop.touchSuppressFrames = 0;
-
-    const StylusNoiseEvidence evidence =
-        BuildStylusNoiseEvidence(frame, finalThreshold);
-    interop.recheckPassed = interop.recheckPassed && evidence.stable;
-    if (!m_stylusSuppressLocalEnabled || !evidence.pointValid) return false;
-
-    const float radiusSq = m_stylusSuppressLocalDistance * m_stylusSuppressLocalDistance;
-    const float overlapRadius = std::min(m_stylusSuppressLocalDistance, 1.25f);
-    const float overlapRadiusSq = overlapRadius * overlapRadius;
-    int suppressedCount = 0;
-    int holdFrames = 0;
-
-    frame.contacts.erase(std::remove_if(frame.contacts.begin(), frame.contacts.end(),
-        [&](const TouchContact& c) {
-            const float distSq = DistanceSq(c.x, c.y, evidence.x, evidence.y);
-            if (distSq > radiusSq) return false;
-
-            const bool overlap = distSq <= overlapRadiusSq;
-            interop.recheckOverlap = interop.recheckOverlap || overlap;
-
-            if (!evidence.active) return false;
-
-            const float sizeMm = (c.sizeMm > 0.0f) ? c.sizeMm
-                                                   : EstimateSizeMm(c.area, c.signalSum);
-            const bool strongTouch = IsStrongTouchCandidate(c);
-            const bool weakTouch =
-                (c.signalSum < m_stylusAftWeakSignalThreshold) ||
-                (sizeMm < m_stylusAftWeakSizeThresholdMm) ||
-                (c.area < std::max(1, m_stylusSuppressTouchAreaKeep / 2));
-            const bool suppressNow =
-                overlap &&
-                !strongTouch &&
-                (weakTouch || evidence.tx2Strong);
-
-            if (!suppressNow) return false;
-
-            ++suppressedCount;
-            holdFrames = std::max(holdFrames,
-                                  overlap ? m_stylusAftSuppressFrames
-                                          : std::max(1, m_stylusAftDebounceFrames));
-            return true;
-        }), frame.contacts.end());
-
-    interop.touchNullLike =
-        evidence.active && interop.recheckOverlap;
-    interop.touchSuppressActive =
-        evidence.active || suppressedCount > 0;
-    if (interop.recheckOverlap && evidence.active) {
-        interop.recheckPassed = false;
-    }
-    interop.touchSuppressFrames = static_cast<uint8_t>(
-        std::clamp(holdFrames, 0, 255));
-    return false;
-}
-
 inline bool TouchTracker::ResolveStylusAftContext(const HeatmapFrame& frame, float& outX, float& outY) {
     if (!m_stylusAftEnabled) return false;
     const auto& interop = frame.stylus.interop;
@@ -602,7 +521,6 @@ inline bool TouchTracker::Process(HeatmapFrame& frame) {
     }
     if (frame.contacts.size() > static_cast<size_t>(m_maxTouchCount))
         frame.contacts.resize(static_cast<size_t>(m_maxTouchCount));
-    if (ApplyStylusTouchSuppression(frame)) return true;
 
     constexpr int kRows = 40, kCols = 60;
     constexpr float kEdgeMargin = 2.0f;
@@ -871,38 +789,13 @@ inline bool TouchTracker::Process(HeatmapFrame& frame) {
         }
     }
 
-    if (m_rxGhostFilterEnabled && outCount > 1) {
-        std::array<uint8_t, 21> removeById{};
-        removeById.fill(0);
-        for (int i = 0; i < outCount; ++i) {
-            const auto& a = out[i];
-            if (a.state == TouchStateUp || HasLifeFlag(a, TouchLifeSilentGap) || a.id <= 0 || a.id > m_maxTouchCount) continue;
-            for (int j = i + 1; j < outCount; ++j) {
-                const auto& b = out[j];
-                if (b.state == TouchStateUp || HasLifeFlag(b, TouchLifeSilentGap) || b.id <= 0 || b.id > m_maxTouchCount) continue;
-                const int ld = std::abs(static_cast<int>(std::lround(a.y)) - static_cast<int>(std::lround(b.y)));
-                if (ld > m_rxGhostLineDelta) continue;
-                const TouchContact* strong = &a; const TouchContact* weak = &b;
-                if (b.signalSum > a.signalSum) { strong = &b; weak = &a; }
-                if (weak->signalSum >= static_cast<int>(static_cast<float>(strong->signalSum) * m_rxGhostWeakRatio)) continue;
-                if (m_rxGhostOnlyNew && weak->state != TouchStateDown) continue;
-                removeById[weak->id] = 1;
-            }
-        }
-        int writePos = 0;
-        for (int i = 0; i < outCount; ++i) {
-            if (out[i].state == TouchStateUp || HasLifeFlag(out[i], TouchLifeSilentGap) ||
-                out[i].id <= 0 || out[i].id > m_maxTouchCount || removeById[out[i].id] == 0)
-                out[writePos++] = out[i];
-        }
-        outCount = writePos;
-        int trackWrite = 0;
-        for (int i = 0; i < nextTrackCount; ++i) {
-            if (nextTracks[i].id <= 0 || nextTracks[i].id > m_maxTouchCount || removeById[nextTracks[i].id] == 0)
-                nextTracks[trackWrite++] = nextTracks[i];
-        }
-        nextTrackCount = trackWrite;
-    }
+    GhostSuppressor ghostSuppressor;
+    ghostSuppressor.m_rxGhostFilterEnabled = m_rxGhostFilterEnabled;
+    ghostSuppressor.m_rxGhostLineDelta = m_rxGhostLineDelta;
+    ghostSuppressor.m_rxGhostWeakRatio = m_rxGhostWeakRatio;
+    ghostSuppressor.m_rxGhostOnlyNew = m_rxGhostOnlyNew;
+    ghostSuppressor.ProcessTracked(out, outCount, m_maxTouchCount, nextTracks, nextTrackCount,
+                                   TouchStateUp, TouchStateDown, TouchLifeSilentGap);
 
     frame.contacts.assign(out, out + outCount);
     std::memcpy(m_tracks, nextTracks, sizeof(TrackState) * nextTrackCount);

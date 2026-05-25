@@ -36,6 +36,11 @@ private:
     void DrawStylusControlPanel();
     void DrawHeatmap();
     void DrawCoordinateTable();
+    void DrawTouchInspectorPanel();
+    void DrawTouchOverviewPanel();
+    void DrawTouchPipelineConfigPanel();
+    void DrawTouchPacketDetails();
+    void DrawTouchContactSummaryTable();
     void DrawStylusPanel();
     void DrawDynamicDebugPanel();
     void DrawMasterSuffixTable();
@@ -71,6 +76,7 @@ private:
     // Docking layout
     bool m_dockLayoutApplied = false;
     int m_activeInspectorTab = 0;
+    int m_touchConfigModuleIndex = 0;
 
     // Export
     int m_autoExportTargetPeaks = 0;

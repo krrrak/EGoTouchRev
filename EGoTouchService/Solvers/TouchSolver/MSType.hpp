@@ -4,6 +4,17 @@
 
 namespace Solvers { namespace Touch {
 
+struct Peak {
+    int r = 0, c = 0;
+    int16_t z = 0;
+    int neighborSignalSum = 0;
+    uint8_t id = 0;
+    int tzAge = 0;
+    int macroZoneIndex = -1;
+    int macroZoneArea = 0;
+    int macroZoneSignalSum = 0;
+};
+
 enum class PalmClass : uint8_t {
     Unknown = 0,
     FingerLikely,

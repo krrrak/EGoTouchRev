@@ -1,7 +1,7 @@
+#include "TouchSolver/StylusTouchSuppressor.hpp"
 #include "TouchSolver/TouchTracker.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <cstdint>
 #include <initializer_list>
 #include <iostream>
@@ -12,6 +12,7 @@ namespace {
 
 using Solvers::HeatmapFrame;
 using Solvers::TouchContact;
+using Solvers::Touch::StylusTouchSuppressor;
 using Solvers::Touch::TouchTracker;
 
 struct ContactSpec {
@@ -33,6 +34,7 @@ struct StylusSpec {
 };
 
 struct TrackerHarness {
+    StylusTouchSuppressor stylusSuppressor;
     TouchTracker tracker;
     uint64_t timestamp = 0;
 
@@ -62,6 +64,7 @@ struct TrackerHarness {
         frame.stylus.interop.signalY = stylus.signalY;
         frame.stylus.interop.maxRawPeak = std::max(stylus.signalX, stylus.signalY);
 
+        stylusSuppressor.Process(frame);
         tracker.Process(frame);
         return frame;
     }

@@ -12,57 +12,78 @@
 #include <windows.h>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <vector>
 
 namespace App {
 
+namespace {
+
+ImVec4 GoodColor() { return ImVec4(0.2f, 0.9f, 0.3f, 1.0f); }
+ImVec4 WarnColor() { return ImVec4(1.0f, 0.8f, 0.2f, 1.0f); }
+ImVec4 BadColor() { return ImVec4(1.0f, 0.35f, 0.3f, 1.0f); }
+ImVec4 InfoColor() { return ImVec4(0.4f, 0.85f, 1.0f, 1.0f); }
+
+ImVec4 StatusColor(bool ok) {
+    return ok ? GoodColor() : BadColor();
+}
+
+ImVec4 FpsColor(int fps) {
+    if (fps >= 100) return GoodColor();
+    if (fps >= 50) return WarnColor();
+    return BadColor();
+}
+
+const char* FrameSourceModeLabel(FrameSourceMode mode) {
+    switch (mode) {
+    case FrameSourceMode::Live: return "Live";
+    case FrameSourceMode::Playback: return "Playback";
+    default: return "Unknown";
+    }
+}
+
+const char* TouchStateLabel(int state) {
+    switch (state) {
+    case Solvers::TouchStateDown: return "Down";
+    case Solvers::TouchStateMove: return "Move";
+    case Solvers::TouchStateUp: return "Up";
+    default: return "UNK";
+    }
+}
+
+const char* TouchReportEventLabel(int event) {
+    switch (event) {
+    case Solvers::TouchReportIdle: return "Idle";
+    case Solvers::TouchReportDown: return "Down";
+    case Solvers::TouchReportMove: return "Move";
+    case Solvers::TouchReportUp: return "Up";
+    default: return "UNK";
+    }
+}
+
+std::string TouchPacketBytes(const Solvers::TouchPacket& packet) {
+    std::ostringstream oss;
+    oss << std::hex << std::setfill('0');
+    for (size_t i = 0; i < packet.bytes.size(); ++i) {
+        oss << std::setw(2) << static_cast<unsigned int>(packet.bytes[i]);
+        if (i + 1 < packet.bytes.size()) {
+            oss << ' ';
+        }
+    }
+    return oss.str();
+}
+
+} // namespace
+
 void DiagnosticsWorkbench::DrawInspectorPanel() {
     ImGui::Begin("Inspector");
-    bool masterParserOnly = (m_proxy != nullptr) && m_proxy->IsMasterParserOnlyMode();
-    // Level 1: category tabs
     if (ImGui::BeginTabBar("CategoryTabs")) {
         if (ImGui::BeginTabItem("Touch")) {
-            if (m_proxy) {
-                if (masterParserOnly) ImGui::BeginDisabled();
-                auto schema = m_proxy->GetPipeline().GetConfigSchema();
-
-                // Level 2: per-module sub-tabs
-                if (ImGui::BeginTabBar("TouchModuleTabs")) {
-                    static const char* moduleTabs[] = {
-                        "Frame Parser",
-                        "Signal Conditioning",
-                        "Peak Detection",
-                        "Zone & Contact",
-                        "Palm Rejection",
-                        "Tracking",
-                        "Stylus Suppress",
-                        "Coordinate Filter",
-                        "Gesture",
-                    };
-                    for (const char* mod : moduleTabs) {
-                        if (ImGui::BeginTabItem(mod)) {
-                            ConfigUIRenderer::RenderConfigSchemaByModule(schema, mod);
-                            // Show save button per tab
-                            ImGui::Separator();
-                            if (ImGui::Button("Save & Apply")) {
-                                m_proxy->SaveConfig();
-                            }
-                            ImGui::EndTabItem();
-                        }
-                    }
-                    // Coordinates table (diagnostic, not config)
-                    if (ImGui::BeginTabItem("Coordinates")) {
-                        DrawCoordinateTable();
-                        ImGui::EndTabItem();
-                    }
-                    ImGui::EndTabBar();
-                }
-                if (masterParserOnly) ImGui::EndDisabled();
-            } else {
-                ImGui::TextUnformatted("ServiceProxy unavailable.");
-            }
+            DrawTouchInspectorPanel();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Stylus")) {
@@ -80,6 +101,289 @@ void DiagnosticsWorkbench::DrawInspectorPanel() {
         ImGui::EndTabBar();
     }
     ImGui::End();
+}
+
+void DiagnosticsWorkbench::DrawTouchInspectorPanel() {
+    if (!m_proxy) {
+        ImGui::TextUnformatted("ServiceProxy unavailable.");
+        return;
+    }
+
+    const bool connected = m_proxy->IsConnected();
+    const bool masterParserOnly = m_proxy->IsMasterParserOnlyMode();
+    const bool vhfEnabled = m_proxy->IsVhfEnabled();
+    const int masterFps = m_proxy->GetAcquisitionFps();
+    const int slaveFps = m_proxy->GetSlaveAcquisitionFps();
+
+    if (ImGui::BeginTable("TouchStatusStrip", 4, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchSame)) {
+        ImGui::TableNextRow();
+
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextDisabled("Service");
+        ImGui::TextColored(StatusColor(connected), "%s", connected ? "● Connected" : "● Disconnected");
+        ImGui::TextDisabled("%s", FrameSourceModeLabel(m_proxy->GetFrameSourceMode()));
+
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextDisabled("Pipeline");
+        ImGui::TextColored(masterParserOnly ? WarnColor() : GoodColor(), "%s", masterParserOnly ? "Master Parser Only" : "Full Pipeline");
+        ImGui::TextColored(StatusColor(vhfEnabled), "Touch VHF: %s", vhfEnabled ? "Enabled" : "Disabled");
+
+        ImGui::TableSetColumnIndex(2);
+        ImGui::TextDisabled("Frame Rate");
+        ImGui::TextColored(FpsColor(masterFps), "Master: %d Hz", masterFps);
+        ImGui::TextColored(FpsColor(slaveFps), "Slave: %d Hz", slaveFps);
+
+        ImGui::TableSetColumnIndex(3);
+        ImGui::TextDisabled("Current Frame");
+        ImGui::Text("Contacts: %zu", m_currentFrame.contacts.size());
+#if EGOTOUCH_DIAG
+        ImGui::Text("Peaks: %zu", m_currentFrame.peaks.size());
+#else
+        ImGui::TextDisabled("Peaks: N/A");
+#endif
+        ImGui::EndTable();
+    }
+
+    if (masterParserOnly) {
+        ImGui::TextColored(WarnColor(), "Master Parser Only is enabled. Read-only diagnostics remain available; pipeline controls are disabled.");
+    }
+
+    ImGui::Separator();
+    if (ImGui::BeginTabBar("TouchInspectorTabs")) {
+        if (ImGui::BeginTabItem("Overview")) {
+            DrawTouchOverviewPanel();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Pipeline Config")) {
+            DrawTouchPipelineConfigPanel();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Coordinates")) {
+            ImGui::BeginChild("TouchCoordinatesScroll", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
+            DrawCoordinateTable();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Packets")) {
+            DrawTouchPacketDetails();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+}
+
+void DiagnosticsWorkbench::DrawTouchOverviewPanel() {
+    if (!m_proxy) {
+        ImGui::TextUnformatted("ServiceProxy unavailable.");
+        return;
+    }
+
+    if (ImGui::BeginTable("TouchOverviewColumns", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchSame)) {
+        ImGui::TableNextRow();
+
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextColored(InfoColor(), "Runtime");
+        if (ImGui::BeginTable("TouchRuntimeTable", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+            ImGui::TableSetupColumn("Item", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableHeadersRow();
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted("Service");
+            ImGui::TableSetColumnIndex(1); ImGui::TextColored(StatusColor(m_proxy->IsConnected()), "%s", m_proxy->IsConnected() ? "Connected" : "Disconnected");
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted("Source");
+            ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(FrameSourceModeLabel(m_proxy->GetFrameSourceMode()));
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted("Pipeline");
+            ImGui::TableSetColumnIndex(1); ImGui::TextColored(m_proxy->IsMasterParserOnlyMode() ? WarnColor() : GoodColor(), "%s", m_proxy->IsMasterParserOnlyMode() ? "Master Parser Only" : "Full Pipeline");
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted("Touch VHF");
+            ImGui::TableSetColumnIndex(1); ImGui::TextColored(StatusColor(m_proxy->IsVhfEnabled()), "%s", m_proxy->IsVhfEnabled() ? "Enabled" : "Disabled");
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted("Frame Rate");
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextColored(FpsColor(m_proxy->GetAcquisitionFps()), "Master %d Hz", m_proxy->GetAcquisitionFps());
+            ImGui::SameLine();
+            ImGui::TextColored(FpsColor(m_proxy->GetSlaveAcquisitionFps()), "Slave %d Hz", m_proxy->GetSlaveAcquisitionFps());
+            ImGui::EndTable();
+        }
+
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextColored(InfoColor(), "Frame");
+        if (ImGui::BeginTable("TouchFrameTable", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+            ImGui::TableSetupColumn("Item", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableHeadersRow();
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted("Service Timestamp");
+            ImGui::TableSetColumnIndex(1); ImGui::Text("%llu", static_cast<unsigned long long>(m_currentFrame.timestamp));
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted("App Receive Epoch");
+            ImGui::TableSetColumnIndex(1); ImGui::Text("%llu", static_cast<unsigned long long>(m_currentFrame.receiveSystemEpochUs));
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted("Raw Length");
+            ImGui::TableSetColumnIndex(1); ImGui::Text("%llu bytes", static_cast<unsigned long long>(m_currentFrame.rawLen));
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted("Master Suffix");
+            ImGui::TableSetColumnIndex(1); ImGui::TextColored(StatusColor(m_currentFrame.masterSuffixValid), "%s", m_currentFrame.masterSuffixValid ? "Valid" : "Invalid");
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted("Slave Suffix");
+            ImGui::TableSetColumnIndex(1); ImGui::TextColored(StatusColor(m_currentFrame.slaveSuffixValid), "%s", m_currentFrame.slaveSuffixValid ? "Valid" : "Invalid");
+            ImGui::EndTable();
+        }
+        ImGui::EndTable();
+    }
+
+    ImGui::Separator();
+    ImGui::TextColored(InfoColor(), "Contacts");
+    DrawTouchContactSummaryTable();
+}
+
+void DiagnosticsWorkbench::DrawTouchPipelineConfigPanel() {
+    if (!m_proxy) {
+        ImGui::TextUnformatted("ServiceProxy unavailable.");
+        return;
+    }
+
+    static const char* modules[] = {
+        "Frame Parser",
+        "Signal Conditioning",
+        "Peak Detection",
+        "Zone & Contact",
+        "Palm Rejection",
+        "Tracking",
+        "Stylus Suppress",
+        "Coordinate Filter",
+        "Gesture",
+    };
+
+    constexpr int moduleCount = IM_ARRAYSIZE(modules);
+    m_touchConfigModuleIndex = std::clamp(m_touchConfigModuleIndex, 0, moduleCount - 1);
+    const bool masterParserOnly = m_proxy->IsMasterParserOnlyMode();
+
+    ImGui::TextWrapped("Edit touch pipeline parameters by processing stage. Changes are applied only when Save & Apply is pressed.");
+    if (masterParserOnly) {
+        ImGui::TextColored(WarnColor(), "Master Parser Only is enabled. Pipeline configuration controls are disabled.");
+    }
+    ImGui::Separator();
+
+    const float availableWidth = ImGui::GetContentRegionAvail().x;
+    const float selectorWidth = std::clamp(availableWidth * 0.34f, 140.0f, 190.0f);
+    ImGui::BeginChild("TouchConfigModules", ImVec2(selectorWidth, 0.0f), true);
+    for (int i = 0; i < moduleCount; ++i) {
+        if (ImGui::Selectable(modules[i], m_touchConfigModuleIndex == i, 0, ImVec2(-1.0f, 0.0f))) {
+            m_touchConfigModuleIndex = i;
+        }
+    }
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+    ImGui::BeginChild("TouchConfigEditor", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_HorizontalScrollbar);
+    const char* activeModule = modules[m_touchConfigModuleIndex];
+    ImGui::TextColored(InfoColor(), "%s", activeModule);
+    ImGui::Separator();
+
+    auto schema = m_proxy->GetPipeline().GetConfigSchema();
+    if (masterParserOnly) ImGui::BeginDisabled();
+    ConfigUIRenderer::RenderConfigSchemaByModule(schema, activeModule);
+    ImGui::Separator();
+    if (ImGui::Button("Save & Apply", ImVec2(-1.0f, 0.0f))) {
+        m_proxy->SaveConfig();
+    }
+    if (masterParserOnly) ImGui::EndDisabled();
+    ImGui::EndChild();
+}
+
+void DiagnosticsWorkbench::DrawTouchPacketDetails() {
+    auto drawPacketRow = [](const char* label, const Solvers::TouchPacket& packet) {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted(label);
+
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextColored(StatusColor(packet.valid), "%s", packet.valid ? "Valid" : "Invalid");
+
+        ImGui::TableSetColumnIndex(2);
+        ImGui::Text("0x%02X", static_cast<unsigned int>(packet.reportId));
+
+        ImGui::TableSetColumnIndex(3);
+        ImGui::Text("%u", static_cast<unsigned int>(packet.length));
+
+        ImGui::TableSetColumnIndex(4);
+        if (packet.valid) {
+            const std::string bytes = TouchPacketBytes(packet);
+            ImGui::TextUnformatted(bytes.c_str());
+        } else {
+            ImGui::TextDisabled("N/A");
+        }
+    };
+
+    ImGui::TextWrapped("Raw touch HID packet mirror for the current frame.");
+    ImGui::BeginChild("TouchPacketScroll", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
+    if (ImGui::BeginTable("TouchPacketsTable", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+        ImGui::TableSetupColumn("Packet", ImGuiTableColumnFlags_WidthFixed, 110.0f);
+        ImGui::TableSetupColumn("Valid", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        ImGui::TableSetupColumn("RID", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+        ImGui::TableSetupColumn("Length", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        ImGui::TableSetupColumn("Bytes", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableHeadersRow();
+        drawPacketRow("TouchPacket[0]", m_currentFrame.touchPackets[0]);
+        drawPacketRow("TouchPacket[1]", m_currentFrame.touchPackets[1]);
+        ImGui::EndTable();
+    }
+    ImGui::EndChild();
+}
+
+void DiagnosticsWorkbench::DrawTouchContactSummaryTable() {
+    if (m_currentFrame.contacts.empty()) {
+        ImGui::TextDisabled("No contacts in current frame.");
+        return;
+    }
+
+    std::vector<const Solvers::TouchContact*> orderedContacts;
+    orderedContacts.reserve(m_currentFrame.contacts.size());
+    for (const auto& contact : m_currentFrame.contacts) {
+        orderedContacts.push_back(&contact);
+    }
+    std::stable_sort(orderedContacts.begin(), orderedContacts.end(), [](const Solvers::TouchContact* a, const Solvers::TouchContact* b) {
+        return a->id < b->id;
+    });
+
+    if (ImGui::BeginTable("TouchContactSummaryTable", 8, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+        ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 40.0f);
+        ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+        ImGui::TableSetupColumn("X", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Y", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Area", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+        ImGui::TableSetupColumn("SigSum", ImGuiTableColumnFlags_WidthFixed, 75.0f);
+        ImGui::TableSetupColumn("Reported", ImGuiTableColumnFlags_WidthFixed, 75.0f);
+        ImGui::TableSetupColumn("RptEvt", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        ImGui::TableHeadersRow();
+
+        for (const auto* contactPtr : orderedContacts) {
+            const auto& contact = *contactPtr;
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0); ImGui::Text("%d", contact.id);
+            ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(TouchStateLabel(contact.state));
+            ImGui::TableSetColumnIndex(2); ImGui::Text("%.3f", contact.x);
+            ImGui::TableSetColumnIndex(3); ImGui::Text("%.3f", contact.y);
+            ImGui::TableSetColumnIndex(4); ImGui::Text("%d", contact.area);
+            ImGui::TableSetColumnIndex(5); ImGui::Text("%d", contact.signalSum);
+            ImGui::TableSetColumnIndex(6); ImGui::TextUnformatted(contact.isReported ? "Y" : "N");
+            ImGui::TableSetColumnIndex(7); ImGui::TextUnformatted(TouchReportEventLabel(contact.reportEvent));
+        }
+        ImGui::EndTable();
+    }
 }
 
 void DiagnosticsWorkbench::DrawTouchSolverPanel() {
