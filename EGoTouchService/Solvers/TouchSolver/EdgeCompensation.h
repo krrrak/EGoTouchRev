@@ -1,6 +1,6 @@
 #pragma once
 
-#include "SolverTypes.h"
+#include "TouchFrameTypes.h"
 #include <cstdint>
 #include <algorithm>
 

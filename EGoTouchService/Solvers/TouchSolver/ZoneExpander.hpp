@@ -6,6 +6,7 @@
 
 #include "SolverTypes.h"
 #include "PeakDetector.hpp"
+#include "PalmTypes.hpp"
 #include "EdgeCompensation.h"   // ZoneEdgeInfo, EdgeBounds, TZ_* helpers
 #include <vector>
 #include <array>
@@ -13,6 +14,7 @@
 #include <cstdint>
 #include <cstring>
 #include <span>
+#include <utility>
 
 namespace Solvers { namespace Touch {
 
@@ -26,6 +28,9 @@ public:
     int  m_tholdScaleShift = 7;    // >>7
     bool m_dilateErode = true;
     int  m_maxTouches = 10;
+    bool m_palmAwareExpansionEnabled = true;
+    float m_fingerInPalmThresholdRatio = 0.70f;
+    int m_fingerInPalmMaxRadius = 3;
     EdgeBounds m_edgeBounds;
 
     // ────────────────────────────────────────────────────────
@@ -33,49 +38,66 @@ public:
     // ────────────────────────────────────────────────────────
     inline void Process(HeatmapFrame& frame,
                         std::span<const Peak> peaks,
-                        int16_t sigThold) {
+                        int16_t sigThold,
+                        std::span<const PeakEvaluation> evaluations = {}) {
         Reset();
         m_units.resize(peaks.size());
         m_edgeInfos.resize(peaks.size());
 
         // For each peak: flood-fill a zone (absorbed peaks handled later)
         for (int pi = 0; pi < static_cast<int>(peaks.size()); ++pi) {
+            if (!AllowContactPeak(evaluations, pi)) continue;
             const auto& pk = peaks[pi];
             int idx = pk.r * kCols + pk.c;
             if (m_touchZones[idx] != 0) continue; // handled by ScanAbsorbedPeaks
 
-            int16_t zoneThold = CalcZoneThold(sigThold, pk.z);
+            int16_t zoneThold = CalcZoneThold(sigThold, pk.z, evaluations, pi);
+            const int maxRadius = CalcMaxRadius(evaluations, pi);
             m_units[pi] = {};
             m_units[pi].peakCol = pk.c;
             m_units[pi].peakRow = pk.r;
             m_units[pi].peakSig = pk.z;
             m_units[pi].peakCount = 0;
             m_units[pi].addPeakIndex(pi);
-            FloodFill(frame, pi, pk, zoneThold);
+            FloodFill(frame, pi, pk, zoneThold, maxRadius);
             m_zoneCount++;
         }
 
         if (m_dilateErode) DilateAndErode();
         MarkEdges();
-        ScanAbsorbedPeaks(peaks);
-        ComputeCentroidsAndContacts(frame, peaks);
+        ScanAbsorbedPeaks(peaks, evaluations);
+        ComputeCentroidsAndContacts(frame, peaks, evaluations);
 
         // TSACore SigSumFilter_ReserveTouch: keep top-N by signalSum
         if (m_maxTouches > 0 &&
             static_cast<int>(frame.contacts.size()) > m_maxTouches) {
-            std::sort(frame.contacts.begin(), frame.contacts.end(),
-                      [](const TouchContact& a, const TouchContact& b) {
-                          return a.signalSum > b.signalSum;
-                      });
-            frame.contacts.resize(m_maxTouches);
-            // Re-assign IDs after truncation
-            for (int i = 0; i < (int)frame.contacts.size(); ++i)
-                frame.contacts[i].id = i;
+            std::vector<int> order(frame.contacts.size());
+            for (int i = 0; i < static_cast<int>(order.size()); ++i) order[static_cast<size_t>(i)] = i;
+            std::sort(order.begin(), order.end(), [&](int a, int b) {
+                return frame.contacts[static_cast<size_t>(a)].signalSum >
+                       frame.contacts[static_cast<size_t>(b)].signalSum;
+            });
+
+            std::vector<TouchContact> keptContacts;
+            std::vector<ZoneEdgeInfo> keptEdgeInfos;
+            keptContacts.reserve(static_cast<size_t>(m_maxTouches));
+            keptEdgeInfos.reserve(static_cast<size_t>(m_maxTouches));
+            for (int i = 0; i < m_maxTouches; ++i) {
+                const int src = order[static_cast<size_t>(i)];
+                TouchContact contact = frame.contacts[static_cast<size_t>(src)];
+                contact.id = i;
+                keptContacts.push_back(contact);
+                keptEdgeInfos.push_back(src < static_cast<int>(m_contactEdgeInfos.size())
+                    ? m_contactEdgeInfos[static_cast<size_t>(src)]
+                    : ZoneEdgeInfo{});
+            }
+            frame.contacts = std::move(keptContacts);
+            m_contactEdgeInfos = std::move(keptEdgeInfos);
         }
 
     }
 
-    const std::vector<ZoneEdgeInfo>& GetEdgeInfos() const { return m_edgeInfos; }
+    const std::vector<ZoneEdgeInfo>& GetEdgeInfos() const { return m_contactEdgeInfos; }
     int GetZoneCount() const { return m_zoneCount; }
     const std::array<uint8_t, kGridSize>& GetTouchZones() const { return m_touchZones; }
     const std::array<uint8_t, kGridSize>& GetZoneEdge() const { return m_zoneEdge; }
@@ -110,6 +132,7 @@ private:
     std::array<uint8_t, kGridSize> m_zoneEdge{};
     std::vector<ZoneUnit> m_units;
     std::vector<ZoneEdgeInfo> m_edgeInfos;
+    std::vector<ZoneEdgeInfo> m_contactEdgeInfos;
     int m_zoneCount = 0;
     std::array<int, kGridSize> m_activeZoneCells{};
     int m_activeZoneCellCount = 0;
@@ -129,6 +152,7 @@ private:
         m_zoneEdge.fill(0);
         m_units.clear();
         m_edgeInfos.clear();
+        m_contactEdgeInfos.clear();
         m_zoneCount = 0;
         m_activeZoneCellCount = 0;
         m_dilateCandidateCount = 0;
@@ -143,11 +167,38 @@ private:
     // TZ_GetSigTholdCommon — zone expansion threshold
     // result = min(sigThold, peakSig) * numer >> shift  (≈50%)
     // ────────────────────────────────────────────────────────
-    inline int16_t CalcZoneThold(int16_t sigThold, int16_t peakSig) const {
+    inline int16_t CalcZoneThold(int16_t sigThold,
+                                 int16_t peakSig,
+                                 std::span<const PeakEvaluation> evaluations,
+                                 int peakIndex) const {
         int base = std::min(static_cast<int>(sigThold),
                             static_cast<int>(peakSig));
         int result = (base * m_tholdScaleNumer) >> m_tholdScaleShift;
+        if (peakIndex >= 0 && peakIndex < static_cast<int>(evaluations.size())) {
+            const auto& eval = evaluations[static_cast<size_t>(peakIndex)];
+            if (m_palmAwareExpansionEnabled && eval.palmClass == PalmClass::FingerLikely &&
+                (eval.zonePalmClass == PalmClass::PalmCandidate || eval.zonePalmClass == PalmClass::PalmLikely)) {
+                result = std::max(result, static_cast<int>(static_cast<float>(peakSig) * m_fingerInPalmThresholdRatio));
+            }
+        }
         return static_cast<int16_t>(std::max(1, result));
+    }
+
+    inline int CalcMaxRadius(std::span<const PeakEvaluation> evaluations, int peakIndex) const {
+        if (!m_palmAwareExpansionEnabled || peakIndex < 0 || peakIndex >= static_cast<int>(evaluations.size())) {
+            return 0;
+        }
+        const auto& eval = evaluations[static_cast<size_t>(peakIndex)];
+        if (eval.palmClass == PalmClass::FingerLikely &&
+            (eval.zonePalmClass == PalmClass::PalmCandidate || eval.zonePalmClass == PalmClass::PalmLikely)) {
+            return m_fingerInPalmMaxRadius;
+        }
+        return 0;
+    }
+
+    inline bool AllowContactPeak(std::span<const PeakEvaluation> evaluations, int peakIndex) const {
+        return peakIndex < 0 || peakIndex >= static_cast<int>(evaluations.size()) ||
+               evaluations[static_cast<size_t>(peakIndex)].allowContact;
     }
 
     // ────────────────────────────────────────────────────────
@@ -158,7 +209,8 @@ private:
     inline void FloodFill(const HeatmapFrame& frame,
                           int peakIdx,
                           const Peak& peak,
-                          int16_t zoneThold) {
+                          int16_t zoneThold,
+                          int maxRadius) {
         static constexpr int dr[] = {-1,-1,-1, 0, 0, 1, 1, 1};
         static constexpr int dc[] = {-1, 0, 1,-1, 1,-1, 0, 1};
 
@@ -195,6 +247,11 @@ private:
                 int nr = r + dr[d], nc = c + dc[d];
                 if (nr < 0 || nr >= kRows || nc < 0 || nc >= kCols)
                     continue;
+                if (maxRadius > 0) {
+                    const int rowDist = (nr > peak.r) ? (nr - peak.r) : (peak.r - nr);
+                    const int colDist = (nc > peak.c) ? (nc - peak.c) : (peak.c - nc);
+                    if (std::max(rowDist, colDist) > maxRadius) continue;
+                }
                 int ni = nr * kCols + nc;
                 int16_t sig = frame.heatmapMatrix[nr][nc];
 
@@ -320,7 +377,8 @@ private:
     // TZ_PeakInfoRetrieval — scan ALL peaks to find which zone
     // they fell into. Adds absorbed peaks to owning zone's list.
     // ────────────────────────────────────────────────────────
-    inline void ScanAbsorbedPeaks(std::span<const Peak> peaks) {
+    inline void ScanAbsorbedPeaks(std::span<const Peak> peaks,
+                                  std::span<const PeakEvaluation> evaluations) {
         // Build zoneId→unitIndex map (zone ID is uint8_t, so max 256)
         std::array<int, 256> zoneToUnit{};
         zoneToUnit.fill(-1);
@@ -331,6 +389,7 @@ private:
         }
 
         for (int pi = 0; pi < static_cast<int>(peaks.size()); ++pi) {
+            if (!AllowContactPeak(evaluations, pi)) continue;
             const auto& pk = peaks[pi];
             int idx = pk.r * kCols + pk.c;
             uint8_t zid = m_touchZones[idx];
@@ -387,12 +446,18 @@ private:
     // Multi-peak zones (TZ_MFProcess): 3×3 local centroid per peak.
     // ────────────────────────────────────────────────────────
     inline void ComputeCentroidsAndContacts(
-            HeatmapFrame& frame, std::span<const Peak> peaks) {
+            HeatmapFrame& frame,
+            std::span<const Peak> peaks,
+            std::span<const PeakEvaluation> evaluations) {
         frame.contacts.clear();
+        m_contactEdgeInfos.clear();
         const size_t desiredCapacity = static_cast<size_t>(
             std::max(m_maxTouches, static_cast<int>(peaks.size())));
         if (frame.contacts.capacity() < desiredCapacity) {
             frame.contacts.reserve(desiredCapacity);
+        }
+        if (m_contactEdgeInfos.capacity() < desiredCapacity) {
+            m_contactEdgeInfos.reserve(desiredCapacity);
         }
         for (int pi = 0; pi < static_cast<int>(m_units.size()); ++pi) {
             auto& u = m_units[pi];
@@ -409,12 +474,12 @@ private:
 
             if (u.type != MF) {
                 // ── Single peak: standard CTD_BasicCalculation ──
-                float cx = static_cast<float>(
-                    (static_cast<int64_t>(u.weightedColSum) * 2)
-                    / u.weightTotal + 0x80) / 256.0f;
-                float cy = static_cast<float>(
-                    (static_cast<int64_t>(u.weightedRowSum) * 2)
-                    / u.weightTotal + 0x80) / 256.0f;
+                const int64_t colFixed =
+                    (static_cast<int64_t>(u.weightedColSum) * 2) / u.weightTotal + 0x80;
+                const int64_t rowFixed =
+                    (static_cast<int64_t>(u.weightedRowSum) * 2) / u.weightTotal + 0x80;
+                float cx = static_cast<float>(colFixed) / 256.0f;
+                float cy = static_cast<float>(rowFixed) / 256.0f;
 
                 TouchContact tc;
                 tc.id = peaks[pi].id;  // Peak's persistent ID
@@ -424,6 +489,7 @@ private:
                 tc.signalSum = u.signalSum;
                 tc.state = 0;
                 frame.contacts.push_back(tc);
+                m_contactEdgeInfos.push_back(m_edgeInfos[static_cast<size_t>(pi)]);
             } else {
                 // ── Multi-peak (TZ_MFProcess): CTD_General 3×3 per peak ──
                 int sharedArea = u.area / u.getPeakCount();
@@ -432,6 +498,7 @@ private:
                 for (int j = 0; j < u.getPeakCount(); ++j) {
                     int pkIdx = u.peakIndices[j];
                     if (pkIdx < 0 || pkIdx >= (int)peaks.size()) continue;
+                    if (!AllowContactPeak(evaluations, pkIdx)) continue;
                     const Peak& pk = peaks[pkIdx];
 
                     // 3×3 local weighted centroid around peak position
@@ -451,10 +518,10 @@ private:
                     }
                     if (wTotal == 0) wTotal = 1;
 
-                    float cx = static_cast<float>(
-                        (wColSum * 2) / wTotal + 0x80) / 256.0f;
-                    float cy = static_cast<float>(
-                        (wRowSum * 2) / wTotal + 0x80) / 256.0f;
+                    const int64_t colFixed = (wColSum * 2) / wTotal + 0x80;
+                    const int64_t rowFixed = (wRowSum * 2) / wTotal + 0x80;
+                    float cx = static_cast<float>(colFixed) / 256.0f;
+                    float cy = static_cast<float>(rowFixed) / 256.0f;
 
                     TouchContact tc;
                     tc.id = pk.id;  // Peak's persistent ID
@@ -464,6 +531,7 @@ private:
                     tc.signalSum = sharedSig;
                     tc.state = 0;
                     frame.contacts.push_back(tc);
+                    m_contactEdgeInfos.push_back(m_edgeInfos[static_cast<size_t>(pi)]);
                 }
             }
         }

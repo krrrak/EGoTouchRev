@@ -4,6 +4,7 @@
 // TSACore Peak_Process: detect local maxima, filter, sort, track IDs.
 
 #include "SolverTypes.h"
+#include "PalmTypes.hpp"
 #include <array>
 #include <algorithm>
 #include <cstdint>
@@ -19,7 +20,18 @@ struct Peak {
     int neighborSignalSum = 0;
     uint8_t id = 0;
     int tzAge = 0;
+    int macroZoneIndex = -1;
     int macroZoneArea = 0;
+    int macroZoneSignalSum = 0;
+    float localMean3x3 = 0.0f;
+    float localMean5x5 = 0.0f;
+    float prominence = 0.0f;
+    float sharpness = 0.0f;
+    PalmClass zonePalmClass = PalmClass::Unknown;
+    PalmClass peakPalmClass = PalmClass::Unknown;
+    float palmScore = 0.0f;
+    float fingerScore = 0.0f;
+    uint32_t evalFlags = 0;
 };
 
 class PeakDetector {
@@ -124,7 +136,8 @@ private:
             return frame.heatmapMatrix[r][c];
         };
 
-        for (const auto& zone : macroZones) {
+        for (int zi = 0; zi < static_cast<int>(macroZones.size()); ++zi) {
+            const auto& zone = macroZones[static_cast<size_t>(zi)];
             for (int idx : zone.pixels) {
                 int r = idx / kCols;
                 int c = idx % kCols;
@@ -169,8 +182,15 @@ private:
 
                 // TSACore Peak_Insert: cap at m_maxPeaks, replace weakest
                 if (m_peakCount < maxPeaks) {
-                    m_peaks[static_cast<size_t>(m_peakCount++)] =
-                        {r, c, v, nbrSigSum, 0, 0, zone.area};
+                    Peak peak;
+                    peak.r = r;
+                    peak.c = c;
+                    peak.z = v;
+                    peak.neighborSignalSum = nbrSigSum;
+                    peak.macroZoneIndex = zi;
+                    peak.macroZoneArea = zone.area;
+                    peak.macroZoneSignalSum = zone.signalSum;
+                    m_peaks[static_cast<size_t>(m_peakCount++)] = peak;
                 } else {
                     // Buffer full — find weakest peak and replace
                     int weakIdx = 0;
@@ -179,8 +199,15 @@ private:
                             m_peaks[static_cast<size_t>(weakIdx)].z)
                             weakIdx = k;
                     if (m_peaks[static_cast<size_t>(weakIdx)].z < v) {
-                        m_peaks[static_cast<size_t>(weakIdx)] =
-                            {r, c, v, nbrSigSum, 0, 0, zone.area};
+                        Peak peak;
+                        peak.r = r;
+                        peak.c = c;
+                        peak.z = v;
+                        peak.neighborSignalSum = nbrSigSum;
+                        peak.macroZoneIndex = zi;
+                        peak.macroZoneArea = zone.area;
+                        peak.macroZoneSignalSum = zone.signalSum;
+                        m_peaks[static_cast<size_t>(weakIdx)] = peak;
                     }
                 }
             }

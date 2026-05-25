@@ -22,6 +22,7 @@
 #include "MacroZoneDetector.hpp"
 #include "PalmRejector.hpp"
 #include "PeakDetector.hpp"
+#include "PeakEvaluator.hpp"
 #include "MicroZoneSegmenter.hpp"
 
 // ── Phase 4: Zone & Contact ──
@@ -83,6 +84,7 @@ public:
     Touch::MacroZoneDetector         m_macroZoneDet;
     Touch::PalmRejector              m_palmReject;
     Touch::PeakDetector              m_peakDet;
+    Touch::PeakEvaluator             m_peakEval;
     Touch::MicroZoneSegmenter        m_microZoneSeg;
     Touch::ZoneExpander              m_zoneExp;
     Touch::EdgeCompensator           m_edgeComp;

@@ -290,6 +290,11 @@ if (EGO_BUILD_TESTS)
     )
     target_link_libraries(TouchPipelineConfigRoundTripTest PRIVATE Solvers Common)
 
+    add_executable(TouchPalmRejectionMvpTest
+        Tools/tests/TouchPalmRejectionMvpTest.cpp
+    )
+    target_link_libraries(TouchPalmRejectionMvpTest PRIVATE Solvers Common)
+
     add_executable(ServiceProxyConfigMergeTest
         Tools/tests/ServiceProxyConfigMergeTest.cpp
         Tools/EGoTouchApp/source/ServiceProxy.cpp
@@ -344,6 +349,7 @@ if (EGO_BUILD_TESTS)
     add_test(NAME TouchTrackerSilentGapTest COMMAND TouchTrackerSilentGapTest)
     add_test(NAME TouchTrackerStylusSuppressTest COMMAND TouchTrackerStylusSuppressTest)
     add_test(NAME TouchPipelineConfigRoundTripTest COMMAND TouchPipelineConfigRoundTripTest)
+    add_test(NAME TouchPalmRejectionMvpTest COMMAND TouchPalmRejectionMvpTest)
     add_test(NAME ServiceProxyConfigMergeTest COMMAND ServiceProxyConfigMergeTest)
     add_test(NAME StylusLinearFilterProcessTest COMMAND StylusLinearFilterProcessTest)
     add_test(NAME StylusHpp3PostPressureProcessTest COMMAND StylusHpp3PostPressureProcessTest)

@@ -42,7 +42,7 @@ bool TouchPipeline::Process(HeatmapFrame& frame) {
     // 3.1 Macro Zone Detection (BFS connected components)
     m_macroZoneDet.Process(frame, m_peakDet.m_threshold);
 
-    // 3.2 Palm Rejection — remove large/elongated zones
+    // 3.2 Palm analysis — classify zones without deleting them
     m_palmReject.Process(m_macroZoneDet.GetMutableMacroZones(), frame);
 
     // 3.3 Peak Detection (local maxima within macro zones)
@@ -50,12 +50,19 @@ bool TouchPipeline::Process(HeatmapFrame& frame) {
 
     const auto peaks = m_peakDet.GetPeaks();
 
-    // 3.4 Micro Zone Segmentation (Voronoi/Watershed)
+    // 3.4 Peak evaluation (palm/finger classification without deletion)
+    m_peakEval.Process(frame, peaks, m_palmReject.GetZoneFeatures());
+    const auto peakEvaluations = m_peakEval.GetEvaluations();
+
+    // 3.5 Micro Zone Segmentation (Voronoi/Watershed)
     m_microZoneSeg.Process(frame, m_macroZoneDet.GetMacroZones(), peaks);
 
     // ── Phase 4: Zone Processing & Contact Generation ──────────
     // 4.1 Zone expansion (BFS flood-fill from peaks → contacts)
-    m_zoneExp.Process(frame, peaks, m_peakDet.m_threshold);
+    m_zoneExp.m_palmAwareExpansionEnabled = m_peakEval.m_palmAwareExpansionEnabled;
+    m_zoneExp.m_fingerInPalmThresholdRatio = m_peakEval.m_fingerInPalmThresholdRatio;
+    m_zoneExp.m_fingerInPalmMaxRadius = m_peakEval.m_fingerInPalmMaxRadius;
+    m_zoneExp.Process(frame, peaks, m_peakDet.m_threshold, peakEvaluations);
 
     // 4.2 Edge Compensation (LUT-based boundary correction)
     m_edgeComp.Process(frame.contacts,
@@ -262,6 +269,38 @@ std::vector<ConfigParam> TouchPipeline::GetConfigSchema() const {
                    ConfigParam::Int, const_cast<int*>(&m_palmReject.m_elongatedMinArea), 3, 100).Module("Palm Rejection");
     s.emplace_back("PalmElongatedAspectRatio", "Elongated Aspect Ratio",
                    ConfigParam::Float, const_cast<float*>(&m_palmReject.m_elongatedAspectRatio), 1.5f, 10.0f).Module("Palm Rejection");
+    s.emplace_back("PalmAnalyzerEnabled", "Palm Analyzer Enabled",
+                   ConfigParam::Bool, const_cast<bool*>(&m_palmReject.m_analyzerEnabled)).Module("Palm Rejection");
+    s.emplace_back("PalmCandidateAreaThreshold", "Palm Candidate Area",
+                   ConfigParam::Int, const_cast<int*>(&m_palmReject.m_candidateAreaThreshold), 5, 300).Module("Palm Rejection");
+    s.emplace_back("PalmCandidateSignalThreshold", "Palm Candidate Signal",
+                   ConfigParam::Int, const_cast<int*>(&m_palmReject.m_candidateSignalThreshold), 1000, 500000).Module("Palm Rejection");
+    s.emplace_back("PalmLikelyAreaThreshold", "Palm Likely Area",
+                   ConfigParam::Int, const_cast<int*>(&m_palmReject.m_likelyAreaThreshold), 5, 300).Module("Palm Rejection");
+    s.emplace_back("PalmFillRatioThreshold", "Palm Fill Ratio",
+                   ConfigParam::Float, const_cast<float*>(&m_palmReject.m_fillRatioThreshold), 0.0f, 1.0f).Module("Palm Rejection");
+    s.emplace_back("PalmFlatSharpnessThreshold", "Palm Flat Sharpness",
+                   ConfigParam::Float, const_cast<float*>(&m_palmReject.m_flatSharpnessThreshold), 1.0f, 4.0f).Module("Palm Rejection");
+    s.emplace_back("PalmStrongPeakProminence", "Palm Strong Peak Prominence",
+                   ConfigParam::Int, const_cast<int*>(&m_palmReject.m_strongPeakProminence), 0, 5000).Module("Palm Rejection");
+    s.emplace_back("PeakEvalEnabled", "Peak Eval Enabled",
+                   ConfigParam::Bool, const_cast<bool*>(&m_peakEval.m_enabled)).Module("Palm Rejection");
+    s.emplace_back("PeakEvalFingerProminence", "Peak Eval Finger Prominence",
+                   ConfigParam::Int, const_cast<int*>(&m_peakEval.m_fingerProminence), 0, 2000).Module("Palm Rejection");
+    s.emplace_back("PeakEvalFingerSharpness", "Peak Eval Finger Sharpness",
+                   ConfigParam::Float, const_cast<float*>(&m_peakEval.m_fingerSharpness), 1.0f, 5.0f).Module("Palm Rejection");
+    s.emplace_back("PeakEvalPalmSharpnessMax", "Peak Eval Palm Sharpness Max",
+                   ConfigParam::Float, const_cast<float*>(&m_peakEval.m_palmSharpnessMax), 1.0f, 5.0f).Module("Palm Rejection");
+    s.emplace_back("PeakEvalAmbiguousMargin", "Peak Eval Ambiguous Margin",
+                   ConfigParam::Float, const_cast<float*>(&m_peakEval.m_ambiguousMargin), 0.0f, 1.0f).Module("Palm Rejection");
+    s.emplace_back("PalmAwareExpansionEnabled", "Palm Aware Expansion Enabled",
+                   ConfigParam::Bool, const_cast<bool*>(&m_peakEval.m_palmAwareExpansionEnabled)).Module("Palm Rejection");
+    s.emplace_back("PalmFingerInPalmThresholdRatio", "Finger In Palm Threshold Ratio",
+                   ConfigParam::Float, const_cast<float*>(&m_peakEval.m_fingerInPalmThresholdRatio), 0.0f, 1.0f).Module("Palm Rejection");
+    s.emplace_back("PalmFingerInPalmMaxRadius", "Finger In Palm Max Radius",
+                   ConfigParam::Int, const_cast<int*>(&m_peakEval.m_fingerInPalmMaxRadius), 0, 10).Module("Palm Rejection");
+    s.emplace_back("PalmLikelyAllowContact", "Palm Likely Allow Contact",
+                   ConfigParam::Bool, const_cast<bool*>(&m_peakEval.m_palmLikelyAllowContact)).Module("Palm Rejection");
 
     // ── Tracking ──
     s.emplace_back("TrackerEnabled", "Tracker Enabled",
@@ -441,6 +480,22 @@ void TouchPipeline::SaveConfig(std::ostream& out) const {
     out << "PalmElongatedEnabled=" << (m_palmReject.m_elongatedEnabled?"1":"0") << "\n";
     out << "PalmElongatedMinArea=" << m_palmReject.m_elongatedMinArea << "\n";
     out << "PalmElongatedAspectRatio=" << m_palmReject.m_elongatedAspectRatio << "\n";
+    out << "PalmAnalyzerEnabled=" << (m_palmReject.m_analyzerEnabled?"1":"0") << "\n";
+    out << "PalmCandidateAreaThreshold=" << m_palmReject.m_candidateAreaThreshold << "\n";
+    out << "PalmCandidateSignalThreshold=" << m_palmReject.m_candidateSignalThreshold << "\n";
+    out << "PalmLikelyAreaThreshold=" << m_palmReject.m_likelyAreaThreshold << "\n";
+    out << "PalmFillRatioThreshold=" << m_palmReject.m_fillRatioThreshold << "\n";
+    out << "PalmFlatSharpnessThreshold=" << m_palmReject.m_flatSharpnessThreshold << "\n";
+    out << "PalmStrongPeakProminence=" << m_palmReject.m_strongPeakProminence << "\n";
+    out << "PeakEvalEnabled=" << (m_peakEval.m_enabled?"1":"0") << "\n";
+    out << "PeakEvalFingerProminence=" << m_peakEval.m_fingerProminence << "\n";
+    out << "PeakEvalFingerSharpness=" << m_peakEval.m_fingerSharpness << "\n";
+    out << "PeakEvalPalmSharpnessMax=" << m_peakEval.m_palmSharpnessMax << "\n";
+    out << "PeakEvalAmbiguousMargin=" << m_peakEval.m_ambiguousMargin << "\n";
+    out << "PalmAwareExpansionEnabled=" << (m_peakEval.m_palmAwareExpansionEnabled?"1":"0") << "\n";
+    out << "PalmFingerInPalmThresholdRatio=" << m_peakEval.m_fingerInPalmThresholdRatio << "\n";
+    out << "PalmFingerInPalmMaxRadius=" << m_peakEval.m_fingerInPalmMaxRadius << "\n";
+    out << "PalmLikelyAllowContact=" << (m_peakEval.m_palmLikelyAllowContact?"1":"0") << "\n";
     // Phase 5: TouchTracker (same keys as old TouchTracker)
     out << "TrackerEnabled=" << (m_tracker.m_enabled?"1":"0") << "\n";
     out << "UseHungarian=" << (m_tracker.m_useHungarian?"1":"0") << "\n";
@@ -561,6 +616,22 @@ void TouchPipeline::LoadConfig(const std::string& key,
     else if (key=="PalmElongatedEnabled")    m_palmReject.m_elongatedEnabled = toBool(value);
     else if (key=="PalmElongatedMinArea")    m_palmReject.m_elongatedMinArea = std::stoi(value);
     else if (key=="PalmElongatedAspectRatio")m_palmReject.m_elongatedAspectRatio = std::stof(value);
+    else if (key=="PalmAnalyzerEnabled")      m_palmReject.m_analyzerEnabled = toBool(value);
+    else if (key=="PalmCandidateAreaThreshold") m_palmReject.m_candidateAreaThreshold = std::stoi(value);
+    else if (key=="PalmCandidateSignalThreshold") m_palmReject.m_candidateSignalThreshold = std::stoi(value);
+    else if (key=="PalmLikelyAreaThreshold")  m_palmReject.m_likelyAreaThreshold = std::stoi(value);
+    else if (key=="PalmFillRatioThreshold")   m_palmReject.m_fillRatioThreshold = std::stof(value);
+    else if (key=="PalmFlatSharpnessThreshold") m_palmReject.m_flatSharpnessThreshold = std::stof(value);
+    else if (key=="PalmStrongPeakProminence") m_palmReject.m_strongPeakProminence = std::stoi(value);
+    else if (key=="PeakEvalEnabled")          m_peakEval.m_enabled = toBool(value);
+    else if (key=="PeakEvalFingerProminence") m_peakEval.m_fingerProminence = std::stoi(value);
+    else if (key=="PeakEvalFingerSharpness")  m_peakEval.m_fingerSharpness = std::stof(value);
+    else if (key=="PeakEvalPalmSharpnessMax") m_peakEval.m_palmSharpnessMax = std::stof(value);
+    else if (key=="PeakEvalAmbiguousMargin")  m_peakEval.m_ambiguousMargin = std::stof(value);
+    else if (key=="PalmAwareExpansionEnabled") m_peakEval.m_palmAwareExpansionEnabled = toBool(value);
+    else if (key=="PalmFingerInPalmThresholdRatio") m_peakEval.m_fingerInPalmThresholdRatio = std::stof(value);
+    else if (key=="PalmFingerInPalmMaxRadius") m_peakEval.m_fingerInPalmMaxRadius = std::stoi(value);
+    else if (key=="PalmLikelyAllowContact")   m_peakEval.m_palmLikelyAllowContact = toBool(value);
     // Phase 5: TouchTracker
     else if (key=="TrackerEnabled")          m_tracker.m_enabled = toBool(value);
     else if (key=="UseHungarian")            m_tracker.m_useHungarian = toBool(value);
