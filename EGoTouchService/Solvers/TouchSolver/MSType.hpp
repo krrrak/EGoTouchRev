@@ -31,7 +31,8 @@ enum PalmReasonFlags : uint32_t {
     PalmReasonHighFillRatio = 0x0010,
     PalmReasonEdgeWideContact = 0x0020,
     PalmReasonFlatSignalShape = 0x0040,
-    PalmReasonStrongSharpPeakPresent = 0x0080
+    PalmReasonStrongSharpPeakPresent = 0x0080,
+    PalmReasonShadowTouch = 0x0100
 };
 
 struct MacroZoneFeature {

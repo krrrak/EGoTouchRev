@@ -156,6 +156,14 @@ void TestStylusSuppressSchemaContainsNewKeys() {
             "schema should expose debounce extra cap");
     Require(hasKey("RxGhostWeakRatio"),
             "schema should expose rx ghost weak ratio");
+    Require(hasKey("PalmShadowEnabled"),
+            "schema should expose palm shadow enabled");
+    Require(hasKey("PalmShadowRadius"),
+            "schema should expose palm shadow radius");
+    Require(hasKey("PalmShadowHoldFrames"),
+            "schema should expose palm shadow hold frames");
+    Require(hasKey("PalmShadowSeedScore"),
+            "schema should expose palm shadow seed score");
 }
 
 } // namespace

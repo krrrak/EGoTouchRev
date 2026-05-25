@@ -193,6 +193,162 @@ void TestZoneExpanderSkipsPalmLikelyPeak() {
     Require(expander.GetEdgeInfos().empty(), "suppressed palm-only peak should not create contact edge info");
 }
 
+void TestPalmShadowSuppressesAdjacentFragment() {
+    Solvers::Touch::TouchClassifier classifier;
+    classifier.m_palmShadowRadius = 2;
+    classifier.m_palmShadowHoldFrames = 12;
+
+    Solvers::HeatmapFrame palmFrame;
+    std::vector<int> palmPixels;
+    for (int r = 10; r < 18; ++r) {
+        for (int c = 10; c < 18; ++c) {
+            palmPixels.push_back(r * 60 + c);
+            palmFrame.heatmapMatrix[r][c] = 1500;
+        }
+    }
+    auto palmZone = MakeZone(palmPixels, 10, 17, 10, 17);
+    palmZone.signalSum = static_cast<int>(palmPixels.size()) * 1500;
+    std::vector<Solvers::MacroZone> palmZones{palmZone};
+    std::vector<Solvers::Touch::Peak> noPeaks;
+    classifier.Process(palmFrame, palmZones, noPeaks);
+
+    Solvers::HeatmapFrame fragmentFrame;
+    std::vector<int> fragmentPixels;
+    for (int r = 18; r <= 19; ++r) {
+        for (int c = 18; c <= 19; ++c) {
+            fragmentPixels.push_back(r * 60 + c);
+            fragmentFrame.heatmapMatrix[r][c] = 700;
+        }
+    }
+    fragmentFrame.heatmapMatrix[18][18] = 900;
+    auto fragmentZone = MakeZone(fragmentPixels, 18, 19, 18, 19);
+    fragmentZone.signalSum = 3000;
+    std::vector<Solvers::MacroZone> fragmentZones{fragmentZone};
+
+    Solvers::Touch::Peak peak;
+    peak.r = 18;
+    peak.c = 18;
+    peak.z = 900;
+    peak.macroZoneIndex = 0;
+    std::vector<Solvers::Touch::Peak> peaks{peak};
+
+    classifier.Process(fragmentFrame, fragmentZones, peaks);
+    const auto& features = classifier.GetZoneFeatures();
+    const auto evals = classifier.GetEvaluations();
+
+    Require(features.size() == 1, "fragment should produce one zone feature");
+    Require((features[0].reasonFlags & Solvers::Touch::PalmReasonShadowTouch) != 0,
+            "fragment touching palm shadow should be flagged");
+    Require(evals.size() == 1, "fragment should produce one peak evaluation");
+    Require(evals[0].palmClass == Solvers::Touch::PalmClass::PalmLikely,
+            "fragment touching palm shadow should be palm likely");
+    Require(!evals[0].allowContact, "fragment touching palm shadow should not create contact");
+}
+
+void TestPalmShadowExpiresAfterHoldFrames() {
+    Solvers::Touch::TouchClassifier classifier;
+    classifier.m_palmShadowRadius = 1;
+    classifier.m_palmShadowHoldFrames = 2;
+
+    Solvers::HeatmapFrame palmFrame;
+    std::vector<int> palmPixels;
+    for (int r = 10; r < 18; ++r) {
+        for (int c = 10; c < 18; ++c) {
+            palmPixels.push_back(r * 60 + c);
+            palmFrame.heatmapMatrix[r][c] = 1500;
+        }
+    }
+    auto palmZone = MakeZone(palmPixels, 10, 17, 10, 17);
+    palmZone.signalSum = static_cast<int>(palmPixels.size()) * 1500;
+    std::vector<Solvers::MacroZone> palmZones{palmZone};
+    std::vector<Solvers::Touch::Peak> noPeaks;
+    classifier.Process(palmFrame, palmZones, noPeaks);
+
+    Solvers::HeatmapFrame emptyFrame;
+    std::vector<Solvers::MacroZone> emptyZones;
+    classifier.Process(emptyFrame, emptyZones, noPeaks);
+    classifier.Process(emptyFrame, emptyZones, noPeaks);
+
+    Solvers::HeatmapFrame fragmentFrame;
+    fragmentFrame.heatmapMatrix[18][18] = 900;
+    std::vector<int> fragmentPixels{18 * 60 + 18};
+    auto fragmentZone = MakeZone(fragmentPixels, 18, 18, 18, 18);
+    fragmentZone.signalSum = 900;
+    std::vector<Solvers::MacroZone> fragmentZones{fragmentZone};
+
+    Solvers::Touch::Peak peak;
+    peak.r = 18;
+    peak.c = 18;
+    peak.z = 900;
+    peak.macroZoneIndex = 0;
+    std::vector<Solvers::Touch::Peak> peaks{peak};
+
+    classifier.Process(fragmentFrame, fragmentZones, peaks);
+    const auto& features = classifier.GetZoneFeatures();
+    const auto evals = classifier.GetEvaluations();
+
+    Require(features.size() == 1, "expired fragment should produce one zone feature");
+    Require((features[0].reasonFlags & Solvers::Touch::PalmReasonShadowTouch) == 0,
+            "expired palm shadow should not suppress later fragment");
+    Require(evals.size() == 1, "expired fragment should produce one peak evaluation");
+    Require(evals[0].allowContact, "expired palm shadow should allow finger-like fragment contact");
+}
+
+void TestPalmShadowUsesRealPixelsNotBoundingBox() {
+    Solvers::Touch::TouchClassifier classifier;
+    classifier.m_palmShadowRadius = 1;
+    classifier.m_palmShadowHoldFrames = 12;
+    classifier.m_areaThreshold = 30;
+    classifier.m_candidateAreaThreshold = 20;
+    classifier.m_likelyAreaThreshold = 30;
+    classifier.m_signalSumThreshold = 50000;
+    classifier.m_candidateSignalThreshold = 50000;
+
+    Solvers::HeatmapFrame palmFrame;
+    std::vector<int> palmPixels;
+    for (int c = 10; c <= 20; ++c) {
+        palmPixels.push_back(10 * 60 + c);
+        palmPixels.push_back(20 * 60 + c);
+        palmFrame.heatmapMatrix[10][c] = 1500;
+        palmFrame.heatmapMatrix[20][c] = 1500;
+    }
+    for (int r = 11; r <= 19; ++r) {
+        palmPixels.push_back(r * 60 + 10);
+        palmPixels.push_back(r * 60 + 20);
+        palmFrame.heatmapMatrix[r][10] = 1500;
+        palmFrame.heatmapMatrix[r][20] = 1500;
+    }
+    auto palmZone = MakeZone(palmPixels, 10, 20, 10, 20);
+    palmZone.signalSum = static_cast<int>(palmPixels.size()) * 1500;
+    std::vector<Solvers::MacroZone> palmZones{palmZone};
+    std::vector<Solvers::Touch::Peak> noPeaks;
+    classifier.Process(palmFrame, palmZones, noPeaks);
+
+    Solvers::HeatmapFrame islandFrame;
+    islandFrame.heatmapMatrix[15][15] = 900;
+    std::vector<int> islandPixels{15 * 60 + 15};
+    auto islandZone = MakeZone(islandPixels, 15, 15, 15, 15);
+    islandZone.signalSum = 900;
+    std::vector<Solvers::MacroZone> islandZones{islandZone};
+
+    Solvers::Touch::Peak peak;
+    peak.r = 15;
+    peak.c = 15;
+    peak.z = 900;
+    peak.macroZoneIndex = 0;
+    std::vector<Solvers::Touch::Peak> peaks{peak};
+
+    classifier.Process(islandFrame, islandZones, peaks);
+    const auto& features = classifier.GetZoneFeatures();
+    const auto evals = classifier.GetEvaluations();
+
+    Require(features.size() == 1, "bbox-only island should produce one zone feature");
+    Require((features[0].reasonFlags & Solvers::Touch::PalmReasonShadowTouch) == 0,
+            "palm shadow should use real pixels instead of bounding box fill");
+    Require(evals.size() == 1, "bbox-only island should produce one peak evaluation");
+    Require(evals[0].allowContact, "bbox-only island should not be suppressed by real-pixel shadow");
+}
+
 void TestPalmConfigRoundTrip() {
     Solvers::TouchPipeline pipeline;
     pipeline.m_touchClassifier.m_enabled = false;
@@ -219,6 +375,10 @@ void TestPalmConfigRoundTrip() {
     pipeline.m_touchClassifier.m_fingerInPalmThresholdRatio = 0.8f;
     pipeline.m_touchClassifier.m_fingerInPalmMaxRadius = 4;
     pipeline.m_touchClassifier.m_palmLikelyAllowContact = true;
+    pipeline.m_touchClassifier.m_palmShadowEnabled = false;
+    pipeline.m_touchClassifier.m_palmShadowRadius = 6;
+    pipeline.m_touchClassifier.m_palmShadowHoldFrames = 33;
+    pipeline.m_touchClassifier.m_palmShadowSeedScore = 0.72f;
 
     std::ostringstream out;
     pipeline.SaveConfig(out);
@@ -228,6 +388,10 @@ void TestPalmConfigRoundTrip() {
             "old palm area key should be saved");
     Require(saved.find("PeakEvalFingerProminence=333") != std::string::npos,
             "new peak evaluator key should be saved");
+    Require(saved.find("PalmShadowRadius=6") != std::string::npos,
+            "palm shadow radius key should be saved");
+    Require(saved.find("PalmShadowSeedScore=0.72") != std::string::npos,
+            "palm shadow seed score key should be saved");
 
     Solvers::TouchPipeline loaded;
     LoadFromSavedText(loaded, saved);
@@ -264,6 +428,11 @@ void TestPalmConfigRoundTrip() {
                 "new finger-in-palm threshold key should round-trip");
     Require(loaded.m_touchClassifier.m_fingerInPalmMaxRadius == 4, "new finger-in-palm radius key should round-trip");
     Require(loaded.m_touchClassifier.m_palmLikelyAllowContact, "new palm allow contact key should round-trip");
+    Require(!loaded.m_touchClassifier.m_palmShadowEnabled, "palm shadow enabled key should round-trip");
+    Require(loaded.m_touchClassifier.m_palmShadowRadius == 6, "palm shadow radius key should round-trip");
+    Require(loaded.m_touchClassifier.m_palmShadowHoldFrames == 33, "palm shadow hold key should round-trip");
+    RequireNear(loaded.m_touchClassifier.m_palmShadowSeedScore, 0.72f, 0.0001f,
+                "palm shadow seed score key should round-trip");
 }
 
 } // namespace
@@ -275,6 +444,9 @@ int main() {
         TestTouchClassifierSuppressesFlatPalmPeak();
         TestTouchClassifierSuppressesBroadPalmPressurePeak();
         TestZoneExpanderSkipsPalmLikelyPeak();
+        TestPalmShadowSuppressesAdjacentFragment();
+        TestPalmShadowExpiresAfterHoldFrames();
+        TestPalmShadowUsesRealPixelsNotBoundingBox();
         TestPalmConfigRoundTrip();
         std::cout << "[TEST] Touch palm rejection MVP tests passed.\n";
         return 0;

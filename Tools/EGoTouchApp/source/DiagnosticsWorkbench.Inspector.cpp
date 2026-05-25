@@ -278,30 +278,39 @@ void DiagnosticsWorkbench::DrawTouchPipelineConfigPanel() {
     ImGui::Separator();
 
     const float availableWidth = ImGui::GetContentRegionAvail().x;
-    const float selectorWidth = std::clamp(availableWidth * 0.34f, 140.0f, 190.0f);
-    ImGui::BeginChild("TouchConfigModules", ImVec2(selectorWidth, 0.0f), true);
-    for (int i = 0; i < moduleCount; ++i) {
-        if (ImGui::Selectable(modules[i], m_touchConfigModuleIndex == i, 0, ImVec2(-1.0f, 0.0f))) {
-            m_touchConfigModuleIndex = i;
+    const float desiredSelectorWidth = ImGui::CalcTextSize("Signal Conditioning").x + ImGui::GetStyle().FramePadding.x * 4.0f;
+    const float maxSelectorWidth = std::max(140.0f, availableWidth * 0.42f);
+    const float selectorWidth = std::min(std::max(desiredSelectorWidth, 150.0f), maxSelectorWidth);
+
+    if (ImGui::BeginTable("TouchConfigLayout", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_Resizable)) {
+        ImGui::TableSetupColumn("Modules", ImGuiTableColumnFlags_WidthFixed, selectorWidth);
+        ImGui::TableSetupColumn("Parameters", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableNextRow();
+
+        ImGui::TableSetColumnIndex(0);
+        const float moduleItemWidth = std::max(1.0f, ImGui::GetContentRegionAvail().x);
+        for (int i = 0; i < moduleCount; ++i) {
+            if (ImGui::Selectable(modules[i], m_touchConfigModuleIndex == i, 0, ImVec2(moduleItemWidth, 0.0f))) {
+                m_touchConfigModuleIndex = i;
+            }
         }
-    }
-    ImGui::EndChild();
 
-    ImGui::SameLine();
-    ImGui::BeginChild("TouchConfigEditor", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_HorizontalScrollbar);
-    const char* activeModule = modules[m_touchConfigModuleIndex];
-    ImGui::TextColored(InfoColor(), "%s", activeModule);
-    ImGui::Separator();
+        ImGui::TableSetColumnIndex(1);
+        const char* activeModule = modules[m_touchConfigModuleIndex];
+        ImGui::TextColored(InfoColor(), "%s", activeModule);
+        ImGui::Separator();
 
-    auto schema = m_proxy->GetPipeline().GetConfigSchema();
-    if (masterParserOnly) ImGui::BeginDisabled();
-    ConfigUIRenderer::RenderConfigSchemaByModule(schema, activeModule);
-    ImGui::Separator();
-    if (ImGui::Button("Save & Apply", ImVec2(-1.0f, 0.0f))) {
-        m_proxy->SaveConfig();
+        auto schema = m_proxy->GetPipeline().GetConfigSchema();
+        if (masterParserOnly) ImGui::BeginDisabled();
+        ConfigUIRenderer::RenderConfigSchemaByModule(schema, activeModule);
+        ImGui::Separator();
+        if (ImGui::Button("Save & Apply", ImVec2(-1.0f, 0.0f))) {
+            m_proxy->SaveConfig();
+        }
+        if (masterParserOnly) ImGui::EndDisabled();
+
+        ImGui::EndTable();
     }
-    if (masterParserOnly) ImGui::EndDisabled();
-    ImGui::EndChild();
 }
 
 void DiagnosticsWorkbench::DrawTouchPacketDetails() {

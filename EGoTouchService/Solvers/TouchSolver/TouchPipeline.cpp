@@ -304,6 +304,14 @@ std::vector<ConfigParam> TouchPipeline::GetConfigSchema() const {
                    ConfigParam::Int, const_cast<int*>(&m_touchClassifier.m_fingerInPalmMaxRadius), 0, 10).Module("Touch Classification");
     s.emplace_back("PalmLikelyAllowContact", "Palm Likely Allow Contact",
                    ConfigParam::Bool, const_cast<bool*>(&m_touchClassifier.m_palmLikelyAllowContact)).Module("Touch Classification");
+    s.emplace_back("PalmShadowEnabled", "Palm Shadow Enabled",
+                   ConfigParam::Bool, const_cast<bool*>(&m_touchClassifier.m_palmShadowEnabled)).Module("Touch Classification");
+    s.emplace_back("PalmShadowRadius", "Palm Shadow Radius",
+                   ConfigParam::Int, const_cast<int*>(&m_touchClassifier.m_palmShadowRadius), 0, 8).Module("Touch Classification");
+    s.emplace_back("PalmShadowHoldFrames", "Palm Shadow Hold Frames",
+                   ConfigParam::Int, const_cast<int*>(&m_touchClassifier.m_palmShadowHoldFrames), 0, 60).Module("Touch Classification");
+    s.emplace_back("PalmShadowSeedScore", "Palm Shadow Seed Score",
+                   ConfigParam::Float, const_cast<float*>(&m_touchClassifier.m_palmShadowSeedScore), 0.0f, 1.0f).Module("Touch Classification");
 
     // ── Tracking ──
     s.emplace_back("TrackerEnabled", "Tracker Enabled",
@@ -499,6 +507,10 @@ void TouchPipeline::SaveConfig(std::ostream& out) const {
     out << "PalmFingerInPalmThresholdRatio=" << m_touchClassifier.m_fingerInPalmThresholdRatio << "\n";
     out << "PalmFingerInPalmMaxRadius=" << m_touchClassifier.m_fingerInPalmMaxRadius << "\n";
     out << "PalmLikelyAllowContact=" << (m_touchClassifier.m_palmLikelyAllowContact?"1":"0") << "\n";
+    out << "PalmShadowEnabled=" << (m_touchClassifier.m_palmShadowEnabled?"1":"0") << "\n";
+    out << "PalmShadowRadius=" << m_touchClassifier.m_palmShadowRadius << "\n";
+    out << "PalmShadowHoldFrames=" << m_touchClassifier.m_palmShadowHoldFrames << "\n";
+    out << "PalmShadowSeedScore=" << m_touchClassifier.m_palmShadowSeedScore << "\n";
     // Phase 5: TouchTracker (same keys as old TouchTracker)
     out << "TrackerEnabled=" << (m_tracker.m_enabled?"1":"0") << "\n";
     out << "UseHungarian=" << (m_tracker.m_useHungarian?"1":"0") << "\n";
@@ -635,6 +647,10 @@ void TouchPipeline::LoadConfig(const std::string& key,
     else if (key=="PalmFingerInPalmThresholdRatio") m_touchClassifier.m_fingerInPalmThresholdRatio = std::stof(value);
     else if (key=="PalmFingerInPalmMaxRadius") m_touchClassifier.m_fingerInPalmMaxRadius = std::stoi(value);
     else if (key=="PalmLikelyAllowContact")   m_touchClassifier.m_palmLikelyAllowContact = toBool(value);
+    else if (key=="PalmShadowEnabled")        m_touchClassifier.m_palmShadowEnabled = toBool(value);
+    else if (key=="PalmShadowRadius")         m_touchClassifier.m_palmShadowRadius = std::stoi(value);
+    else if (key=="PalmShadowHoldFrames")     m_touchClassifier.m_palmShadowHoldFrames = std::stoi(value);
+    else if (key=="PalmShadowSeedScore")      m_touchClassifier.m_palmShadowSeedScore = std::stof(value);
     // Phase 5: TouchTracker
     else if (key=="TrackerEnabled")          m_tracker.m_enabled = toBool(value);
     else if (key=="UseHungarian")            m_tracker.m_useHungarian = toBool(value);
