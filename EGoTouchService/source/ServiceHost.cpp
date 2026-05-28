@@ -951,27 +951,39 @@ void ServiceHost::BuildDebugSchema() {
 
     add(6, Ipc::DebugValueType::UInt32, Ipc::DebugSourceKind::PenBridgeField,
         static_cast<int16_t>(Ipc::DebugPenSourceIndex::Freq1), 1,
-        Ipc::DebugDvrTarget::None, Ipc::DebugDvrPositionMode::Append, -1,
+        Ipc::DebugDvrTarget::DynamicDebug, Ipc::DebugDvrPositionMode::Append, -1,
         "pen_freq1", "Pen Freq1", "", "PenBridge",
         "DBG_PenFreq1", "");
 
     add(7, Ipc::DebugValueType::UInt32, Ipc::DebugSourceKind::PenBridgeField,
         static_cast<int16_t>(Ipc::DebugPenSourceIndex::Freq2), 2,
-        Ipc::DebugDvrTarget::None, Ipc::DebugDvrPositionMode::Append, -1,
+        Ipc::DebugDvrTarget::DynamicDebug, Ipc::DebugDvrPositionMode::Append, -1,
         "pen_freq2", "Pen Freq2", "", "PenBridge",
         "DBG_PenFreq2", "");
 
     add(8, Ipc::DebugValueType::UInt32, Ipc::DebugSourceKind::PenBridgeField,
         static_cast<int16_t>(Ipc::DebugPenSourceIndex::Press0), 3,
-        Ipc::DebugDvrTarget::None, Ipc::DebugDvrPositionMode::Append, -1,
+        Ipc::DebugDvrTarget::DynamicDebug, Ipc::DebugDvrPositionMode::Append, -1,
         "pen_press0", "Pen Press0", "", "PenBridge",
         "DBG_PenPress0", "");
 
     add(9, Ipc::DebugValueType::UInt32, Ipc::DebugSourceKind::PenBridgeField,
         static_cast<int16_t>(Ipc::DebugPenSourceIndex::Press1), 4,
-        Ipc::DebugDvrTarget::None, Ipc::DebugDvrPositionMode::Append, -1,
+        Ipc::DebugDvrTarget::DynamicDebug, Ipc::DebugDvrPositionMode::Append, -1,
         "pen_press1", "Pen Press1", "", "PenBridge",
         "DBG_PenPress1", "");
+
+    add(16, Ipc::DebugValueType::UInt32, Ipc::DebugSourceKind::PenBridgeField,
+        static_cast<int16_t>(Ipc::DebugPenSourceIndex::Press2), 5,
+        Ipc::DebugDvrTarget::DynamicDebug, Ipc::DebugDvrPositionMode::Append, -1,
+        "pen_press2", "Pen Press2", "", "PenBridge",
+        "DBG_PenPress2", "");
+
+    add(17, Ipc::DebugValueType::UInt32, Ipc::DebugSourceKind::PenBridgeField,
+        static_cast<int16_t>(Ipc::DebugPenSourceIndex::Press3), 6,
+        Ipc::DebugDvrTarget::DynamicDebug, Ipc::DebugDvrPositionMode::Append, -1,
+        "pen_press3", "Pen Press3", "", "PenBridge",
+        "DBG_PenPress3", "");
 
     add(10, Ipc::DebugValueType::UInt32, Ipc::DebugSourceKind::DerivedField,
         static_cast<int16_t>(DebugDerivedSourceIndex::ContactCount), 1,

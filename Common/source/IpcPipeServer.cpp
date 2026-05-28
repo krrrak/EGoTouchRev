@@ -68,12 +68,14 @@ bool IsKnownCommand(IpcCommand command) noexcept {
 
 bool ValidateClient(HANDLE pipe, ClientSecurityContext& context) noexcept {
     if (!ImpersonateNamedPipeClient(pipe)) {
+        LOG_WARN("IPC", __func__, "IPC", "ImpersonateNamedPipeClient failed: {}", GetLastError());
         return false;
     }
     ImpersonationScope impersonation{true};
 
     ScopedHandle token;
     if (!OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &token.value)) {
+        LOG_WARN("IPC", __func__, "IPC", "OpenThreadToken failed: {}", GetLastError());
         return false;
     }
 
@@ -84,11 +86,17 @@ bool ValidateClient(HANDLE pipe, ClientSecurityContext& context) noexcept {
                                   DOMAIN_ALIAS_RID_ADMINS,
                                   0, 0, 0, 0, 0, 0,
                                   &adminSid.value)) {
+        LOG_WARN("IPC", __func__, "IPC", "AllocateAndInitializeSid failed: {}", GetLastError());
         return false;
     }
 
     BOOL isAdmin = FALSE;
-    if (!CheckTokenMembership(token.value, adminSid.value, &isAdmin) || !isAdmin) {
+    if (!CheckTokenMembership(token.value, adminSid.value, &isAdmin)) {
+        LOG_WARN("IPC", __func__, "IPC", "CheckTokenMembership failed: {}", GetLastError());
+        return false;
+    }
+    if (!isAdmin) {
+        LOG_WARN("IPC", __func__, "IPC", "Pipe client token is not an Administrators member.");
         return false;
     }
 
@@ -99,10 +107,14 @@ bool ValidateClient(HANDLE pipe, ClientSecurityContext& context) noexcept {
                              &elevation,
                              sizeof(elevation),
                              &returned)) {
+        LOG_WARN("IPC", __func__, "IPC", "GetTokenInformation(TokenElevation) failed: {}", GetLastError());
         return false;
     }
 
     context.elevatedAdmin = elevation.TokenIsElevated != 0;
+    if (!context.elevatedAdmin) {
+        LOG_WARN("IPC", __func__, "IPC", "Pipe client token is not elevated.");
+    }
     return context.elevatedAdmin;
 }
 
@@ -163,12 +175,7 @@ void IpcPipeServer::ServerLoop() {
         }
 
         ClientSecurityContext client{};
-        if (!ValidateClient(pipe, client)) {
-            LOG_WARN("IPC", __func__, "IPC", "Rejected non-elevated or non-admin pipe client.");
-            DisconnectNamedPipe(pipe);
-            CloseHandle(pipe);
-            continue;
-        }
+        bool clientValidated = false;
 
         LOG_INFO("IPC", __func__, "IPC", "Client connected.");
 
@@ -180,6 +187,18 @@ void IpcPipeServer::ServerLoop() {
             if (!ok || bytesRead < sizeof(IpcCommand)) break;
 
             IpcResponse resp{};
+            if (!clientValidated) {
+                if (!ValidateClient(pipe, client)) {
+                    MarkFailure(resp, IpcStatusCode::PermissionDenied);
+                    DWORD bytesWritten = 0;
+                    WriteFile(pipe, &resp, sizeof(resp),
+                              &bytesWritten, nullptr);
+                    LOG_WARN("IPC", __func__, "IPC", "Rejected non-elevated or non-admin pipe client.");
+                    break;
+                }
+                clientValidated = true;
+            }
+
             if (!IsKnownCommand(req.command)) {
                 MarkFailure(resp, IpcStatusCode::UnsupportedCommand);
             } else if (!IsCommandAllowed(req.command, client)) {

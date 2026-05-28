@@ -349,8 +349,7 @@ DvrDataset LoadDvrDataset(const std::filesystem::path& filePath) {
     if (!std::equal(dvr2Magic.begin(), dvr2Magic.end(), header.magic)) {
         throw std::runtime_error("Invalid DVR2 magic: " + filePath.string());
     }
-    if (header.formatVersion != DvrFmt::kCurrentDvrFormatVersion ||
-        header.headerSize != sizeof(Dvr2FileHeader) || header.tocOffset != sizeof(Dvr2FileHeader)) {
+    if (header.headerSize != sizeof(Dvr2FileHeader) || header.tocOffset != sizeof(Dvr2FileHeader)) {
         throw std::runtime_error("Unsupported DVR2 header layout: " + filePath.string());
     }
     if (header.sectionCount == 0 || header.sectionCount > 16) {

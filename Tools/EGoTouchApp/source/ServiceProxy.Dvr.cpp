@@ -165,18 +165,53 @@ Dvr2FramePayload MakeFramePayload(const Dvr::DvrFrameSlot& src) {
     std::memcpy(frame.heatmapMatrix, src.heatmapMatrix, sizeof(frame.heatmapMatrix));
     std::memcpy(frame.masterSuffix, src.masterSuffix.words, sizeof(frame.masterSuffix));
     std::memcpy(frame.slaveSuffix, src.slaveSuffix.words, sizeof(frame.slaveSuffix));
+    std::memcpy(frame.touchZones, src.touchZones, sizeof(frame.touchZones));
+    std::memcpy(frame.peakZones, src.peakZones, sizeof(frame.peakZones));
+
+    for (size_t i = 0; i < DvrFmt::kTouchPacketCount; ++i) {
+        frame.touchPackets[i].valid = src.touchPackets[i].valid ? 1 : 0;
+        frame.touchPackets[i].reportId = src.touchPackets[i].reportId;
+        frame.touchPackets[i].length = src.touchPackets[i].length;
+        std::memcpy(frame.touchPackets[i].bytes, src.touchPackets[i].bytes, sizeof(frame.touchPackets[i].bytes));
+    }
 
     frame.stylus.slaveValid = src.stylus.slaveValid ? 1 : 0;
     frame.stylus.checksumOk = src.stylus.checksumOk ? 1 : 0;
+    frame.stylus.slaveWordOffset = src.stylus.slaveWordOffset;
     frame.stylus.tx1BlockValid = src.stylus.tx1BlockValid ? 1 : 0;
     frame.stylus.tx2BlockValid = src.stylus.tx2BlockValid ? 1 : 0;
+    frame.stylus.outputValid = src.stylus.outputValid ? 1 : 0;
+    frame.stylus.inRange = src.stylus.inRange ? 1 : 0;
+    frame.stylus.tipDown = src.stylus.tipDown ? 1 : 0;
     frame.stylus.status = src.stylus.status;
+    frame.stylus.checksum16 = src.stylus.checksum16;
     frame.stylus.pressure = src.stylus.pressure;
+    std::memcpy(frame.stylus.btPressure, src.stylus.btPressure, sizeof(frame.stylus.btPressure));
     std::memcpy(frame.stylus.btRawPressure, src.stylus.btRawPressure, sizeof(frame.stylus.btRawPressure));
+    frame.stylus.btSeq = src.stylus.btSeq;
+    frame.stylus.btFreq1 = src.stylus.btFreq1;
+    frame.stylus.btFreq2 = src.stylus.btFreq2;
+    frame.stylus.btHasSample = src.stylus.btHasSample ? 1 : 0;
+    frame.stylus.btHasFreq = src.stylus.btHasFreq ? 1 : 0;
     frame.stylus.signalX = src.stylus.signalX;
     frame.stylus.signalY = src.stylus.signalY;
     frame.stylus.maxRawPeak = src.stylus.maxRawPeak;
     frame.stylus.pipelineStage = src.stylus.pipelineStage;
+    frame.stylus.recheckEnabled = src.stylus.recheckEnabled ? 1 : 0;
+    frame.stylus.recheckPassed = src.stylus.recheckPassed ? 1 : 0;
+    frame.stylus.recheckOverlap = src.stylus.recheckOverlap ? 1 : 0;
+    frame.stylus.recheckThreshold = src.stylus.recheckThreshold;
+    frame.stylus.recheckThresholdMulti = src.stylus.recheckThresholdMulti;
+    frame.stylus.touchNullLike = src.stylus.touchNullLike ? 1 : 0;
+    frame.stylus.touchSuppressActive = src.stylus.touchSuppressActive ? 1 : 0;
+    frame.stylus.touchSuppressFrames = src.stylus.touchSuppressFrames;
+    frame.stylus.pressureIsReal = src.stylus.pressureIsReal ? 1 : 0;
+    frame.stylus.predictedAgeFrames = src.stylus.predictedAgeFrames;
+    frame.stylus.outputConfidence = src.stylus.outputConfidence;
+    frame.stylus.packet.valid = src.stylus.packet.valid ? 1 : 0;
+    frame.stylus.packet.reportId = src.stylus.packet.reportId;
+    frame.stylus.packet.length = src.stylus.packet.length;
+    std::memcpy(frame.stylus.packet.bytes, src.stylus.packet.bytes, sizeof(frame.stylus.packet.bytes));
     frame.stylus.point.valid = src.stylus.point.valid ? 1 : 0;
     frame.stylus.point.x = src.stylus.point.x;
     frame.stylus.point.y = src.stylus.point.y;
@@ -187,6 +222,13 @@ Dvr2FramePayload MakeFramePayload(const Dvr::DvrFrameSlot& src) {
     frame.stylus.point.mappedPressure = src.stylus.point.mappedPressure;
     frame.stylus.point.peakTx1 = src.stylus.point.peakTx1;
     frame.stylus.point.peakTx2 = src.stylus.point.peakTx2;
+    frame.stylus.point.tiltValid = src.stylus.point.tiltValid ? 1 : 0;
+    frame.stylus.point.preTiltX = src.stylus.point.preTiltX;
+    frame.stylus.point.preTiltY = src.stylus.point.preTiltY;
+    frame.stylus.point.tiltX = src.stylus.point.tiltX;
+    frame.stylus.point.tiltY = src.stylus.point.tiltY;
+    frame.stylus.point.tiltMagnitude = src.stylus.point.tiltMagnitude;
+    frame.stylus.point.tiltAzimuthDeg = src.stylus.point.tiltAzimuthDeg;
     frame.stylus.point.tx1X = src.stylus.point.tx1X;
     frame.stylus.point.tx1Y = src.stylus.point.tx1Y;
     frame.stylus.point.tx2X = src.stylus.point.tx2X;
@@ -201,6 +243,23 @@ Dvr2FramePayload MakeFramePayload(const Dvr::DvrFrameSlot& src) {
         frame.contacts[i].state = src.contacts[i].state;
         frame.contacts[i].area = src.contacts[i].area;
         frame.contacts[i].signalSum = src.contacts[i].signalSum;
+        frame.contacts[i].sizeMm = src.contacts[i].sizeMm;
+        frame.contacts[i].edgeDistX = src.contacts[i].edgeDistX;
+        frame.contacts[i].edgeDistY = src.contacts[i].edgeDistY;
+        frame.contacts[i].rawXBeforeEC = src.contacts[i].rawXBeforeEC;
+        frame.contacts[i].rawYBeforeEC = src.contacts[i].rawYBeforeEC;
+        frame.contacts[i].prevIndex = src.contacts[i].prevIndex;
+        frame.contacts[i].debugFlags = src.contacts[i].debugFlags;
+        frame.contacts[i].edgeFlags = src.contacts[i].edgeFlags;
+        frame.contacts[i].ecFlags = src.contacts[i].ecFlags;
+        frame.contacts[i].lifeFlags = src.contacts[i].lifeFlags;
+        frame.contacts[i].reportFlags = src.contacts[i].reportFlags;
+        frame.contacts[i].reportEvent = src.contacts[i].reportEvent;
+        frame.contacts[i].isEdge = src.contacts[i].isEdge;
+        frame.contacts[i].isReported = src.contacts[i].isReported;
+        frame.contacts[i].centroidEdgeFlags = src.contacts[i].centroidEdgeFlags;
+        frame.contacts[i].ecWidthX = src.contacts[i].ecWidthX;
+        frame.contacts[i].ecWidthY = src.contacts[i].ecWidthY;
     }
 
     frame.peakCount = std::min<uint32_t>(src.peakCount, DvrFmt::kMaxPeaks);
@@ -333,99 +392,290 @@ bool ReadStridedField(const std::vector<uint8_t>& record,
     return true;
 }
 
+template <typename T>
+bool TryReadScalarField(const std::vector<uint8_t>& record,
+                        const std::vector<Dvr2FieldDef>& fields,
+                        std::string_view path,
+                        DvrFmt::Dvr2ValueType valueType,
+                        T& out,
+                        std::string* outError,
+                        bool* outPresent = nullptr) {
+    if (outPresent) *outPresent = false;
+    const auto* field = DvrFmt::FindField(fields, path);
+    if (!field) return true;
+    if (!ValidateField(*field, record.size(), path, valueType, DvrFmt::Dvr2FieldRank::Scalar, outError)) return false;
+    if (field->size != sizeof(T) || field->elementSize != sizeof(T)) {
+        if (outError) {
+            *outError = "DVR2 frame schema scalar size mismatch: ";
+            outError->append(path);
+        }
+        return false;
+    }
+    std::memcpy(&out, record.data() + field->offset, sizeof(T));
+    if (outPresent) *outPresent = true;
+    return true;
+}
+
+bool TryCopyContiguousField(const std::vector<uint8_t>& record,
+                            const std::vector<Dvr2FieldDef>& fields,
+                            std::string_view path,
+                            DvrFmt::Dvr2ValueType valueType,
+                            DvrFmt::Dvr2FieldRank rank,
+                            uint32_t expectedSize,
+                            void* dst,
+                            std::string* outError,
+                            bool* outPresent = nullptr) {
+    if (outPresent) *outPresent = false;
+    const auto* field = DvrFmt::FindField(fields, path);
+    if (!field) return true;
+    if (!ValidateField(*field, record.size(), path, valueType, rank, outError)) return false;
+    if (field->size != expectedSize) {
+        if (outError) {
+            *outError = "DVR2 frame schema field size mismatch: ";
+            outError->append(path);
+        }
+        return false;
+    }
+    std::memcpy(dst, record.data() + field->offset, expectedSize);
+    if (outPresent) *outPresent = true;
+    return true;
+}
+
+template <typename T>
+bool TryReadStridedField(const std::vector<uint8_t>& record,
+                         const std::vector<Dvr2FieldDef>& fields,
+                         std::string_view path,
+                         DvrFmt::Dvr2ValueType valueType,
+                         uint32_t index,
+                         T& out,
+                         std::string* outError,
+                         bool* outPresent = nullptr) {
+    if (outPresent) *outPresent = false;
+    const auto* field = DvrFmt::FindField(fields, path);
+    if (!field) return true;
+    if (!ValidateField(*field, record.size(), path, valueType, DvrFmt::Dvr2FieldRank::Array, outError)) return false;
+    if (field->elementSize != sizeof(T) || index >= field->elementCount) {
+        if (outError) {
+            *outError = "DVR2 frame schema strided field mismatch: ";
+            outError->append(path);
+        }
+        return false;
+    }
+    const uint64_t offset = static_cast<uint64_t>(field->offset) + static_cast<uint64_t>(index) * field->stride;
+    if (offset + sizeof(T) > record.size()) {
+        if (outError) {
+            *outError = "DVR2 frame schema strided field exceeds record bounds: ";
+            outError->append(path);
+        }
+        return false;
+    }
+    std::memcpy(&out, record.data() + offset, sizeof(T));
+    if (outPresent) *outPresent = true;
+    return true;
+}
+
+bool TryReadBoolScalarField(const std::vector<uint8_t>& record,
+                            const std::vector<Dvr2FieldDef>& fields,
+                            std::string_view path,
+                            bool& out,
+                            std::string* outError) {
+    uint8_t value = out ? 1 : 0;
+    bool present = false;
+    if (!TryReadScalarField(record, fields, path, DvrFmt::Dvr2ValueType::Bool, value, outError, &present)) return false;
+    if (present) out = value != 0;
+    return true;
+}
+
+bool TryReadBoolStridedField(const std::vector<uint8_t>& record,
+                             const std::vector<Dvr2FieldDef>& fields,
+                             std::string_view path,
+                             uint32_t index,
+                             bool& out,
+                             std::string* outError) {
+    uint8_t value = out ? 1 : 0;
+    bool present = false;
+    if (!TryReadStridedField(record, fields, path, DvrFmt::Dvr2ValueType::Bool, index, value, outError, &present)) return false;
+    if (present) out = value != 0;
+    return true;
+}
+
 bool PopulateHeatmapFrameFromRecordBytes(const std::vector<uint8_t>& record,
                                          const std::vector<Dvr2FieldDef>& fields,
                                          Solvers::HeatmapFrame& dst,
                                          std::string* outError) {
     dst = {};
 
-    uint8_t u8 = 0;
     uint16_t u16 = 0;
     uint32_t u32 = 0;
-    if (!ReadScalarField(record, fields, "timestamp", DvrFmt::Dvr2ValueType::UInt64, dst.timestamp, outError)) return false;
-    if (!ReadScalarField(record, fields, "receiveSystemEpochUs", DvrFmt::Dvr2ValueType::UInt64, dst.receiveSystemEpochUs, outError)) return false;
-    if (!ReadScalarField(record, fields, "masterWasRead", DvrFmt::Dvr2ValueType::Bool, u8, outError)) return false;
-    dst.masterWasRead = u8 != 0;
-    if (!ReadScalarField(record, fields, "masterSuffixValid", DvrFmt::Dvr2ValueType::Bool, u8, outError)) return false;
-    dst.masterSuffixValid = u8 != 0;
-    if (!ReadScalarField(record, fields, "slaveSuffixValid", DvrFmt::Dvr2ValueType::Bool, u8, outError)) return false;
-    dst.slaveSuffixValid = u8 != 0;
-    if (!CopyContiguousField(record, fields, "heatmapMatrix", DvrFmt::Dvr2ValueType::Int16, DvrFmt::Dvr2FieldRank::Matrix, sizeof(dst.heatmapMatrix), dst.heatmapMatrix, outError)) return false;
-    if (!CopyContiguousField(record, fields, "masterSuffix.words", DvrFmt::Dvr2ValueType::UInt16, DvrFmt::Dvr2FieldRank::Array, sizeof(dst.masterSuffix.words), dst.masterSuffix.words, outError)) return false;
-    if (!CopyContiguousField(record, fields, "slaveSuffix.words", DvrFmt::Dvr2ValueType::UInt16, DvrFmt::Dvr2FieldRank::Array, sizeof(dst.slaveSuffix.words), dst.slaveSuffix.words, outError)) return false;
+    if (!TryReadScalarField(record, fields, "timestamp", DvrFmt::Dvr2ValueType::UInt64, dst.timestamp, outError)) return false;
+    if (!TryReadScalarField(record, fields, "receiveSystemEpochUs", DvrFmt::Dvr2ValueType::UInt64, dst.receiveSystemEpochUs, outError)) return false;
+    if (!TryReadBoolScalarField(record, fields, "masterWasRead", dst.masterWasRead, outError)) return false;
+    if (!TryReadBoolScalarField(record, fields, "masterSuffixValid", dst.masterSuffixValid, outError)) return false;
+    if (!TryReadBoolScalarField(record, fields, "slaveSuffixValid", dst.slaveSuffixValid, outError)) return false;
+    if (!TryCopyContiguousField(record, fields, "heatmapMatrix", DvrFmt::Dvr2ValueType::Int16, DvrFmt::Dvr2FieldRank::Matrix, sizeof(dst.heatmapMatrix), dst.heatmapMatrix, outError)) return false;
+    if (!TryCopyContiguousField(record, fields, "masterSuffix.words", DvrFmt::Dvr2ValueType::UInt16, DvrFmt::Dvr2FieldRank::Array, sizeof(dst.masterSuffix.words), dst.masterSuffix.words, outError)) return false;
+    if (!TryCopyContiguousField(record, fields, "slaveSuffix.words", DvrFmt::Dvr2ValueType::UInt16, DvrFmt::Dvr2FieldRank::Array, sizeof(dst.slaveSuffix.words), dst.slaveSuffix.words, outError)) return false;
 
-    if (!ReadScalarField(record, fields, "stylus.slaveValid", DvrFmt::Dvr2ValueType::Bool, u8, outError)) return false;
-    dst.stylus.input.slaveValid = u8 != 0;
-    if (!ReadScalarField(record, fields, "stylus.checksumOk", DvrFmt::Dvr2ValueType::Bool, u8, outError)) return false;
-    dst.stylus.input.checksumOk = u8 != 0;
-    if (!ReadScalarField(record, fields, "stylus.tx1BlockValid", DvrFmt::Dvr2ValueType::Bool, u8, outError)) return false;
-    dst.stylus.input.tx1BlockValid = u8 != 0;
-    if (!ReadScalarField(record, fields, "stylus.tx2BlockValid", DvrFmt::Dvr2ValueType::Bool, u8, outError)) return false;
-    dst.stylus.input.tx2BlockValid = u8 != 0;
-    if (!ReadScalarField(record, fields, "stylus.status", DvrFmt::Dvr2ValueType::UInt32, dst.stylus.input.status, outError)) return false;
-    if (!ReadScalarField(record, fields, "stylus.pressure", DvrFmt::Dvr2ValueType::UInt16, dst.stylus.output.pressure, outError)) return false;
-    if (!CopyContiguousField(record, fields, "stylus.btRawPressure", DvrFmt::Dvr2ValueType::UInt16, DvrFmt::Dvr2FieldRank::Array, sizeof(dst.stylus.input.btSample.rawPressure), dst.stylus.input.btSample.rawPressure.data(), outError)) return false;
-    if (!ReadScalarField(record, fields, "stylus.signalX", DvrFmt::Dvr2ValueType::UInt16, dst.stylus.interop.signalX, outError)) return false;
-    if (!ReadScalarField(record, fields, "stylus.signalY", DvrFmt::Dvr2ValueType::UInt16, dst.stylus.interop.signalY, outError)) return false;
-    if (!ReadScalarField(record, fields, "stylus.maxRawPeak", DvrFmt::Dvr2ValueType::UInt16, dst.stylus.interop.maxRawPeak, outError)) return false;
-    if (!ReadScalarField(record, fields, "stylus.pipelineStage", DvrFmt::Dvr2ValueType::UInt8, dst.stylus.output.pipelineStage, outError)) return false;
+    for (uint32_t i = 0; i < DvrFmt::kTouchPacketCount; ++i) {
+        if (!TryReadBoolStridedField(record, fields, "touchPackets[].valid", i, dst.touchPackets[i].valid, outError)) return false;
+        if (!TryReadStridedField(record, fields, "touchPackets[].reportId", DvrFmt::Dvr2ValueType::UInt8, i, dst.touchPackets[i].reportId, outError)) return false;
+        if (!TryReadStridedField(record, fields, "touchPackets[].length", DvrFmt::Dvr2ValueType::UInt8, i, dst.touchPackets[i].length, outError)) return false;
+        if (!TryReadStridedField(record, fields, "touchPackets[].bytes", DvrFmt::Dvr2ValueType::UInt8, i, dst.touchPackets[i].bytes, outError)) return false;
+    }
 
-    if (!ReadScalarField(record, fields, "stylus.point.valid", DvrFmt::Dvr2ValueType::Bool, u8, outError)) return false;
-    dst.stylus.output.point.valid = u8 != 0;
-    if (!ReadScalarField(record, fields, "stylus.point.x", DvrFmt::Dvr2ValueType::Float32, dst.stylus.output.point.x, outError)) return false;
-    if (!ReadScalarField(record, fields, "stylus.point.y", DvrFmt::Dvr2ValueType::Float32, dst.stylus.output.point.y, outError)) return false;
-    if (!ReadScalarField(record, fields, "stylus.point.reportX", DvrFmt::Dvr2ValueType::UInt16, dst.stylus.output.point.reportX, outError)) return false;
-    if (!ReadScalarField(record, fields, "stylus.point.reportY", DvrFmt::Dvr2ValueType::UInt16, dst.stylus.output.point.reportY, outError)) return false;
-    if (!ReadScalarField(record, fields, "stylus.point.pressure", DvrFmt::Dvr2ValueType::UInt16, dst.stylus.output.point.pressure, outError)) return false;
-    if (!ReadScalarField(record, fields, "stylus.point.rawPressure", DvrFmt::Dvr2ValueType::UInt16, dst.stylus.output.point.rawPressure, outError)) return false;
-    if (!ReadScalarField(record, fields, "stylus.point.mappedPressure", DvrFmt::Dvr2ValueType::UInt16, dst.stylus.output.point.mappedPressure, outError)) return false;
-    if (!ReadScalarField(record, fields, "stylus.point.peakTx1", DvrFmt::Dvr2ValueType::UInt16, dst.stylus.output.point.peakTx1, outError)) return false;
-    if (!ReadScalarField(record, fields, "stylus.point.peakTx2", DvrFmt::Dvr2ValueType::UInt16, dst.stylus.output.point.peakTx2, outError)) return false;
-    if (!ReadScalarField(record, fields, "stylus.point.tx1X", DvrFmt::Dvr2ValueType::Float32, dst.stylus.output.point.tx1X, outError)) return false;
-    if (!ReadScalarField(record, fields, "stylus.point.tx1Y", DvrFmt::Dvr2ValueType::Float32, dst.stylus.output.point.tx1Y, outError)) return false;
-    if (!ReadScalarField(record, fields, "stylus.point.tx2X", DvrFmt::Dvr2ValueType::Float32, dst.stylus.output.point.tx2X, outError)) return false;
-    if (!ReadScalarField(record, fields, "stylus.point.tx2Y", DvrFmt::Dvr2ValueType::Float32, dst.stylus.output.point.tx2Y, outError)) return false;
-    if (!ReadScalarField(record, fields, "stylus.point.confidence", DvrFmt::Dvr2ValueType::Float32, dst.stylus.output.point.confidence, outError)) return false;
+#if EGOTOUCH_DIAG
+    if (!TryCopyContiguousField(record, fields, "touchZones", DvrFmt::Dvr2ValueType::UInt8, DvrFmt::Dvr2FieldRank::Array, sizeof(dst.touchZones), dst.touchZones.data(), outError)) return false;
+    if (!TryCopyContiguousField(record, fields, "peakZones", DvrFmt::Dvr2ValueType::UInt8, DvrFmt::Dvr2FieldRank::Array, sizeof(dst.peakZones), dst.peakZones.data(), outError)) return false;
+#endif
 
-    if (!ReadScalarField(record, fields, "contactCount", DvrFmt::Dvr2ValueType::UInt32, u32, outError)) return false;
-    const uint32_t contactCount = std::min<uint32_t>(u32, DvrFmt::kMaxContacts);
+    auto& stylusInput = dst.stylus.input;
+    auto& stylusOutput = dst.stylus.output;
+    auto& stylusInterop = dst.stylus.interop;
+    auto& stylusPoint = stylusOutput.point;
+    auto& stylusPressure = dst.stylus.runtime.pressure;
+
+    if (!TryReadBoolScalarField(record, fields, "stylus.slaveValid", stylusInput.slaveValid, outError)) return false;
+    if (!TryReadBoolScalarField(record, fields, "stylus.checksumOk", stylusInput.checksumOk, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.slaveWordOffset", DvrFmt::Dvr2ValueType::UInt8, stylusInput.slaveWordOffset, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.checksum16", DvrFmt::Dvr2ValueType::UInt16, stylusInput.checksum16, outError)) return false;
+    if (!TryReadBoolScalarField(record, fields, "stylus.tx1BlockValid", stylusInput.tx1BlockValid, outError)) return false;
+    if (!TryReadBoolScalarField(record, fields, "stylus.tx2BlockValid", stylusInput.tx2BlockValid, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.status", DvrFmt::Dvr2ValueType::UInt32, stylusInput.status, outError)) return false;
+    if (!TryCopyContiguousField(record, fields, "stylus.btPressure", DvrFmt::Dvr2ValueType::UInt16, DvrFmt::Dvr2FieldRank::Array, sizeof(stylusInput.btSample.pressure), stylusInput.btSample.pressure.data(), outError)) return false;
+    if (!TryCopyContiguousField(record, fields, "stylus.btRawPressure", DvrFmt::Dvr2ValueType::UInt16, DvrFmt::Dvr2FieldRank::Array, sizeof(stylusInput.btSample.rawPressure), stylusInput.btSample.rawPressure.data(), outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.btSeq", DvrFmt::Dvr2ValueType::UInt32, stylusInput.btSample.seq, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.btFreq1", DvrFmt::Dvr2ValueType::UInt8, stylusInput.btSample.freq1, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.btFreq2", DvrFmt::Dvr2ValueType::UInt8, stylusInput.btSample.freq2, outError)) return false;
+    if (!TryReadBoolScalarField(record, fields, "stylus.btHasSample", stylusInput.btSample.hasSample, outError)) return false;
+    if (!TryReadBoolScalarField(record, fields, "stylus.btHasFreq", stylusInput.btSample.hasFreq, outError)) return false;
+
+    if (!TryReadBoolScalarField(record, fields, "stylus.output.valid", stylusOutput.valid, outError)) return false;
+    if (!TryReadBoolScalarField(record, fields, "stylus.output.inRange", stylusOutput.inRange, outError)) return false;
+    if (!TryReadBoolScalarField(record, fields, "stylus.output.tipDown", stylusOutput.tipDown, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.pressure", DvrFmt::Dvr2ValueType::UInt16, stylusOutput.pressure, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.output.confidence", DvrFmt::Dvr2ValueType::Float32, stylusOutput.confidence, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.pipelineStage", DvrFmt::Dvr2ValueType::UInt8, stylusOutput.pipelineStage, outError)) return false;
+
+    if (!TryReadBoolScalarField(record, fields, "stylus.output.packet.valid", stylusOutput.packet.valid, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.output.packet.reportId", DvrFmt::Dvr2ValueType::UInt8, stylusOutput.packet.reportId, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.output.packet.length", DvrFmt::Dvr2ValueType::UInt8, stylusOutput.packet.length, outError)) return false;
+    if (!TryCopyContiguousField(record, fields, "stylus.output.packet.bytes", DvrFmt::Dvr2ValueType::UInt8, DvrFmt::Dvr2FieldRank::Array, sizeof(stylusOutput.packet.bytes), stylusOutput.packet.bytes.data(), outError)) return false;
+
+    if (!TryReadScalarField(record, fields, "stylus.signalX", DvrFmt::Dvr2ValueType::UInt16, stylusInterop.signalX, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.signalY", DvrFmt::Dvr2ValueType::UInt16, stylusInterop.signalY, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.maxRawPeak", DvrFmt::Dvr2ValueType::UInt16, stylusInterop.maxRawPeak, outError)) return false;
+    if (!TryReadBoolScalarField(record, fields, "stylus.interop.recheckEnabled", stylusInterop.recheckEnabled, outError)) return false;
+    if (!TryReadBoolScalarField(record, fields, "stylus.interop.recheckPassed", stylusInterop.recheckPassed, outError)) return false;
+    if (!TryReadBoolScalarField(record, fields, "stylus.interop.recheckOverlap", stylusInterop.recheckOverlap, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.interop.recheckThreshold", DvrFmt::Dvr2ValueType::UInt16, stylusInterop.recheckThreshold, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.interop.recheckThresholdMulti", DvrFmt::Dvr2ValueType::UInt16, stylusInterop.recheckThresholdMulti, outError)) return false;
+    if (!TryReadBoolScalarField(record, fields, "stylus.interop.touchNullLike", stylusInterop.touchNullLike, outError)) return false;
+    if (!TryReadBoolScalarField(record, fields, "stylus.interop.touchSuppressActive", stylusInterop.touchSuppressActive, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.interop.touchSuppressFrames", DvrFmt::Dvr2ValueType::UInt8, stylusInterop.touchSuppressFrames, outError)) return false;
+
+    if (!TryReadBoolScalarField(record, fields, "stylus.point.valid", stylusPoint.valid, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.point.x", DvrFmt::Dvr2ValueType::Float32, stylusPoint.x, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.point.y", DvrFmt::Dvr2ValueType::Float32, stylusPoint.y, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.point.reportX", DvrFmt::Dvr2ValueType::UInt16, stylusPoint.reportX, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.point.reportY", DvrFmt::Dvr2ValueType::UInt16, stylusPoint.reportY, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.point.pressure", DvrFmt::Dvr2ValueType::UInt16, stylusPoint.pressure, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.point.rawPressure", DvrFmt::Dvr2ValueType::UInt16, stylusPoint.rawPressure, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.point.mappedPressure", DvrFmt::Dvr2ValueType::UInt16, stylusPoint.mappedPressure, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.point.peakTx1", DvrFmt::Dvr2ValueType::UInt16, stylusPoint.peakTx1, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.point.peakTx2", DvrFmt::Dvr2ValueType::UInt16, stylusPoint.peakTx2, outError)) return false;
+    if (!TryReadBoolScalarField(record, fields, "stylus.point.tiltValid", stylusPoint.tiltValid, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.point.preTiltX", DvrFmt::Dvr2ValueType::Int16, stylusPoint.preTiltX, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.point.preTiltY", DvrFmt::Dvr2ValueType::Int16, stylusPoint.preTiltY, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.point.tiltX", DvrFmt::Dvr2ValueType::Int16, stylusPoint.tiltX, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.point.tiltY", DvrFmt::Dvr2ValueType::Int16, stylusPoint.tiltY, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.point.tiltMagnitude", DvrFmt::Dvr2ValueType::Float32, stylusPoint.tiltMagnitude, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.point.tiltAzimuthDeg", DvrFmt::Dvr2ValueType::Float32, stylusPoint.tiltAzimuthDeg, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.point.tx1X", DvrFmt::Dvr2ValueType::Float32, stylusPoint.tx1X, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.point.tx1Y", DvrFmt::Dvr2ValueType::Float32, stylusPoint.tx1Y, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.point.tx2X", DvrFmt::Dvr2ValueType::Float32, stylusPoint.tx2X, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.point.tx2Y", DvrFmt::Dvr2ValueType::Float32, stylusPoint.tx2Y, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.point.confidence", DvrFmt::Dvr2ValueType::Float32, stylusPoint.confidence, outError)) return false;
+
+    stylusPressure.btSample = stylusInput.btSample;
+    stylusPressure.rawPressure = stylusPoint.rawPressure;
+    stylusPressure.mappedPressure = stylusPoint.mappedPressure;
+    stylusPressure.outputPressure = stylusOutput.pressure;
+    stylusPressure.btSeq = stylusInput.btSample.seq;
+    if (!TryReadBoolScalarField(record, fields, "stylus.pressureIsReal", stylusPressure.pressureIsReal, outError)) return false;
+    if (!TryReadScalarField(record, fields, "stylus.predictedAgeFrames", DvrFmt::Dvr2ValueType::UInt8, stylusPressure.predictedAgeFrames, outError)) return false;
+#if EGOTOUCH_DIAG
+    dst.stylus.debug.coord.rawPressure = stylusPoint.rawPressure;
+    dst.stylus.debug.coord.mappedPressure = stylusPoint.mappedPressure;
+    dst.stylus.debug.coord.btSeq = stylusInput.btSample.seq;
+    dst.stylus.debug.coord.predictedAgeFrames = stylusPressure.predictedAgeFrames;
+    dst.stylus.debug.coord.pressureIsReal = stylusPressure.pressureIsReal;
+#endif
+
+    if (!TryReadScalarField(record, fields, "contactCount", DvrFmt::Dvr2ValueType::UInt32, u32, outError)) return false;
+    uint32_t contactCapacity = DvrFmt::kMaxContacts;
+    if (const auto* contactsField = DvrFmt::FindField(fields, "contacts[]")) {
+        contactCapacity = std::min<uint32_t>(contactCapacity, contactsField->elementCount);
+    }
+    const uint32_t contactCount = std::min<uint32_t>(u32, contactCapacity);
     dst.contacts.clear();
     dst.contacts.reserve(contactCount);
     for (uint32_t i = 0; i < contactCount; ++i) {
         Solvers::TouchContact tc{};
-        if (!ReadStridedField(record, fields, "contacts[].id", DvrFmt::Dvr2ValueType::Int32, i, tc.id, outError)) return false;
-        if (!ReadStridedField(record, fields, "contacts[].x", DvrFmt::Dvr2ValueType::Float32, i, tc.x, outError)) return false;
-        if (!ReadStridedField(record, fields, "contacts[].y", DvrFmt::Dvr2ValueType::Float32, i, tc.y, outError)) return false;
-        if (!ReadStridedField(record, fields, "contacts[].state", DvrFmt::Dvr2ValueType::Int32, i, tc.state, outError)) return false;
-        if (!ReadStridedField(record, fields, "contacts[].area", DvrFmt::Dvr2ValueType::Int32, i, tc.area, outError)) return false;
-        if (!ReadStridedField(record, fields, "contacts[].signalSum", DvrFmt::Dvr2ValueType::Int32, i, tc.signalSum, outError)) return false;
+        if (!TryReadStridedField(record, fields, "contacts[].id", DvrFmt::Dvr2ValueType::Int32, i, tc.id, outError)) return false;
+        if (!TryReadStridedField(record, fields, "contacts[].x", DvrFmt::Dvr2ValueType::Float32, i, tc.x, outError)) return false;
+        if (!TryReadStridedField(record, fields, "contacts[].y", DvrFmt::Dvr2ValueType::Float32, i, tc.y, outError)) return false;
+        if (!TryReadStridedField(record, fields, "contacts[].state", DvrFmt::Dvr2ValueType::Int32, i, tc.state, outError)) return false;
+        if (!TryReadStridedField(record, fields, "contacts[].area", DvrFmt::Dvr2ValueType::Int32, i, tc.area, outError)) return false;
+        if (!TryReadStridedField(record, fields, "contacts[].signalSum", DvrFmt::Dvr2ValueType::Int32, i, tc.signalSum, outError)) return false;
+        if (!TryReadStridedField(record, fields, "contacts[].sizeMm", DvrFmt::Dvr2ValueType::Float32, i, tc.sizeMm, outError)) return false;
+        if (!TryReadBoolStridedField(record, fields, "contacts[].isEdge", i, tc.isEdge, outError)) return false;
+        if (!TryReadBoolStridedField(record, fields, "contacts[].isReported", i, tc.isReported, outError)) return false;
+        if (!TryReadStridedField(record, fields, "contacts[].prevIndex", DvrFmt::Dvr2ValueType::Int32, i, tc.prevIndex, outError)) return false;
+        if (!TryReadStridedField(record, fields, "contacts[].debugFlags", DvrFmt::Dvr2ValueType::Int32, i, tc.debugFlags, outError)) return false;
+        if (!TryReadStridedField(record, fields, "contacts[].edgeFlags", DvrFmt::Dvr2ValueType::UInt32, i, tc.edgeFlags, outError)) return false;
+        if (!TryReadStridedField(record, fields, "contacts[].centroidEdgeFlags", DvrFmt::Dvr2ValueType::UInt8, i, tc.centroidEdgeFlags, outError)) return false;
+        if (!TryReadStridedField(record, fields, "contacts[].ecFlags", DvrFmt::Dvr2ValueType::UInt32, i, tc.ecFlags, outError)) return false;
+        if (!TryReadStridedField(record, fields, "contacts[].edgeDistX", DvrFmt::Dvr2ValueType::Float32, i, tc.edgeDistX, outError)) return false;
+        if (!TryReadStridedField(record, fields, "contacts[].edgeDistY", DvrFmt::Dvr2ValueType::Float32, i, tc.edgeDistY, outError)) return false;
+        if (!TryReadStridedField(record, fields, "contacts[].rawXBeforeEC", DvrFmt::Dvr2ValueType::Float32, i, tc.rawXBeforeEC, outError)) return false;
+        if (!TryReadStridedField(record, fields, "contacts[].rawYBeforeEC", DvrFmt::Dvr2ValueType::Float32, i, tc.rawYBeforeEC, outError)) return false;
+        if (!TryReadStridedField(record, fields, "contacts[].ecWidthX", DvrFmt::Dvr2ValueType::UInt8, i, tc.ecWidthX, outError)) return false;
+        if (!TryReadStridedField(record, fields, "contacts[].ecWidthY", DvrFmt::Dvr2ValueType::UInt8, i, tc.ecWidthY, outError)) return false;
+        if (!TryReadStridedField(record, fields, "contacts[].lifeFlags", DvrFmt::Dvr2ValueType::UInt32, i, tc.lifeFlags, outError)) return false;
+        if (!TryReadStridedField(record, fields, "contacts[].reportFlags", DvrFmt::Dvr2ValueType::UInt32, i, tc.reportFlags, outError)) return false;
+        if (!TryReadStridedField(record, fields, "contacts[].reportEvent", DvrFmt::Dvr2ValueType::Int32, i, tc.reportEvent, outError)) return false;
         dst.contacts.push_back(tc);
     }
 
 #if EGOTOUCH_DIAG
-    if (!ReadScalarField(record, fields, "peakCount", DvrFmt::Dvr2ValueType::UInt32, u32, outError)) return false;
-    const uint32_t peakCount = std::min<uint32_t>(u32, DvrFmt::kMaxPeaks);
+    u32 = 0;
+    if (!TryReadScalarField(record, fields, "peakCount", DvrFmt::Dvr2ValueType::UInt32, u32, outError)) return false;
+    uint32_t peakCapacity = DvrFmt::kMaxPeaks;
+    if (const auto* peaksField = DvrFmt::FindField(fields, "peaks[]")) {
+        peakCapacity = std::min<uint32_t>(peakCapacity, peaksField->elementCount);
+    }
+    const uint32_t peakCount = std::min<uint32_t>(u32, peakCapacity);
     dst.peaks.clear();
     dst.peaks.reserve(peakCount);
     for (uint32_t i = 0; i < peakCount; ++i) {
         Solvers::TouchPeak tp{};
-        if (!ReadStridedField(record, fields, "peaks[].r", DvrFmt::Dvr2ValueType::Int32, i, tp.r, outError)) return false;
-        if (!ReadStridedField(record, fields, "peaks[].c", DvrFmt::Dvr2ValueType::Int32, i, tp.c, outError)) return false;
-        if (!ReadStridedField(record, fields, "peaks[].z", DvrFmt::Dvr2ValueType::Int16, i, tp.z, outError)) return false;
-        if (!ReadStridedField(record, fields, "peaks[].id", DvrFmt::Dvr2ValueType::UInt8, i, tp.id, outError)) return false;
+        if (!TryReadStridedField(record, fields, "peaks[].r", DvrFmt::Dvr2ValueType::Int32, i, tp.r, outError)) return false;
+        if (!TryReadStridedField(record, fields, "peaks[].c", DvrFmt::Dvr2ValueType::Int32, i, tp.c, outError)) return false;
+        if (!TryReadStridedField(record, fields, "peaks[].z", DvrFmt::Dvr2ValueType::Int16, i, tp.z, outError)) return false;
+        if (!TryReadStridedField(record, fields, "peaks[].id", DvrFmt::Dvr2ValueType::UInt8, i, tp.id, outError)) return false;
         dst.peaks.push_back(tp);
     }
 #endif
 
-    if (!ReadScalarField(record, fields, "rawDataLength", DvrFmt::Dvr2ValueType::UInt16, u16, outError)) return false;
-    const auto* rawField = RequireField(fields, "rawData", outError);
-    if (!rawField) return false;
+    if (!TryReadScalarField(record, fields, "rawDataLength", DvrFmt::Dvr2ValueType::UInt16, u16, outError)) return false;
+    const auto* rawField = DvrFmt::FindField(fields, "rawData");
+    if (!rawField) return true;
     if (!ValidateField(*rawField, record.size(), "rawData", DvrFmt::Dvr2ValueType::UInt8, DvrFmt::Dvr2FieldRank::Array, outError)) return false;
-    if (rawField->size != Frame::kTotalFrameSize) {
-        if (outError) *outError = "DVR2 frame schema rawData size mismatch";
+    if (rawField->elementSize != sizeof(uint8_t)) {
+        if (outError) *outError = "DVR2 frame schema rawData element size mismatch";
         return false;
     }
-    const size_t rawLen = std::min<size_t>(u16, Frame::kTotalFrameSize);
+    const size_t rawLen = std::min<size_t>({u16, Frame::kTotalFrameSize, rawField->size});
 #if EGOTOUCH_DIAG
     dst.rawData.assign(record.data() + rawField->offset, record.data() + rawField->offset + rawLen);
     dst.rawPtr = dst.rawData.empty() ? nullptr : dst.rawData.data();
@@ -507,7 +757,7 @@ bool ValidateFrameSchema(const Dvr2FrameSchemaHeader& schemaHeader,
                          const Dvr2MetaSection& meta,
                          const std::vector<Dvr2FieldDef>& fields,
                          std::string* outError) {
-    if (schemaHeader.fieldCount == 0 || fields.empty()) {
+    if (schemaHeader.fieldCount == 0 || fields.empty() || schemaHeader.fieldCount != fields.size()) {
         if (outError) *outError = "DVR2 frame schema contains no fields";
         return false;
     }
@@ -519,24 +769,37 @@ bool ValidateFrameSchema(const Dvr2FrameSchemaHeader& schemaHeader,
         if (outError) *outError = "DVR2 meta/frame schema record size mismatch";
         return false;
     }
-    for (const auto& path : {
-             "timestamp", "receiveSystemEpochUs", "dvrSeq", "masterWasRead",
-             "masterSuffixValid", "slaveSuffixValid", "heatmapMatrix",
-             "masterSuffix.words", "slaveSuffix.words", "stylus.slaveValid",
-             "stylus.checksumOk", "stylus.tx1BlockValid", "stylus.tx2BlockValid",
-             "stylus.status", "stylus.pressure", "stylus.btRawPressure",
-             "stylus.signalX", "stylus.signalY", "stylus.maxRawPeak",
-             "stylus.pipelineStage", "stylus.point.valid", "stylus.point.x",
-             "stylus.point.y", "stylus.point.reportX", "stylus.point.reportY",
-             "stylus.point.pressure", "stylus.point.rawPressure",
-             "stylus.point.mappedPressure", "stylus.point.peakTx1",
-             "stylus.point.peakTx2", "stylus.point.tx1X", "stylus.point.tx1Y",
-             "stylus.point.tx2X", "stylus.point.tx2Y", "stylus.point.confidence",
-             "contacts[]", "contacts[].id", "contacts[].x", "contacts[].y",
-             "contacts[].state", "contacts[].area", "contacts[].signalSum",
-             "contactCount", "peaks[]", "peaks[].r", "peaks[].c", "peaks[].z",
-             "peaks[].id", "peakCount", "rawDataLength", "rawData"}) {
-        if (!RequireField(fields, path, outError)) return false;
+    for (size_t i = 0; i < fields.size(); ++i) {
+        const auto& field = fields[i];
+        const auto* end = std::find(field.path, field.path + sizeof(field.path), '\0');
+        const std::string_view path(field.path, static_cast<size_t>(end - field.path));
+        if (path.empty() || field.size == 0 || field.elementSize == 0 || field.elementCount == 0) {
+            if (outError) *outError = "DVR2 frame schema contains an invalid field definition";
+            return false;
+        }
+        if (field.valueType > static_cast<uint8_t>(DvrFmt::Dvr2ValueType::Bytes) ||
+            field.rank > static_cast<uint8_t>(DvrFmt::Dvr2FieldRank::StructArray)) {
+            if (outError) {
+                *outError = "DVR2 frame schema field has invalid type/rank: ";
+                outError->append(path);
+            }
+            return false;
+        }
+        if (FieldExtent(field) > meta.frameRecordSize) {
+            if (outError) {
+                *outError = "DVR2 frame schema field exceeds record bounds: ";
+                outError->append(path);
+            }
+            return false;
+        }
+        for (size_t j = i + 1; j < fields.size(); ++j) {
+            const auto* otherEnd = std::find(fields[j].path, fields[j].path + sizeof(fields[j].path), '\0');
+            const std::string_view otherPath(fields[j].path, static_cast<size_t>(otherEnd - fields[j].path));
+            if (field.fieldId == fields[j].fieldId || path == otherPath) {
+                if (outError) *outError = "DVR2 frame schema contains duplicate fields";
+                return false;
+            }
+        }
     }
     return true;
 }
@@ -1007,10 +1270,6 @@ bool ReadDvrBinaryFile(const std::filesystem::path& filePath,
         if (outError) *outError = "invalid DVR2 magic";
         return false;
     }
-    if (header.formatVersion != DvrFmt::kCurrentDvrFormatVersion) {
-        if (outError) *outError = "unsupported DVR2 format version";
-        return false;
-    }
     if (header.headerSize != sizeof(Dvr2FileHeader) || header.tocOffset != sizeof(Dvr2FileHeader)) {
         if (outError) *outError = "invalid DVR2 header layout";
         return false;
@@ -1276,9 +1535,7 @@ bool WriteFrameCsvFile(const std::filesystem::path& filePath,
         const auto& stylusOutput = frame.stylus.output;
         const auto& stylusInterop = frame.stylus.interop;
         const auto& stylusPoint = stylusOutput.point;
-#if EGOTOUCH_DIAG
-        const auto& stylusDiag = frame.stylus.debug.coord;
-#endif
+        const auto& stylusRuntimePressure = frame.stylus.runtime.pressure;
         slaveRows.push_back({"SlaveValid", stylusInput.slaveValid ? "1" : "0"});
         slaveRows.push_back({"SlaveWordOffset", std::to_string(static_cast<unsigned int>(stylusInput.slaveWordOffset))});
         slaveRows.push_back({"Checksum16", std::to_string(stylusInput.checksum16)});
@@ -1296,10 +1553,8 @@ bool WriteFrameCsvFile(const std::filesystem::path& filePath,
         slaveRows.push_back({"PeakRawTx1", std::to_string(stylusInterop.signalX)});
         slaveRows.push_back({"PeakRawTx2", std::to_string(stylusInterop.signalY)});
         slaveRows.push_back({"MaxRawPeak", std::to_string(stylusInterop.maxRawPeak)});
-#if EGOTOUCH_DIAG
-        slaveRows.push_back({"PressureIsReal", stylusDiag.pressureIsReal ? "1" : "0"});
-        slaveRows.push_back({"PredictedAgeFrames", std::to_string(static_cast<unsigned int>(stylusDiag.predictedAgeFrames))});
-#endif
+        slaveRows.push_back({"PressureIsReal", stylusRuntimePressure.pressureIsReal ? "1" : "0"});
+        slaveRows.push_back({"PredictedAgeFrames", std::to_string(static_cast<unsigned int>(stylusRuntimePressure.predictedAgeFrames))});
         slaveRows.push_back({"Pressure", std::to_string(stylusOutput.pressure)});
         slaveRows.push_back({"PointValid", stylusPoint.valid ? "1" : "0"});
         slaveRows.push_back({"PointX", std::to_string(stylusPoint.x)});
@@ -1325,10 +1580,8 @@ bool WriteFrameCsvFile(const std::filesystem::path& filePath,
         slaveRows.push_back({"TiltY", std::to_string(stylusPoint.tiltY)});
         slaveRows.push_back({"TiltMagnitude", std::to_string(stylusPoint.tiltMagnitude)});
         slaveRows.push_back({"TiltAzimuthDeg", std::to_string(stylusPoint.tiltAzimuthDeg)});
-#if EGOTOUCH_DIAG
         slaveRows.push_back({"LegacyPacketValid", stylusOutput.packet.valid ? "1" : "0"});
         slaveRows.push_back({"LegacyPacketHex", stylusOutput.packet.valid ? FormatCsvPacketBytes(stylusOutput.packet.bytes) : "N/A"});
-#endif
         ApplyDynamicRows(slaveRows, Ipc::DebugDvrTarget::SlaveSuffix, dynamicSchema, dynamicFrame);
         WriteCsvKeyValueSection(out, "Slave Status", slaveRows);
     }
