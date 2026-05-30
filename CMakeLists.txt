@@ -296,6 +296,25 @@ target_link_libraries(BtMcuTestTool PRIVATE Device Common ImGuiCommon d3d11 d3dc
 
 option(EGO_BUILD_TESTS "Build local test executables" ON)
 if (EGO_BUILD_TESTS)
+    function(ego_add_common_test target source)
+        add_executable(${target} ${source})
+        target_include_directories(${target} PRIVATE "${COMMON_ROOT}/include")
+        target_link_libraries(${target} PRIVATE Common)
+        add_test(NAME ${target} COMMAND ${target})
+        set_tests_properties(${target} PROPERTIES
+            LABELS "Common;unit;device-free"
+            TIMEOUT 10
+            WORKING_DIRECTORY "$<TARGET_FILE_DIR:${target}>"
+        )
+    endfunction()
+
+    ego_add_common_test(CommonLoggerTest Common/tests/LoggerTest.cpp)
+    ego_add_common_test(CommonGuiLogSinkTest Common/tests/GuiLogSinkTest.cpp)
+    ego_add_common_test(CommonFrameLayoutTest Common/tests/FrameLayoutTest.cpp)
+    ego_add_common_test(CommonPenButtonConfigTest Common/tests/PenButtonConfigTest.cpp)
+    ego_add_common_test(CommonHeaderCompileTest Common/tests/HeaderCompileTest.cpp)
+    target_include_directories(CommonHeaderCompileTest PRIVATE "${IPC_ROOT}/include")
+
     add_executable(HostSystemStateMonitorTest
         Tools/tests/SystemStateMonitorNamedEventTest.cpp
     )
@@ -308,11 +327,6 @@ if (EGO_BUILD_TESTS)
     target_include_directories(SolversRawdataBenchmarkTest PRIVATE "${APP_ROOT}/include")
     target_link_libraries(SolversRawdataBenchmarkTest PRIVATE DVRCore Solvers Common)
 
-    add_executable(CommonLoggerTest
-        Tools/tests/LoggerTest.cpp
-    )
-    target_include_directories(CommonLoggerTest PRIVATE "${COMMON_ROOT}/include")
-    target_link_libraries(CommonLoggerTest PRIVATE Common)
 
     add_executable(TouchTrackerSilentGapTest
         Tools/tests/TouchTrackerSilentGapTest.cpp
@@ -414,7 +428,6 @@ if (EGO_BUILD_TESTS)
     )
     target_link_libraries(PenPressurePacketParserTest PRIVATE Device Common)
 
-    add_test(NAME CommonLoggerTest COMMAND CommonLoggerTest)
     add_test(NAME HostSystemStateMonitorTest COMMAND HostSystemStateMonitorTest)
     add_test(NAME TouchTrackerSilentGapTest COMMAND TouchTrackerSilentGapTest)
     add_test(NAME TouchBaselineReacquireTest COMMAND TouchBaselineReacquireTest)
