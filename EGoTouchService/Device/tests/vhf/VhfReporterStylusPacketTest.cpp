@@ -1,19 +1,14 @@
-#include "vhf/VhfReporter.h"
 #include "vhf/VhfReporterStylusPacketHelper.h"
+#include "TestRequire.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
-#include <stdexcept>
 
 namespace {
 
+using DeviceTests::Require;
 using Solvers::HeatmapFrame;
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        throw std::runtime_error(message);
-    }
-}
 
 uint16_t ReadU16Le(const Solvers::StylusPacket& packet, size_t offset) {
     return static_cast<uint16_t>(
@@ -117,27 +112,42 @@ void TestStylusPacketHelperSuppressesInvalidPacketFromInvalidOutputWhenDisabled(
             "suppressed invalid packet should decode neutral pen state");
 }
 
-void TestDispatchStylusPublishesRawPenStateToDiagnostics() {
-    VhfReporter reporter;
-    reporter.SetEnabled(false);
-    reporter.SetEraserState(1);
-
+void TestBarrelButtonAndInRangeBits() {
     auto frame = MakeOutputDrivenStylusFrame();
-    reporter.DispatchStylus(frame);
+    auto config = MakeDefaultStylusPacketConfig();
+    config.barrelButton = true;
 
-    Require(VhfStylusPacket::ExtractPenState(frame.stylus.output.packet) == 0x21,
-            "diagnostics should reflect the raw packet, not the transformed write buffer");
+    auto packet = VhfStylusPacket::Build(frame.stylus, config);
+    Require(packet.bytes[1] == 0x23,
+            "barrel button should add barrel switch bit without clearing tip/in-range bits");
+
+    frame.stylus.output.tipDown = false;
+    frame.stylus.output.inRange = false;
+    packet = VhfStylusPacket::Build(frame.stylus, config);
+    Require(packet.valid, "point-valid output should still produce a report when out of range");
+    Require(packet.bytes[1] == 0x02,
+            "out-of-range point should clear InRange and TipSwitch while preserving barrel bit");
 }
 
-void TestDispatchStylusPublishesDiagnosticsEvenWhenWriteDisabled() {
-    VhfReporter reporter;
-    reporter.SetEnabled(true);
-
+void TestPressureCoordinateAndTiltClamps() {
     auto frame = MakeOutputDrivenStylusFrame();
-    reporter.DispatchStylus(frame, false);
+    frame.stylus.output.pressure = 9000;
+    frame.stylus.output.point.x = -10.0f * 1024.0f;
+    frame.stylus.output.point.y = 99.0f * 1024.0f;
+    frame.stylus.output.point.tiltX = 12000;
+    frame.stylus.output.point.tiltY = -12000;
 
-    Require(VhfStylusPacket::ExtractPenState(frame.stylus.output.packet) == 0x21,
-            "write-disabled dispatch should still publish diagnostics state");
+    const auto packet = VhfStylusPacket::Build(frame.stylus, MakeDefaultStylusPacketConfig());
+    Require(ReadU16Le(packet, 3) == 16000,
+            "Y beyond active rows should clamp HID X to max");
+    Require(ReadU16Le(packet, 5) == 25600,
+            "negative X should clamp HID Y to max because X is inverted");
+    Require(ReadU16Le(packet, 7) == 4095,
+            "pressure should clamp to HID max 4095");
+    Require(ReadI16Le(packet, 9) == 9000,
+            "tiltX should clamp to +9000");
+    Require(ReadI16Le(packet, 11) == -9000,
+            "tiltY should clamp to -9000");
 }
 
 } // namespace
@@ -147,9 +157,9 @@ int main() {
         TestStylusPacketHelperBuildsValidPacketFromOutput();
         TestStylusPacketHelperBuildsInvalidZeroStatePacketFromInvalidOutputWhenEnabled();
         TestStylusPacketHelperSuppressesInvalidPacketFromInvalidOutputWhenDisabled();
-        TestDispatchStylusPublishesRawPenStateToDiagnostics();
-        TestDispatchStylusPublishesDiagnosticsEvenWhenWriteDisabled();
-        std::cout << "[TEST] VHF reporter stylus packet tests passed.\n";
+        TestBarrelButtonAndInRangeBits();
+        TestPressureCoordinateAndTiltClamps();
+        std::cout << "[TEST] Device VHF reporter stylus packet tests passed.\n";
         return 0;
     } catch (const std::exception& ex) {
         std::cerr << "[TEST] " << ex.what() << "\n";

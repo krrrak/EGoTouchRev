@@ -161,6 +161,8 @@ target_include_directories(ImGuiCommon PUBLIC
 set(DEVICE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/EGoTouchService/Device")
 file(GLOB_RECURSE DEVICE_SOURCES "${DEVICE_ROOT}/*.cpp")
 file(GLOB_RECURSE DEVICE_HEADERS "${DEVICE_ROOT}/*.h")
+list(FILTER DEVICE_SOURCES EXCLUDE REGEX "[/\\\\]tests[/\\\\]")
+list(FILTER DEVICE_HEADERS EXCLUDE REGEX "[/\\\\]tests[/\\\\]")
 
 add_library(Device STATIC
     ${DEVICE_SOURCES}
@@ -444,40 +446,7 @@ if (EGO_BUILD_TESTS)
     )
     target_link_libraries(StylusHpp3PostPressureProcessTest PRIVATE Solvers Common)
 
-    add_executable(VhfReporterStylusPacketTest
-        Tools/tests/VhfReporterStylusPacketTest.cpp
-    )
-    target_link_libraries(VhfReporterStylusPacketTest PRIVATE Device Solvers Common)
-
-    add_executable(VhfReporterTouchPacketTest
-        Tools/tests/VhfReporterTouchPacketTest.cpp
-    )
-    target_link_libraries(VhfReporterTouchPacketTest PRIVATE Device Solvers Common)
-
-    add_executable(PenUsbProtocolTest
-        Tools/tests/PenUsbProtocolTest.cpp
-    )
-    target_link_libraries(PenUsbProtocolTest PRIVATE Device Common)
-
-    add_executable(PenUsbInitSessionTest
-        Tools/tests/PenUsbInitSessionTest.cpp
-    )
-    target_link_libraries(PenUsbInitSessionTest PRIVATE Device Common)
-
-    add_executable(DeviceRuntimeSystemPowerPolicyTest
-        Tools/tests/DeviceRuntimeSystemPowerPolicyTest.cpp
-    )
-    target_link_libraries(DeviceRuntimeSystemPowerPolicyTest PRIVATE Device Common)
-
-    add_executable(PenFactoryStatusFlagsTest
-        Tools/tests/PenFactoryStatusFlagsTest.cpp
-    )
-    target_link_libraries(PenFactoryStatusFlagsTest PRIVATE Device Common)
-
-    add_executable(PenPressurePacketParserTest
-        Tools/tests/PenPressurePacketParserTest.cpp
-    )
-    target_link_libraries(PenPressurePacketParserTest PRIVATE Device Common)
+    add_subdirectory("${DEVICE_ROOT}/tests")
 
     add_test(NAME HostSystemStateMonitorTest COMMAND HostSystemStateMonitorTest)
     set_tests_properties(HostSystemStateMonitorTest PROPERTIES
@@ -523,13 +492,6 @@ if (EGO_BUILD_TESTS)
     add_test(NAME ServiceProxyConfigMergeTest COMMAND ServiceProxyConfigMergeTest)
     add_test(NAME StylusLinearFilterProcessTest COMMAND StylusLinearFilterProcessTest)
     add_test(NAME StylusHpp3PostPressureProcessTest COMMAND StylusHpp3PostPressureProcessTest)
-    add_test(NAME VhfReporterStylusPacketTest COMMAND VhfReporterStylusPacketTest)
-    add_test(NAME VhfReporterTouchPacketTest COMMAND VhfReporterTouchPacketTest)
-    add_test(NAME PenUsbProtocolTest COMMAND PenUsbProtocolTest)
-    add_test(NAME PenUsbInitSessionTest COMMAND PenUsbInitSessionTest)
-    add_test(NAME DeviceRuntimeSystemPowerPolicyTest COMMAND DeviceRuntimeSystemPowerPolicyTest)
-    add_test(NAME PenFactoryStatusFlagsTest COMMAND PenFactoryStatusFlagsTest)
-    add_test(NAME PenPressurePacketParserTest COMMAND PenPressurePacketParserTest)
 endif()
 
 

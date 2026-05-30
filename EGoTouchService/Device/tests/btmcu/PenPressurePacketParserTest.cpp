@@ -1,17 +1,13 @@
 #include "btmcu/PenPressurePacketParser.h"
+#include "TestRequire.h"
 
 #include <array>
 #include <cstdint>
 #include <iostream>
-#include <stdexcept>
 
 namespace {
 
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        throw std::runtime_error(message);
-    }
-}
+using DeviceTests::Require;
 
 void TestInvalidPacketsAreRejected() {
     const std::array<uint8_t, 11> wrongType{
@@ -52,6 +48,23 @@ void TestRaw12BitPacketParses() {
     Require(parsed->pressureMax == 4095, "pressure max should remain 4095");
 }
 
+void TestTrailingBytesAreIgnored() {
+    const std::array<uint8_t, 14> packet{
+        0x55, 0xFF, 0x00, 0x00, 0x00, 0x04, 0x00, 0x08, 0x00, 0x0C, 0x00,
+        0xAA, 0xBB, 0xCC,
+    };
+
+    auto parsed = Himax::Pen::TryParsePenPressurePacket(
+        packet,
+        Himax::Pen::PenPressureRangeMode::Raw12Bit4096);
+    Require(parsed.has_value(), "valid pressure packet with trailing bytes should parse");
+    Require(parsed->freq1 == 0xFF && parsed->freq2 == 0x00,
+            "freq bytes should be copied exactly");
+    Require(parsed->rawPress[0] == 0 && parsed->rawPress[1] == 4 &&
+                parsed->rawPress[2] == 8 && parsed->rawPress[3] == 12,
+            "parser should ignore trailing bytes after the first four pressure slots");
+}
+
 void TestRaw14BitPacketScales() {
     const std::array<uint8_t, 11> packet{
         0x55, 0x12, 0x34, 0x04, 0x00, 0x00, 0x10, 0xFC, 0x3F, 0x00, 0x40,
@@ -73,14 +86,33 @@ void TestRaw14BitPacketScales() {
             "pressure mode should be copied");
 }
 
+void TestRaw14BitEdgeScalingUsesIntegerDivision() {
+    const std::array<uint8_t, 11> packet{
+        0x55, 0x00, 0xFF, 0x00, 0x00, 0x03, 0x00, 0xFC, 0x3F, 0xFF, 0xFF,
+    };
+
+    auto parsed = Himax::Pen::TryParsePenPressurePacket(
+        packet,
+        Himax::Pen::PenPressureRangeMode::Raw14Bit16382);
+    Require(parsed.has_value(), "14-bit edge pressure packet should parse");
+    Require(parsed->freq1 == 0x00 && parsed->freq2 == 0xFF,
+            "frequency bytes should preserve edge values");
+    Require(parsed->press[0] == 0, "raw 0 should scale to 0");
+    Require(parsed->press[1] == 0, "raw 3 should truncate to 0 when divided by 4");
+    Require(parsed->press[2] == 0x0FFF, "raw 0x3FFC should scale to 4095");
+    Require(parsed->press[3] == 0x3FFF, "raw 0xFFFF should scale by integer division without overflow");
+}
+
 } // namespace
 
 int main() {
     try {
         TestInvalidPacketsAreRejected();
         TestRaw12BitPacketParses();
+        TestTrailingBytesAreIgnored();
         TestRaw14BitPacketScales();
-        std::cout << "[TEST] Pen pressure packet parser tests passed.\n";
+        TestRaw14BitEdgeScalingUsesIntegerDivision();
+        std::cout << "[TEST] Device Pen pressure packet parser tests passed.\n";
         return 0;
     } catch (const std::exception& ex) {
         std::cerr << "[TEST] " << ex.what() << "\n";

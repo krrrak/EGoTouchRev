@@ -1,18 +1,14 @@
 #include "btmcu/PenUsbTypes.h"
+#include "TestRequire.h"
 
+#include <array>
 #include <cstdint>
 #include <iostream>
-#include <stdexcept>
 
 namespace {
 
+using DeviceTests::Require;
 using EC = Himax::Pen::PenUsbEventCode;
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        throw std::runtime_error(message);
-    }
-}
 
 uint16_t Apply(uint16_t flags, EC code, uint8_t payload) {
     return Himax::Pen::ApplyFactoryStatusFlagUpdate(flags, code, payload);
@@ -43,6 +39,9 @@ void TestPenCurStatusMapping() {
 }
 
 void TestPenTypeAndRotationMapping() {
+    Require(Apply(0, EC::PenTypeInfo, 0) == 0x0000, "0x73 payload 0 should clear type bits");
+    Require(Apply(0, EC::PenTypeInfo, 1) == 0x0010, "0x73 payload 1 should map to bit4");
+    Require(Apply(0, EC::PenTypeInfo, 2) == 0x0020, "0x73 payload 2 should map to bit5");
     Require(Apply(0, EC::PenTypeInfo, 3) == 0x0030, "0x73 should copy low two payload bits to bits4/5");
     Require(Apply(0xFFFF, EC::PenTypeInfo, 0) == 0xFFCF, "0x73 payload 0 should clear bits4/5");
 
@@ -52,11 +51,58 @@ void TestPenTypeAndRotationMapping() {
     Require(Apply(0, EC::PenRotateAngle, 3) == 0x00C0, "0x74 payload 3 should map through shifted low bits");
 }
 
-void TestNonFlagEventsDoNotModifyFlags() {
-    Require(!Himax::Pen::FactoryStatusFlagsAffected(EC::EraserToggle), "0x7F should not affect factory status flags");
-    Require(Apply(0x1234, EC::EraserToggle, 1) == 0x1234, "0x7F should preserve flags");
-    Require(!Himax::Pen::FactoryStatusFlagsAffected(EC::PenGlobalAnnotation), "0x7C should not affect factory status flags");
-    Require(Apply(0x1234, EC::PenGlobalAnnotation, 1) == 0x1234, "0x7C should preserve flags");
+void TestAffectedEventTable() {
+    const std::array<EC, 8> affected{
+        EC::PenAcStatus,
+        EC::PenConnStatus,
+        EC::PenCurStatus,
+        EC::PenTypeInfo,
+        EC::PenRotateAngle,
+        EC::PenTouchMode,
+        EC::PenGlobalPreventMode,
+        EC::PenHolster,
+    };
+    for (const auto code : affected) {
+        Require(Himax::Pen::FactoryStatusFlagsAffected(code),
+                "status-affecting factory event should be marked affected");
+    }
+
+    const std::array<EC, 7> unaffected{
+        EC::PenCurrentFunc,
+        EC::PenUnknown6F,
+        EC::PenScreenStatus,
+        EC::PenFreqJump,
+        EC::PenRepParam,
+        EC::PenGlobalAnnotation,
+        EC::EraserToggle,
+    };
+    for (const auto code : unaffected) {
+        Require(!Himax::Pen::FactoryStatusFlagsAffected(code),
+                "non-status factory event should not be marked affected");
+        Require(Apply(0x1234, code, 0xFF) == 0x1234,
+                "non-status factory event should preserve existing flags");
+    }
+}
+
+void TestSequenceUpdatesDoNotPolluteUnrelatedFields() {
+    uint16_t flags = 0;
+    flags = Apply(flags, EC::PenAcStatus, 1);
+    flags = Apply(flags, EC::PenConnStatus, 1);
+    flags = Apply(flags, EC::PenCurStatus, 3);
+    flags = Apply(flags, EC::PenTypeInfo, 2);
+    flags = Apply(flags, EC::PenRotateAngle, 1);
+    flags = Apply(flags, EC::PenTouchMode, 1);
+    flags = Apply(flags, EC::PenGlobalPreventMode, 1);
+    flags = Apply(flags, EC::PenHolster, 1);
+    Require(flags == 0x0B6B,
+            "composite factory status flags should combine independent bit fields");
+
+    flags = Apply(flags, EC::PenCurStatus, 1);
+    Require(flags == 0x0B63,
+            "writing mode should clear only current mode bits");
+    flags = Apply(flags, EC::PenTypeInfo, 0);
+    Require(flags == 0x0B43,
+            "type update should clear only pen type bits");
 }
 
 } // namespace
@@ -66,8 +112,9 @@ int main() {
         TestSingleBitEvents();
         TestPenCurStatusMapping();
         TestPenTypeAndRotationMapping();
-        TestNonFlagEventsDoNotModifyFlags();
-        std::cout << "[TEST] Pen factory status flags tests passed.\n";
+        TestAffectedEventTable();
+        TestSequenceUpdatesDoNotPolluteUnrelatedFields();
+        std::cout << "[TEST] Device Pen factory status flags tests passed.\n";
         return 0;
     } catch (const std::exception& ex) {
         std::cerr << "[TEST] " << ex.what() << "\n";

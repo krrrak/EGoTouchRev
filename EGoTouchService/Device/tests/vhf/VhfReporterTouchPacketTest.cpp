@@ -1,22 +1,17 @@
 #include "vhf/VhfReporterTouchPacketHelper.h"
+#include "TestRequire.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
-#include <stdexcept>
 #include <vector>
 
 namespace {
 
+using DeviceTests::Require;
 using Solvers::TouchContact;
 using Solvers::TouchReportMove;
 using Solvers::TouchReportUp;
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        throw std::runtime_error(message);
-    }
-}
 
 TouchContact MakeContact(int id, int reportEvent, bool reported = true) {
     TouchContact contact;
@@ -40,6 +35,24 @@ uint8_t ContactId(const VhfTouchPacket::TouchPackets& packets, size_t contactInd
     const size_t slot = contactIndex % VhfTouchPacket::kContactsPerPacket;
     return packet.bytes[VhfTouchPacket::kTouchPayloadOffset +
                         slot * VhfTouchPacket::kTouchContactStride + 1];
+}
+
+uint16_t ContactY(const VhfTouchPacket::TouchPackets& packets, size_t contactIndex) {
+    const auto& packet = packets[contactIndex / VhfTouchPacket::kContactsPerPacket];
+    const size_t slot = contactIndex % VhfTouchPacket::kContactsPerPacket;
+    const size_t offset = VhfTouchPacket::kTouchPayloadOffset +
+                          slot * VhfTouchPacket::kTouchContactStride + 2;
+    return static_cast<uint16_t>(packet.bytes[offset] |
+                                 (static_cast<uint16_t>(packet.bytes[offset + 1]) << 8));
+}
+
+uint16_t ContactX(const VhfTouchPacket::TouchPackets& packets, size_t contactIndex) {
+    const auto& packet = packets[contactIndex / VhfTouchPacket::kContactsPerPacket];
+    const size_t slot = contactIndex % VhfTouchPacket::kContactsPerPacket;
+    const size_t offset = VhfTouchPacket::kTouchPayloadOffset +
+                          slot * VhfTouchPacket::kTouchContactStride + 4;
+    return static_cast<uint16_t>(packet.bytes[offset] |
+                                 (static_cast<uint16_t>(packet.bytes[offset + 1]) << 8));
 }
 
 uint8_t ContactCount(const VhfTouchPacket::TouchPackets& packets) {
@@ -121,8 +134,10 @@ void TestMoveOnlyOrderMatchesInputOrder() {
             "move-only tenth contact should remain tenth");
 }
 
-void TestHiddenContactsAreSkipped() {
+void TestHiddenAndInvalidContactsAreSkipped() {
     std::vector<TouchContact> contacts;
+    contacts.push_back(MakeContact(0, TouchReportMove));
+    contacts.push_back(MakeContact(-1, TouchReportMove));
     contacts.push_back(MakeContact(1, TouchReportMove));
     contacts.push_back(MakeContact(2, TouchReportUp, false));
     contacts.push_back(MakeContact(3, TouchReportMove, false));
@@ -131,11 +146,57 @@ void TestHiddenContactsAreSkipped() {
     const auto packets = VhfTouchPacket::Build(contacts, false);
 
     Require(ContactCount(packets) == 2,
-            "hidden contacts should not be packed");
+            "hidden and non-positive id contacts should not be packed");
     Require(ContactState(packets, 0) == 0x02 && ContactId(packets, 0) == 4,
             "visible Up should be packed before visible move");
     Require(ContactState(packets, 1) == 0x03 && ContactId(packets, 1) == 1,
             "visible move should fill remaining capacity after Up");
+}
+
+void TestCoordinateMappingAndIdClamp() {
+    TouchContact contact = MakeContact(300, TouchReportMove);
+    contact.x = 15.0f;
+    contact.y = 10.0f;
+
+    auto packets = VhfTouchPacket::Build(std::vector<TouchContact>{contact}, false);
+    Require(ContactId(packets, 0) == 255, "touch id should clamp to 255");
+    Require(ContactY(packets, 0) == 4000,
+            "non-transposed touch should map Y directly to logical Y");
+    Require(ContactX(packets, 0) == 19200,
+            "non-transposed touch should invert X into logical X");
+
+    packets = VhfTouchPacket::Build(std::vector<TouchContact>{contact}, true);
+    Require(ContactY(packets, 0) == 12000,
+            "transposed touch should invert Y into logical Y");
+    Require(ContactX(packets, 0) == 6400,
+            "transposed touch should map X directly to logical X");
+}
+
+void TestPacketValidityAndCountsAtBoundaries() {
+    const auto emptyPackets = VhfTouchPacket::Build(std::vector<TouchContact>{}, false);
+    Require(!emptyPackets[0].valid && !emptyPackets[1].valid,
+            "empty touch report should mark both packets invalid");
+    Require(emptyPackets[0].bytes[0] == 0x01 && emptyPackets[1].bytes[0] == 0x01,
+            "empty touch report should still preserve touch report ids");
+    Require(ContactCount(emptyPackets) == 0,
+            "empty touch report should set contact count to zero");
+
+    std::vector<TouchContact> fiveContacts;
+    for (int id = 1; id <= 5; ++id) {
+        fiveContacts.push_back(MakeContact(id, TouchReportMove));
+    }
+    const auto fivePackets = VhfTouchPacket::Build(fiveContacts, false);
+    Require(fivePackets[0].valid && !fivePackets[1].valid,
+            "five contacts should use only the first touch packet");
+    Require(ContactCount(fivePackets) == 5,
+            "five-contact report should store exact contact count");
+
+    fiveContacts.push_back(MakeContact(6, TouchReportMove));
+    const auto sixPackets = VhfTouchPacket::Build(fiveContacts, false);
+    Require(sixPackets[0].valid && sixPackets[1].valid,
+            "six contacts should mark both touch packets valid");
+    Require(ContactCount(sixPackets) == 6,
+            "six-contact report should store exact contact count in packet0");
 }
 
 } // namespace
@@ -146,8 +207,10 @@ int main() {
         TestNineMovesAndOneUpAreAllPacked();
         TestMultipleUpsPreemptMovesUnderCapacityPressure();
         TestMoveOnlyOrderMatchesInputOrder();
-        TestHiddenContactsAreSkipped();
-        std::cout << "[TEST] VHF reporter touch packet tests passed.\n";
+        TestHiddenAndInvalidContactsAreSkipped();
+        TestCoordinateMappingAndIdClamp();
+        TestPacketValidityAndCountsAtBoundaries();
+        std::cout << "[TEST] Device VHF reporter touch packet tests passed.\n";
         return 0;
     } catch (const std::exception& ex) {
         std::cerr << "[TEST] " << ex.what() << "\n";

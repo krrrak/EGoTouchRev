@@ -1,19 +1,16 @@
 #include "btmcu/PenUsbPacketBuilder.h"
 #include "btmcu/PenUsbTypes.h"
+#include "TestRequire.h"
 
 #include <array>
 #include <cstdint>
 #include <iostream>
-#include <stdexcept>
+#include <span>
 #include <vector>
 
 namespace {
 
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        throw std::runtime_error(message);
-    }
-}
+using DeviceTests::Require;
 
 void TestValidFactoryEventFrameParses() {
     const std::array<uint8_t, 12> packet{
@@ -27,6 +24,20 @@ void TestValidFactoryEventFrameParses() {
     Require(parsed->eventCode == 0x71, "event code should come from packet[5]");
     Require(parsed->payload.size() == 4, "payload should start at packet[8]");
     Require(parsed->payload[0] == 0x01, "payload[0] should preserve packet[8]");
+}
+
+void TestMinimumFactoryEventFrameParses() {
+    const std::array<uint8_t, 9> packet{
+        0x00, 0x00, 0x07, 0x00,
+        0x01, 0x6F, 0x00, 0x00,
+        0xEE,
+    };
+
+    auto parsed = Himax::Pen::TryParsePenUsbEventFrame(packet);
+    Require(parsed.has_value(), "minimum 9-byte factory event frame should parse");
+    Require(parsed->eventCode == 0x6F, "minimum frame event code should be preserved");
+    Require(parsed->payload.size() == 1, "minimum frame should expose one payload byte");
+    Require(parsed->payload[0] == 0xEE, "minimum frame payload should start at packet[8]");
 }
 
 void TestInvalidFactoryEventFramesAreRejected() {
@@ -52,6 +63,14 @@ void TestInvalidFactoryEventFramesAreRejected() {
     };
     Require(!Himax::Pen::TryParsePenUsbEventFrame(wrongCommandLow).has_value(),
             "packet with wrong packet[4] command low byte should be rejected");
+
+    std::array<uint8_t, 9> validBytesAtWrongOffsets{
+        0x07, 0x01, 0x00, 0x00,
+        0x00, 0x71, 0x07, 0x01,
+        0x01,
+    };
+    Require(!Himax::Pen::TryParsePenUsbEventFrame(validBytesAtWrongOffsets).has_value(),
+            "factory parser should require signature bytes at packet[2] and packet[4]");
 }
 
 void TestFactoryAckTable() {
@@ -77,6 +96,7 @@ void TestFactoryAckTable() {
 void TestCommandPacketBuilders() {
     using Himax::Pen::BuildPenUsbCommand;
     using Himax::Pen::BuildPenUsbEventAck;
+    using Himax::Pen::BuildPenUsbPayloadCommand;
     using Himax::Pen::PenUsbCommandId;
 
     Require(BuildPenUsbCommand(PenUsbCommandId::QueryPenStatus) ==
@@ -85,13 +105,32 @@ void TestCommandPacketBuilders() {
     Require(BuildPenUsbCommand(PenUsbCommandId::QueryPenInfo) ==
                 std::vector<uint8_t>({0x07, 0x00, 0x02, 0x00, 0x01, 0x77, 0x11, 0x00}),
             "0x7701 command packet should match factory bytes");
+    Require(BuildPenUsbCommand(PenUsbCommandId::PairInfoSet) ==
+                std::vector<uint8_t>({0x07, 0x00, 0x02, 0x00, 0x01, 0x7E, 0x11, 0x00}),
+            "0x7E01 command packet should use little-endian command id");
     Require(BuildPenUsbEventAck(0x0A) ==
                 std::vector<uint8_t>({0x07, 0x01, 0x02, 0x00, 0x01, 0x80, 0x11, 0x20, 0x0A}),
             "0x8001 ACK packet should match factory bytes");
+
+    const std::array<uint8_t, 3> payload{0xAA, 0xBB, 0xCC};
+    Require(BuildPenUsbPayloadCommand(PenUsbCommandId::InitParamSet, payload) ==
+                std::vector<uint8_t>({0x07, 0x01, 0x02, 0x00, 0x01, 0x7D, 0x11, 0x20, 0xAA, 0xBB, 0xCC}),
+            "payload command should preserve header and append payload bytes");
 }
 
 void TestType3Encoding() {
     std::array<uint8_t, 8> out{};
+    Require(Himax::Pen::EncodePenUsbType3Token("", out) == 0, "empty token should not emit bytes");
+
+    out = {};
+    Require(Himax::Pen::EncodePenUsbType3Token("7", out) == 1, "1-digit token should encode to 1 byte");
+    Require(out[0] == 0x07, "7 should encode as 07");
+
+    out = {};
+    Require(Himax::Pen::EncodePenUsbType3Token("12", out) == 2, "2-digit token should encode to 2 bytes");
+    Require(out[0] == 0x02 && out[1] == 0x01, "12 should encode as 02 01");
+
+    out = {};
     Require(Himax::Pen::EncodePenUsbType3Token("3333", out) == 2, "4-digit token should encode to 2 bytes");
     Require(out[0] == 0x33 && out[1] == 0x33, "3333 should encode as 33 33");
 
@@ -105,6 +144,9 @@ void TestType3Encoding() {
     Require(payload[2] == 0x08 && payload[3] == 0x06,
             "scan freq2 decimal token should preserve current type-3 behavior");
     Require(payload[4] == 0x03, "non-zero scan mode should encode as mode 3");
+
+    const auto offPayload = Himax::Pen::BuildScanModePayload(51, 68, 0);
+    Require(offPayload[4] == 0x00, "zero scan mode should encode as mode 0");
 }
 
 void TestFactoryInitParamsPacket() {
@@ -124,12 +166,13 @@ void TestFactoryInitParamsPacket() {
 int main() {
     try {
         TestValidFactoryEventFrameParses();
+        TestMinimumFactoryEventFrameParses();
         TestInvalidFactoryEventFramesAreRejected();
         TestFactoryAckTable();
         TestCommandPacketBuilders();
         TestType3Encoding();
         TestFactoryInitParamsPacket();
-        std::cout << "[TEST] Pen USB protocol tests passed.\n";
+        std::cout << "[TEST] Device Pen USB protocol packet tests passed.\n";
         return 0;
     } catch (const std::exception& ex) {
         std::cerr << "[TEST] " << ex.what() << "\n";
