@@ -348,7 +348,7 @@ void ServiceHost::ApplyServiceConfigToRuntime(const ServiceConfigState& config) 
         config.penButtonMode, config.penButtonRoute);
 }
 
-ServiceHost::ReloadServiceConfigResult ServiceHost::HandleReloadServiceConfig(
+ReloadServiceConfigResult ServiceHost::HandleReloadServiceConfig(
     const ServiceConfigState& reloadedConfig) {
     ReloadServiceConfigResult result{};
 

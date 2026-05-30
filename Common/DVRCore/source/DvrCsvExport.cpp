@@ -16,6 +16,27 @@ namespace {
 
 namespace DvrFmt = Dvr::Format;
 
+size_t FramePeakCount(const Solvers::HeatmapFrame& frame) {
+#if EGOTOUCH_DIAG
+    return frame.peaks.size();
+#else
+    (void)frame;
+    return 0;
+#endif
+}
+
+void WritePeaksCsvSection(std::ostream& out, const Solvers::HeatmapFrame& frame) {
+    out << "--- Peaks ---\n";
+    out << "Count," << FramePeakCount(frame) << "\n";
+    out << "R,C,Z,ID\n";
+#if EGOTOUCH_DIAG
+    for (const auto& pk : frame.peaks) {
+        out << pk.r << ',' << pk.c << ',' << pk.z << ',' << static_cast<unsigned int>(pk.id) << "\n";
+    }
+#endif
+    out << "\n";
+}
+
 bool RuntimeConfigValuesMatchSchema(const RuntimeConfigSnapshot& snapshot) {
     if (snapshot.fields.size() != snapshot.values.size()) return false;
     for (size_t i = 0; i < snapshot.fields.size(); ++i) {
@@ -265,13 +286,7 @@ bool WriteFrameCsvFile(const std::filesystem::path& filePath,
         out << "\n";
     }
 
-    out << "--- Peaks ---\n";
-    out << "Count," << frame.peaks.size() << "\n";
-    out << "R,C,Z,ID\n";
-    for (const auto& pk : frame.peaks) {
-        out << pk.r << ',' << pk.c << ',' << pk.z << ',' << static_cast<unsigned int>(pk.id) << "\n";
-    }
-    out << "\n";
+    WritePeaksCsvSection(out, frame);
 
     out << "--- Contacts ---\n";
     out << "Count," << frame.contacts.size() << "\n";
@@ -318,7 +333,7 @@ bool WriteFrameCsvFile(const std::filesystem::path& filePath,
         std::vector<CsvKeyValueRow> masterRows;
         masterRows.push_back({"MasterSuffixValid", frame.masterSuffixValid ? "1" : "0"});
         masterRows.push_back({"ContactCount", std::to_string(frame.contacts.size())});
-        masterRows.push_back({"PeakCount", std::to_string(frame.peaks.size())});
+        masterRows.push_back({"PeakCount", std::to_string(FramePeakCount(frame))});
         masterRows.push_back({"MasterWasRead", frame.masterWasRead ? "1" : "0"});
         if (frame.masterSuffixValid) {
             masterRows.push_back({"MasterSuffix_F0Noise", std::to_string(frame.masterSuffix.penF0NoiseCount())});
