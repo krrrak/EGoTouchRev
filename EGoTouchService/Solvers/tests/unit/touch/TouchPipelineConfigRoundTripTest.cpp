@@ -19,6 +19,35 @@ void RequireNear(float actual, float expected, float epsilon, const char* messag
     }
 }
 
+void RequireMissingSubstring(const std::string& text, const char* substring) {
+    if (text.find(substring) != std::string::npos) {
+        throw std::runtime_error(std::string("unexpected saved config key: ") + substring);
+    }
+}
+
+void RequirePresentSubstring(const std::string& text, const char* substring) {
+    if (text.find(substring) == std::string::npos) {
+        throw std::runtime_error(std::string("missing saved config key: ") + substring);
+    }
+}
+
+template <typename Schema>
+void RequireSchemaMissing(const Schema& schema, const char* key) {
+    for (const auto& param : schema) {
+        if (param.key == key) {
+            throw std::runtime_error(std::string("unexpected schema key: ") + key);
+        }
+    }
+}
+
+template <typename Schema>
+void RequireSchemaPresent(const Schema& schema, const char* key) {
+    for (const auto& param : schema) {
+        if (param.key == key) return;
+    }
+    throw std::runtime_error(std::string("missing schema key: ") + key);
+}
+
 void LoadFromSavedText(Solvers::TouchPipeline& pipeline, const std::string& saved) {
     std::istringstream in(saved);
     std::string line;
@@ -30,108 +59,91 @@ void LoadFromSavedText(Solvers::TouchPipeline& pipeline, const std::string& save
     }
 }
 
-void TestStylusSuppressRoundTrip() {
+void TestCurrentTouchConfigKeysAreHardcoded() {
     Solvers::TouchPipeline pipeline;
-    pipeline.m_tracker.m_stylusSuppressGlobalEnabled = false;
-    pipeline.m_tracker.m_stylusSuppressLocalEnabled = true;
-    pipeline.m_tracker.m_stylusSuppressLocalDistance = 3.75f;
+    pipeline.m_baseline.m_enabled = false;
+    pipeline.m_baseline.m_baseline = 123;
+    pipeline.m_cmf.m_enabled = false;
+    pipeline.m_tracker.m_maxTrackDistance = 7.5f;
     pipeline.m_tracker.m_stylusSuppressPenPeakThreshold = 2468;
-    pipeline.m_tracker.m_stylusSuppressTouchSignalKeep = 6789;
-    pipeline.m_tracker.m_stylusSuppressTouchAreaKeep = 17;
-    pipeline.m_tracker.m_stylusAftEnabled = true;
-    pipeline.m_tracker.m_stylusAftRecentFrames = 33;
-    pipeline.m_tracker.m_stylusAftRadius = 4.25f;
-    pipeline.m_tracker.m_stylusAftDebounceFrames = 6;
-    pipeline.m_tracker.m_stylusAftWeakSignalThreshold = 321;
-    pipeline.m_tracker.m_stylusAftWeakSizeThresholdMm = 1.75f;
-    pipeline.m_tracker.m_stylusAftSuppressFrames = 44;
-    pipeline.m_tracker.m_stylusAftPalmSuppressFrames = 88;
-    pipeline.m_tracker.m_stylusAftPalmAreaThreshold = 27;
-    pipeline.m_tracker.m_stylusAftPalmSizeThresholdMm = 4.5f;
-    pipeline.m_tracker.m_touchDownDebounceMaxExtra = 5;
-    pipeline.m_tracker.m_touchDownWeakSignalThreshold = 222;
-    pipeline.m_tracker.m_touchDownSmallSizeThresholdMm = 1.55f;
-    pipeline.m_tracker.m_touchDownRejectMinSizeMm = 1.05f;
-    pipeline.m_tracker.m_touchDownEdgeRejectMinSignal = 111;
-    pipeline.m_tracker.m_fallbackSizeMm = 1.25f;
-    pipeline.m_tracker.m_sizeAreaScale = 0.31f;
-    pipeline.m_tracker.m_sizeSignalScale = 0.47f;
-    pipeline.m_tracker.m_rxGhostFilterEnabled = true;
-    pipeline.m_tracker.m_rxGhostLineDelta = 2;
-    pipeline.m_tracker.m_rxGhostWeakRatio = 0.42f;
-    pipeline.m_tracker.m_rxGhostOnlyNew = false;
+    pipeline.m_gesture.m_pressCandidateMinSignal = 999;
+    pipeline.m_gesture.m_bypassStateMachine = true;
+    pipeline.m_baseline.m_settleFrames = 7;
 
     std::ostringstream out;
     pipeline.SaveConfig(out);
     const std::string saved = out.str();
 
-    Require(saved.find("StylusSuppressPenPeakThreshold=2468") != std::string::npos,
-            "saved config should include stylus peak threshold");
-    Require(saved.find("StylusAftWeakSignalThreshold=321") != std::string::npos,
-            "saved config should include AFT weak signal threshold");
-    Require(saved.find("StylusAftPalmSizeThresholdMm=4.5") != std::string::npos,
-            "saved config should include AFT palm size threshold");
-    Require(saved.find("TouchDownDebounceMaxExtra=5") != std::string::npos,
-            "saved config should include debounce extra cap");
-    Require(saved.find("RxGhostWeakRatio=0.42") != std::string::npos,
-            "saved config should include rx ghost ratio");
+    const char* frozenSerializedKeys[] = {
+        "BaselineEnabled=",
+        "BaselineValue=",
+        "CMFEnabled=",
+        "CMFDimensionMode=",
+        "MaxTrackDistance=",
+        "StylusSuppressPenPeakThreshold=",
+        "PressCandidateMinSignal=",
+        "BypassStateMachine=",
+    };
+    for (const char* key : frozenSerializedKeys) {
+        RequireMissingSubstring(saved, key);
+    }
+    RequirePresentSubstring(saved, "BaselineSettleFrames=7");
+
+    const auto schema = pipeline.GetConfigSchema();
+    const char* frozenSchemaKeys[] = {
+        "BaselineEnabled",
+        "BaselineValue",
+        "CMFEnabled",
+        "MaxTrackDistance",
+        "StylusSuppressPenPeakThreshold",
+        "TouchDownDebounceMaxExtra",
+        "RxGhostWeakRatio",
+        "PalmShadowEnabled",
+        "BypassStateMachine",
+    };
+    for (const char* key : frozenSchemaKeys) {
+        RequireSchemaMissing(schema, key);
+    }
+    RequireSchemaPresent(schema, "BaselineSettleFrames");
 
     Solvers::TouchPipeline loaded;
-    LoadFromSavedText(loaded, saved);
+    const bool baselineEnabled = loaded.m_baseline.m_enabled;
+    const int baselineValue = loaded.m_baseline.m_baseline;
+    const bool cmfEnabled = loaded.m_cmf.m_enabled;
+    const auto cmfMode = loaded.m_cmf.m_mode;
+    const float maxTrackDistance = loaded.m_tracker.m_maxTrackDistance;
+    const int penPeakThreshold = loaded.m_tracker.m_stylusSuppressPenPeakThreshold;
+    const int suppressPenPeakThreshold = loaded.m_stylusSuppress.m_stylusSuppressPenPeakThreshold;
+    const int pressCandidateMinSignal = loaded.m_gesture.m_pressCandidateMinSignal;
+    const bool bypassStateMachine = loaded.m_gesture.m_bypassStateMachine;
 
-    Require(!loaded.m_tracker.m_stylusSuppressGlobalEnabled, "global suppress flag should round-trip");
-    Require(loaded.m_tracker.m_stylusSuppressLocalEnabled, "local suppress flag should round-trip");
-    RequireNear(loaded.m_tracker.m_stylusSuppressLocalDistance, 3.75f, 0.0001f,
-                "local suppress distance should round-trip");
-    Require(loaded.m_tracker.m_stylusSuppressPenPeakThreshold == 2468,
-            "pen peak threshold should round-trip");
-    Require(loaded.m_tracker.m_stylusSuppressTouchSignalKeep == 6789,
-            "touch signal keep should round-trip");
-    Require(loaded.m_tracker.m_stylusSuppressTouchAreaKeep == 17,
-            "touch area keep should round-trip");
-    Require(loaded.m_tracker.m_stylusAftEnabled, "AFT enabled should round-trip");
-    Require(loaded.m_tracker.m_stylusAftRecentFrames == 33,
-            "AFT recent frames should round-trip");
-    RequireNear(loaded.m_tracker.m_stylusAftRadius, 4.25f, 0.0001f,
-                "AFT radius should round-trip");
-    Require(loaded.m_tracker.m_stylusAftDebounceFrames == 6,
-            "AFT debounce frames should round-trip");
-    Require(loaded.m_tracker.m_stylusAftWeakSignalThreshold == 321,
-            "AFT weak signal threshold should round-trip");
-    RequireNear(loaded.m_tracker.m_stylusAftWeakSizeThresholdMm, 1.75f, 0.0001f,
-                "AFT weak size threshold should round-trip");
-    Require(loaded.m_tracker.m_stylusAftSuppressFrames == 44,
-            "AFT suppress frames should round-trip");
-    Require(loaded.m_tracker.m_stylusAftPalmSuppressFrames == 88,
-            "AFT palm suppress frames should round-trip");
-    Require(loaded.m_tracker.m_stylusAftPalmAreaThreshold == 27,
-            "AFT palm area threshold should round-trip");
-    RequireNear(loaded.m_tracker.m_stylusAftPalmSizeThresholdMm, 4.5f, 0.0001f,
-                "AFT palm size threshold should round-trip");
-    Require(loaded.m_tracker.m_touchDownDebounceMaxExtra == 5,
-            "debounce extra cap should round-trip");
-    Require(loaded.m_tracker.m_touchDownWeakSignalThreshold == 222,
-            "weak signal threshold should round-trip");
-    RequireNear(loaded.m_tracker.m_touchDownSmallSizeThresholdMm, 1.55f, 0.0001f,
-                "small size threshold should round-trip");
-    RequireNear(loaded.m_tracker.m_touchDownRejectMinSizeMm, 1.05f, 0.0001f,
-                "reject min size should round-trip");
-    Require(loaded.m_tracker.m_touchDownEdgeRejectMinSignal == 111,
-            "edge reject signal should round-trip");
-    RequireNear(loaded.m_tracker.m_fallbackSizeMm, 1.25f, 0.0001f,
-                "fallback size should round-trip");
-    RequireNear(loaded.m_tracker.m_sizeAreaScale, 0.31f, 0.0001f,
-                "size area scale should round-trip");
-    RequireNear(loaded.m_tracker.m_sizeSignalScale, 0.47f, 0.0001f,
-                "size signal scale should round-trip");
-    Require(loaded.m_tracker.m_rxGhostFilterEnabled,
-            "rx ghost filter flag should round-trip");
-    Require(loaded.m_tracker.m_rxGhostLineDelta == 2,
-            "rx ghost line delta should round-trip");
-    RequireNear(loaded.m_tracker.m_rxGhostWeakRatio, 0.42f, 0.0001f,
-                "rx ghost weak ratio should round-trip");
-    Require(!loaded.m_tracker.m_rxGhostOnlyNew,
-            "rx ghost only-new flag should round-trip");
+    loaded.LoadConfig("BaselineEnabled", "0");
+    loaded.LoadConfig("BaselineValue", "123");
+    loaded.LoadConfig("CMFEnabled", "0");
+    loaded.LoadConfig("CMFDimensionMode", "3");
+    loaded.LoadConfig("MaxTrackDistance", "7.5");
+    loaded.LoadConfig("StylusSuppressPenPeakThreshold", "2468");
+    loaded.LoadConfig("PressCandidateMinSignal", "999");
+    loaded.LoadConfig("BypassStateMachine", "1");
+
+    Require(loaded.m_baseline.m_enabled == baselineEnabled,
+            "frozen baseline enabled config should not load");
+    Require(loaded.m_baseline.m_baseline == baselineValue,
+            "frozen baseline value config should not load");
+    Require(loaded.m_cmf.m_enabled == cmfEnabled,
+            "frozen cmf enabled config should not load");
+    Require(loaded.m_cmf.m_mode == cmfMode,
+            "frozen cmf dimension mode config should not load");
+    RequireNear(loaded.m_tracker.m_maxTrackDistance, maxTrackDistance, 0.0001f,
+                "frozen max track distance config should not load");
+    Require(loaded.m_tracker.m_stylusSuppressPenPeakThreshold == penPeakThreshold,
+            "frozen stylus suppress tracker config should not load");
+    Require(loaded.m_stylusSuppress.m_stylusSuppressPenPeakThreshold == suppressPenPeakThreshold,
+            "frozen stylus suppress runtime config should not load");
+    Require(loaded.m_gesture.m_pressCandidateMinSignal == pressCandidateMinSignal,
+            "frozen press candidate config should not load");
+    Require(loaded.m_gesture.m_bypassStateMachine == bypassStateMachine,
+            "frozen gesture bypass config should not load");
 }
 
 void TestBaselineSettleFramesRoundTrip() {
@@ -142,8 +154,7 @@ void TestBaselineSettleFramesRoundTrip() {
     pipeline.SaveConfig(out);
     const std::string saved = out.str();
 
-    Require(saved.find("BaselineSettleFrames=7") != std::string::npos,
-            "saved config should include baseline settle frames");
+    RequirePresentSubstring(saved, "BaselineSettleFrames=7");
 
     Solvers::TouchPipeline loaded;
     LoadFromSavedText(loaded, saved);
@@ -159,18 +170,19 @@ void TestEdgeCompensationIsHardcoded() {
     pipeline.SaveConfig(out);
     const std::string saved = out.str();
 
-    Require(saved.find("ECEnabled=") == std::string::npos,
-            "saved config should not include EC enabled flag");
-    Require(saved.find("ECStrength=") == std::string::npos,
-            "saved config should not include EC strength");
-    Require(saved.find("ECBlendRange=") == std::string::npos,
-            "saved config should not include EC blend range");
-    Require(saved.find("ECDim1NearSegments=") == std::string::npos,
-            "saved config should not include EC profile segments");
-    Require(saved.find("ECDim1NearS0Width=") == std::string::npos,
-            "saved config should not include EC profile widths");
-    Require(saved.find("ECDim2FarS3LutHigh=") == std::string::npos,
-            "saved config should not include EC profile LUTs");
+    RequireMissingSubstring(saved, "ECEnabled=");
+    RequireMissingSubstring(saved, "ECStrength=");
+    RequireMissingSubstring(saved, "ECBlendRange=");
+    RequireMissingSubstring(saved, "ECDim1NearSegments=");
+    RequireMissingSubstring(saved, "ECDim1NearS0Width=");
+    RequireMissingSubstring(saved, "ECDim2FarS3LutHigh=");
+
+    const auto schema = pipeline.GetConfigSchema();
+    RequireSchemaMissing(schema, "ECStrength");
+    RequireSchemaMissing(schema, "ECDim1NearSegments");
+    RequireSchemaMissing(schema, "ECDim1NearS0Width");
+    RequireSchemaMissing(schema, "ECDim1NearS0LutLow");
+    RequireSchemaMissing(schema, "ECDim2FarS3LutHigh");
 
     pipeline.LoadConfig("ECEnabled", "0");
     pipeline.LoadConfig("ECStrength", "0.42");
@@ -189,63 +201,13 @@ void TestEdgeCompensationIsHardcoded() {
             "EC profile width should stay hardcoded");
 }
 
-void TestStylusSuppressSchemaContainsNewKeys() {
-    Solvers::TouchPipeline pipeline;
-    const auto schema = pipeline.GetConfigSchema();
-
-    auto hasKey = [&](const char* key) {
-        for (const auto& param : schema) {
-            if (param.key == key) return true;
-        }
-        return false;
-    };
-
-    Require(hasKey("BaselineSettleFrames"),
-            "schema should expose baseline settle frames");
-    Require(hasKey("StylusSuppressPenPeakThreshold"),
-            "schema should expose stylus peak threshold");
-    Require(hasKey("StylusAftDebounceFrames"),
-            "schema should expose AFT debounce frames");
-    Require(hasKey("StylusAftWeakSignalThreshold"),
-            "schema should expose AFT weak signal threshold");
-    Require(hasKey("StylusAftPalmAreaThreshold"),
-            "schema should expose AFT palm area threshold");
-    Require(hasKey("TouchDownDebounceMaxExtra"),
-            "schema should expose debounce extra cap");
-    Require(hasKey("RxGhostWeakRatio"),
-            "schema should expose rx ghost weak ratio");
-    Require(hasKey("PalmShadowEnabled"),
-            "schema should expose palm shadow enabled");
-    Require(hasKey("PalmShadowRadius"),
-            "schema should expose palm shadow radius");
-    Require(hasKey("PalmShadowHoldFrames"),
-            "schema should expose palm shadow hold frames");
-    Require(hasKey("PalmShadowSeedScore"),
-            "schema should expose palm shadow seed score");
-    Require(!hasKey("ECStrength"),
-            "schema should not expose EC strength");
-    Require(!hasKey("ECDim1NearSegments"),
-            "schema should not expose Dim1 near EC segment count");
-    Require(!hasKey("ECDim1NearS0Width"),
-            "schema should not expose Dim1 near EC segment width");
-    Require(!hasKey("ECDim1NearS0LutLow"),
-            "schema should not expose Dim1 near EC LUT low");
-    Require(!hasKey("ECDim2FarS3LutHigh"),
-            "schema should not expose Dim2 far EC LUT high");
-}
-
 void TestInvalidConfigValuesAreIgnored() {
     Solvers::TouchPipeline touch;
-    touch.m_peakDet.m_threshold = 1234;
-    touch.m_tracker.m_enabled = true;
+    touch.m_baseline.m_settleFrames = 12;
 
-    touch.LoadConfig("PeakThreshold", "abc");
-    touch.LoadConfig("TrackerEnabled", "maybe");
-
-    Require(touch.m_peakDet.m_threshold == 1234,
+    touch.LoadConfig("BaselineSettleFrames", "abc");
+    Require(touch.m_baseline.m_settleFrames == 12,
             "invalid touch integer config should preserve current value");
-    Require(touch.m_tracker.m_enabled,
-            "invalid touch boolean config should preserve current value");
 
     Solvers::StylusPipeline stylus;
     stylus.m_postPressure.m_btFreqShiftDebounceFrames = 12;
@@ -268,10 +230,9 @@ void TestInvalidConfigValuesAreIgnored() {
 
 int main() {
     try {
-        TestStylusSuppressRoundTrip();
+        TestCurrentTouchConfigKeysAreHardcoded();
         TestBaselineSettleFramesRoundTrip();
         TestEdgeCompensationIsHardcoded();
-        TestStylusSuppressSchemaContainsNewKeys();
         TestInvalidConfigValuesAreIgnored();
         std::cout << "[TEST] TouchPipeline config round-trip tests passed.\n";
         return 0;

@@ -1,6 +1,144 @@
 #include "TouchPipeline.h"
 #include "ConfigParse.h"
 
+#include <algorithm>
+#include <sstream>
+#include <string>
+#include <string_view>
+
+namespace {
+
+bool IsFrozenCurrentTouchConfigKey(std::string_view key) {
+    constexpr std::string_view kFrozenKeys[] = {
+        "FrameParserEnabled",
+        "BaselineEnabled",
+        "BaselineValue",
+        "BaselineNoiseDeadband",
+        "BaselinePositiveDriftDeadband",
+        "BaselineNegativeDeadband",
+        "BaselineTouchFreezeThreshold",
+        "BaselineReleaseHoldFrames",
+        "BaselinePositiveAlphaShift",
+        "BaselineNegativeAlphaShift",
+        "BaselineNoiseAlphaShift",
+        "BaselinePositiveMaxStep",
+        "BaselineNegativeMaxStep",
+        "BaselineAcquisitionAlphaShift",
+        "BaselineAcquisitionMaxStep",
+        "BaselineNoiseTrackingEnabled",
+        "CMFEnabled",
+        "CMFDimensionMode",
+        "CMFExclusionThreshold",
+        "CMFMaxCorrection",
+        "PeakThreshold",
+        "SigTholdLimit",
+        "Z8FilterEnabled",
+        "Z1FilterEnabled",
+        "PressureDriftFilter",
+        "EdgePeakFilter",
+        "EdgeThresholdEnabled",
+        "EdgeThreshold",
+        "Z8Radius",
+        "MaxPeaks",
+        "PressureDriftDebounce",
+        "MacroZoneMinArea",
+        "DilateErode",
+        "ZoneTholdScale",
+        "ZoneTholdShift",
+        "MaxTouches",
+        "PalmEnabled",
+        "PalmAreaThreshold",
+        "PalmSignalSumThreshold",
+        "PalmDensityThresholdLow",
+        "PalmAreaMinForDensity",
+        "PalmElongatedEnabled",
+        "PalmElongatedMinArea",
+        "PalmElongatedAspectRatio",
+        "PalmAnalyzerEnabled",
+        "PalmCandidateAreaThreshold",
+        "PalmCandidateSignalThreshold",
+        "PalmLikelyAreaThreshold",
+        "PalmFillRatioThreshold",
+        "PalmFlatSharpnessThreshold",
+        "PalmStrongPeakProminence",
+        "PeakEvalEnabled",
+        "PeakEvalFingerProminence",
+        "PeakEvalFingerSharpness",
+        "PeakEvalPalmSharpnessMax",
+        "PeakEvalAmbiguousMargin",
+        "PalmAwareExpansionEnabled",
+        "PalmFingerInPalmThresholdRatio",
+        "PalmFingerInPalmMaxRadius",
+        "PalmLikelyAllowContact",
+        "PalmShadowEnabled",
+        "PalmShadowRadius",
+        "PalmShadowHoldFrames",
+        "PalmShadowSeedScore",
+        "TrackerEnabled",
+        "UseHungarian",
+        "MaxTrackDistance",
+        "AlwaysMatchDistance",
+        "EdgeTrackBoost",
+        "AccThresholdBoost",
+        "AccBoostSizeMm",
+        "PredictionScale",
+        "GapRelinkEnabled",
+        "GapRelinkWindowFrames",
+        "TouchDownDebounceFrames",
+        "DynamicDebounceEnabled",
+        "TouchDownDebounceMaxExtra",
+        "TouchDownWeakSignalThreshold",
+        "TouchDownSmallSizeThresholdMm",
+        "TouchDownRejectEnabled",
+        "TouchDownRejectMinSignal",
+        "TouchDownRejectMinSizeMm",
+        "TouchDownEdgeRejectMinSignal",
+        "FallbackSizeMm",
+        "SizeAreaScale",
+        "SizeSignalScale",
+        "RxGhostFilterEnabled",
+        "RxGhostLineDelta",
+        "RxGhostWeakRatio",
+        "RxGhostOnlyNew",
+        "StylusSuppressGlobalEnabled",
+        "StylusSuppressLocalEnabled",
+        "StylusSuppressLocalDistance",
+        "StylusSuppressPenPeakThreshold",
+        "StylusSuppressTouchSignalKeep",
+        "StylusSuppressTouchAreaKeep",
+        "StylusAftEnabled",
+        "StylusAftRecentFrames",
+        "StylusAftRadius",
+        "StylusAftDebounceFrames",
+        "StylusAftWeakSignalThreshold",
+        "StylusAftWeakSizeThresholdMm",
+        "StylusAftSuppressFrames",
+        "StylusAftPalmSuppressFrames",
+        "StylusAftPalmAreaThreshold",
+        "StylusAftPalmSizeThresholdMm",
+        "CoordFilterEnabled",
+        "OneEuroMinCutoff",
+        "OneEuroBeta",
+        "OneEuroDCutoff",
+        "GestureEnabled",
+        "PressCandidateFrames",
+        "PressCandidateMinSignal",
+        "PressCandidateMinSizeMm",
+        "DragThreshold",
+        "LongPressFrames",
+        "LongPressMoveTolerance",
+        "ReleasePendingFrames",
+        "BypassStateMachine",
+    };
+
+    for (std::string_view frozenKey : kFrozenKeys) {
+        if (frozenKey == key) return true;
+    }
+    return false;
+}
+
+} // namespace
+
 namespace Solvers {
 
 // ══════════════════════════════════════════════════════════════════════
@@ -439,6 +577,10 @@ std::vector<ConfigParam> TouchPipeline::GetConfigSchema() const {
     s.emplace_back("BypassStateMachine", "Bypass State Machine",
                    ConfigParam::Bool, const_cast<bool*>(&m_gesture.m_bypassStateMachine)).Module("Gesture");
 
+    s.erase(std::remove_if(s.begin(), s.end(), [](const ConfigParam& param) {
+        return IsFrozenCurrentTouchConfigKey(param.key);
+    }), s.end());
+
     return s;
 }
 
@@ -446,135 +588,149 @@ std::vector<ConfigParam> TouchPipeline::GetConfigSchema() const {
 // SaveConfig
 // ══════════════════════════════════════════════════════════════════════
 void TouchPipeline::SaveConfig(std::ostream& out) const {
+    std::ostringstream serialized;
+    auto& configOut = serialized;
+
     // Phase 1
-    out << "FrameParserEnabled=" << (m_frameParser.m_enabled?"1":"0") << "\n";
+    configOut << "FrameParserEnabled=" << (m_frameParser.m_enabled?"1":"0") << "\n";
     // Phase 2: Baseline
-    out << "BaselineEnabled=" << (m_baseline.m_enabled?"1":"0") << "\n";
-    out << "BaselineValue=" << m_baseline.m_baseline << "\n";
-    out << "BaselineNoiseDeadband=" << m_baseline.m_noiseDeadband << "\n";
-    out << "BaselinePositiveDriftDeadband=" << m_baseline.m_positiveDriftDeadband << "\n";
-    out << "BaselineNegativeDeadband=" << m_baseline.m_negativeDeadband << "\n";
-    out << "BaselineTouchFreezeThreshold=" << m_baseline.m_touchFreezeThreshold << "\n";
-    out << "BaselineReleaseHoldFrames=" << m_baseline.m_releaseHoldFrames << "\n";
-    out << "BaselinePositiveAlphaShift=" << m_baseline.m_positiveAlphaShift << "\n";
-    out << "BaselineNegativeAlphaShift=" << m_baseline.m_negativeAlphaShift << "\n";
-    out << "BaselineNoiseAlphaShift=" << m_baseline.m_noiseAlphaShift << "\n";
-    out << "BaselinePositiveMaxStep=" << m_baseline.m_positiveMaxStep << "\n";
-    out << "BaselineNegativeMaxStep=" << m_baseline.m_negativeMaxStep << "\n";
-    out << "BaselineAcquisitionAlphaShift=" << m_baseline.m_acquisitionAlphaShift << "\n";
-    out << "BaselineAcquisitionMaxStep=" << m_baseline.m_acquisitionMaxStep << "\n";
-    out << "BaselineNoiseTrackingEnabled=" << (m_baseline.m_noiseTrackingEnabled?"1":"0") << "\n";
-    out << "BaselineSettleFrames=" << m_baseline.m_settleFrames << "\n";
+    configOut << "BaselineEnabled=" << (m_baseline.m_enabled?"1":"0") << "\n";
+    configOut << "BaselineValue=" << m_baseline.m_baseline << "\n";
+    configOut << "BaselineNoiseDeadband=" << m_baseline.m_noiseDeadband << "\n";
+    configOut << "BaselinePositiveDriftDeadband=" << m_baseline.m_positiveDriftDeadband << "\n";
+    configOut << "BaselineNegativeDeadband=" << m_baseline.m_negativeDeadband << "\n";
+    configOut << "BaselineTouchFreezeThreshold=" << m_baseline.m_touchFreezeThreshold << "\n";
+    configOut << "BaselineReleaseHoldFrames=" << m_baseline.m_releaseHoldFrames << "\n";
+    configOut << "BaselinePositiveAlphaShift=" << m_baseline.m_positiveAlphaShift << "\n";
+    configOut << "BaselineNegativeAlphaShift=" << m_baseline.m_negativeAlphaShift << "\n";
+    configOut << "BaselineNoiseAlphaShift=" << m_baseline.m_noiseAlphaShift << "\n";
+    configOut << "BaselinePositiveMaxStep=" << m_baseline.m_positiveMaxStep << "\n";
+    configOut << "BaselineNegativeMaxStep=" << m_baseline.m_negativeMaxStep << "\n";
+    configOut << "BaselineAcquisitionAlphaShift=" << m_baseline.m_acquisitionAlphaShift << "\n";
+    configOut << "BaselineAcquisitionMaxStep=" << m_baseline.m_acquisitionMaxStep << "\n";
+    configOut << "BaselineNoiseTrackingEnabled=" << (m_baseline.m_noiseTrackingEnabled?"1":"0") << "\n";
+    configOut << "BaselineSettleFrames=" << m_baseline.m_settleFrames << "\n";
     // Phase 2: CMF
-    out << "CMFEnabled=" << (m_cmf.m_enabled?"1":"0") << "\n";
-    out << "CMFDimensionMode=" << static_cast<int>(m_cmf.m_mode) << "\n";
-    out << "CMFExclusionThreshold=" << m_cmf.m_exclusionThreshold << "\n";
-    out << "CMFMaxCorrection=" << m_cmf.m_maxCorrection << "\n";
+    configOut << "CMFEnabled=" << (m_cmf.m_enabled?"1":"0") << "\n";
+    configOut << "CMFDimensionMode=" << static_cast<int>(m_cmf.m_mode) << "\n";
+    configOut << "CMFExclusionThreshold=" << m_cmf.m_exclusionThreshold << "\n";
+    configOut << "CMFMaxCorrection=" << m_cmf.m_maxCorrection << "\n";
     // Phase 3: PeakDetector (same keys as old FeatureExtractor)
-    out << "PeakThreshold=" << m_peakDet.m_threshold << "\n";
-    out << "SigTholdLimit=" << m_peakDet.m_sigTholdLimit << "\n";
-    out << "Z8FilterEnabled=" << (m_peakDet.m_z8Filter?"1":"0") << "\n";
-    out << "Z1FilterEnabled=" << (m_peakDet.m_z1Filter?"1":"0") << "\n";
-    out << "PressureDriftFilter=" << (m_peakDet.m_pressureDriftFilter?"1":"0") << "\n";
-    out << "EdgePeakFilter=" << (m_peakDet.m_edgePeakFilter?"1":"0") << "\n";
-    out << "EdgeThresholdEnabled=" << (m_peakDet.m_edgeThresholdEnabled?"1":"0") << "\n";
-    out << "EdgeThreshold=" << m_peakDet.m_edgeThreshold << "\n";
-    out << "Z8Radius=" << m_peakDet.m_z8Radius << "\n";
-    out << "MaxPeaks=" << m_peakDet.m_maxPeaks << "\n";
-    out << "PressureDriftDebounce=" << m_peakDet.m_pressureDriftDebounceLimit << "\n";
-    out << "MacroZoneMinArea=" << m_peakDet.m_macroZoneMinArea << "\n";
+    configOut << "PeakThreshold=" << m_peakDet.m_threshold << "\n";
+    configOut << "SigTholdLimit=" << m_peakDet.m_sigTholdLimit << "\n";
+    configOut << "Z8FilterEnabled=" << (m_peakDet.m_z8Filter?"1":"0") << "\n";
+    configOut << "Z1FilterEnabled=" << (m_peakDet.m_z1Filter?"1":"0") << "\n";
+    configOut << "PressureDriftFilter=" << (m_peakDet.m_pressureDriftFilter?"1":"0") << "\n";
+    configOut << "EdgePeakFilter=" << (m_peakDet.m_edgePeakFilter?"1":"0") << "\n";
+    configOut << "EdgeThresholdEnabled=" << (m_peakDet.m_edgeThresholdEnabled?"1":"0") << "\n";
+    configOut << "EdgeThreshold=" << m_peakDet.m_edgeThreshold << "\n";
+    configOut << "Z8Radius=" << m_peakDet.m_z8Radius << "\n";
+    configOut << "MaxPeaks=" << m_peakDet.m_maxPeaks << "\n";
+    configOut << "PressureDriftDebounce=" << m_peakDet.m_pressureDriftDebounceLimit << "\n";
+    configOut << "MacroZoneMinArea=" << m_peakDet.m_macroZoneMinArea << "\n";
     // Phase 4: ZoneExpander
-    out << "DilateErode=" << (m_contactExtractor.m_zoneExp.m_dilateErode?"1":"0") << "\n";
-    out << "ZoneTholdScale=" << m_contactExtractor.m_zoneExp.m_tholdScaleNumer << "\n";
-    out << "ZoneTholdShift=" << m_contactExtractor.m_zoneExp.m_tholdScaleShift << "\n";
-    out << "MaxTouches=" << m_contactExtractor.m_zoneExp.m_maxTouches << "\n";
+    configOut << "DilateErode=" << (m_contactExtractor.m_zoneExp.m_dilateErode?"1":"0") << "\n";
+    configOut << "ZoneTholdScale=" << m_contactExtractor.m_zoneExp.m_tholdScaleNumer << "\n";
+    configOut << "ZoneTholdShift=" << m_contactExtractor.m_zoneExp.m_tholdScaleShift << "\n";
+    configOut << "MaxTouches=" << m_contactExtractor.m_zoneExp.m_maxTouches << "\n";
     // Phase 3: TouchClassifier
-    out << "PalmEnabled=" << (m_touchClassifier.m_enabled?"1":"0") << "\n";
-    out << "PalmAreaThreshold=" << m_touchClassifier.m_areaThreshold << "\n";
-    out << "PalmSignalSumThreshold=" << m_touchClassifier.m_signalSumThreshold << "\n";
-    out << "PalmDensityThresholdLow=" << m_touchClassifier.m_densityThresholdLow << "\n";
-    out << "PalmAreaMinForDensity=" << m_touchClassifier.m_areaMinForDensity << "\n";
-    out << "PalmElongatedEnabled=" << (m_touchClassifier.m_elongatedEnabled?"1":"0") << "\n";
-    out << "PalmElongatedMinArea=" << m_touchClassifier.m_elongatedMinArea << "\n";
-    out << "PalmElongatedAspectRatio=" << m_touchClassifier.m_elongatedAspectRatio << "\n";
-    out << "PalmAnalyzerEnabled=" << (m_touchClassifier.m_analyzerEnabled?"1":"0") << "\n";
-    out << "PalmCandidateAreaThreshold=" << m_touchClassifier.m_candidateAreaThreshold << "\n";
-    out << "PalmCandidateSignalThreshold=" << m_touchClassifier.m_candidateSignalThreshold << "\n";
-    out << "PalmLikelyAreaThreshold=" << m_touchClassifier.m_likelyAreaThreshold << "\n";
-    out << "PalmFillRatioThreshold=" << m_touchClassifier.m_fillRatioThreshold << "\n";
-    out << "PalmFlatSharpnessThreshold=" << m_touchClassifier.m_flatSharpnessThreshold << "\n";
-    out << "PalmStrongPeakProminence=" << m_touchClassifier.m_strongPeakProminence << "\n";
-    out << "PeakEvalEnabled=" << (m_touchClassifier.m_peakEvalEnabled?"1":"0") << "\n";
-    out << "PeakEvalFingerProminence=" << m_touchClassifier.m_fingerProminence << "\n";
-    out << "PeakEvalFingerSharpness=" << m_touchClassifier.m_fingerSharpness << "\n";
-    out << "PeakEvalPalmSharpnessMax=" << m_touchClassifier.m_palmSharpnessMax << "\n";
-    out << "PeakEvalAmbiguousMargin=" << m_touchClassifier.m_ambiguousMargin << "\n";
-    out << "PalmAwareExpansionEnabled=" << (m_touchClassifier.m_palmAwareExpansionEnabled?"1":"0") << "\n";
-    out << "PalmFingerInPalmThresholdRatio=" << m_touchClassifier.m_fingerInPalmThresholdRatio << "\n";
-    out << "PalmFingerInPalmMaxRadius=" << m_touchClassifier.m_fingerInPalmMaxRadius << "\n";
-    out << "PalmLikelyAllowContact=" << (m_touchClassifier.m_palmLikelyAllowContact?"1":"0") << "\n";
-    out << "PalmShadowEnabled=" << (m_touchClassifier.m_palmShadowEnabled?"1":"0") << "\n";
-    out << "PalmShadowRadius=" << m_touchClassifier.m_palmShadowRadius << "\n";
-    out << "PalmShadowHoldFrames=" << m_touchClassifier.m_palmShadowHoldFrames << "\n";
-    out << "PalmShadowSeedScore=" << m_touchClassifier.m_palmShadowSeedScore << "\n";
+    configOut << "PalmEnabled=" << (m_touchClassifier.m_enabled?"1":"0") << "\n";
+    configOut << "PalmAreaThreshold=" << m_touchClassifier.m_areaThreshold << "\n";
+    configOut << "PalmSignalSumThreshold=" << m_touchClassifier.m_signalSumThreshold << "\n";
+    configOut << "PalmDensityThresholdLow=" << m_touchClassifier.m_densityThresholdLow << "\n";
+    configOut << "PalmAreaMinForDensity=" << m_touchClassifier.m_areaMinForDensity << "\n";
+    configOut << "PalmElongatedEnabled=" << (m_touchClassifier.m_elongatedEnabled?"1":"0") << "\n";
+    configOut << "PalmElongatedMinArea=" << m_touchClassifier.m_elongatedMinArea << "\n";
+    configOut << "PalmElongatedAspectRatio=" << m_touchClassifier.m_elongatedAspectRatio << "\n";
+    configOut << "PalmAnalyzerEnabled=" << (m_touchClassifier.m_analyzerEnabled?"1":"0") << "\n";
+    configOut << "PalmCandidateAreaThreshold=" << m_touchClassifier.m_candidateAreaThreshold << "\n";
+    configOut << "PalmCandidateSignalThreshold=" << m_touchClassifier.m_candidateSignalThreshold << "\n";
+    configOut << "PalmLikelyAreaThreshold=" << m_touchClassifier.m_likelyAreaThreshold << "\n";
+    configOut << "PalmFillRatioThreshold=" << m_touchClassifier.m_fillRatioThreshold << "\n";
+    configOut << "PalmFlatSharpnessThreshold=" << m_touchClassifier.m_flatSharpnessThreshold << "\n";
+    configOut << "PalmStrongPeakProminence=" << m_touchClassifier.m_strongPeakProminence << "\n";
+    configOut << "PeakEvalEnabled=" << (m_touchClassifier.m_peakEvalEnabled?"1":"0") << "\n";
+    configOut << "PeakEvalFingerProminence=" << m_touchClassifier.m_fingerProminence << "\n";
+    configOut << "PeakEvalFingerSharpness=" << m_touchClassifier.m_fingerSharpness << "\n";
+    configOut << "PeakEvalPalmSharpnessMax=" << m_touchClassifier.m_palmSharpnessMax << "\n";
+    configOut << "PeakEvalAmbiguousMargin=" << m_touchClassifier.m_ambiguousMargin << "\n";
+    configOut << "PalmAwareExpansionEnabled=" << (m_touchClassifier.m_palmAwareExpansionEnabled?"1":"0") << "\n";
+    configOut << "PalmFingerInPalmThresholdRatio=" << m_touchClassifier.m_fingerInPalmThresholdRatio << "\n";
+    configOut << "PalmFingerInPalmMaxRadius=" << m_touchClassifier.m_fingerInPalmMaxRadius << "\n";
+    configOut << "PalmLikelyAllowContact=" << (m_touchClassifier.m_palmLikelyAllowContact?"1":"0") << "\n";
+    configOut << "PalmShadowEnabled=" << (m_touchClassifier.m_palmShadowEnabled?"1":"0") << "\n";
+    configOut << "PalmShadowRadius=" << m_touchClassifier.m_palmShadowRadius << "\n";
+    configOut << "PalmShadowHoldFrames=" << m_touchClassifier.m_palmShadowHoldFrames << "\n";
+    configOut << "PalmShadowSeedScore=" << m_touchClassifier.m_palmShadowSeedScore << "\n";
     // Phase 5: TouchTracker (same keys as old TouchTracker)
-    out << "TrackerEnabled=" << (m_tracker.m_enabled?"1":"0") << "\n";
-    out << "UseHungarian=" << (m_tracker.m_useHungarian?"1":"0") << "\n";
-    out << "MaxTrackDistance=" << m_tracker.m_maxTrackDistance << "\n";
-    out << "AlwaysMatchDistance=" << m_tracker.m_alwaysMatchDistance << "\n";
-    out << "EdgeTrackBoost=" << m_tracker.m_edgeTrackBoost << "\n";
-    out << "AccThresholdBoost=" << m_tracker.m_accThresholdBoost << "\n";
-    out << "AccBoostSizeMm=" << m_tracker.m_accBoostSizeMm << "\n";
-    out << "PredictionScale=" << m_tracker.m_predictionScale << "\n";
-    out << "GapRelinkEnabled=" << (m_tracker.m_gapRelinkEnabled?"1":"0") << "\n";
-    out << "GapRelinkWindowFrames=" << m_tracker.m_gapRelinkWindowFrames << "\n";
-    out << "TouchDownDebounceFrames=" << m_tracker.m_touchDownDebounceFrames << "\n";
-    out << "DynamicDebounceEnabled=" << (m_tracker.m_dynamicDebounceEnabled?"1":"0") << "\n";
-    out << "TouchDownDebounceMaxExtra=" << m_tracker.m_touchDownDebounceMaxExtra << "\n";
-    out << "TouchDownWeakSignalThreshold=" << m_tracker.m_touchDownWeakSignalThreshold << "\n";
-    out << "TouchDownSmallSizeThresholdMm=" << m_tracker.m_touchDownSmallSizeThresholdMm << "\n";
-    out << "TouchDownRejectEnabled=" << (m_tracker.m_touchDownRejectEnabled?"1":"0") << "\n";
-    out << "TouchDownRejectMinSignal=" << m_tracker.m_touchDownRejectMinSignal << "\n";
-    out << "TouchDownRejectMinSizeMm=" << m_tracker.m_touchDownRejectMinSizeMm << "\n";
-    out << "TouchDownEdgeRejectMinSignal=" << m_tracker.m_touchDownEdgeRejectMinSignal << "\n";
-    out << "FallbackSizeMm=" << m_tracker.m_fallbackSizeMm << "\n";
-    out << "SizeAreaScale=" << m_tracker.m_sizeAreaScale << "\n";
-    out << "SizeSignalScale=" << m_tracker.m_sizeSignalScale << "\n";
-    out << "RxGhostFilterEnabled=" << (m_tracker.m_rxGhostFilterEnabled?"1":"0") << "\n";
-    out << "RxGhostLineDelta=" << m_tracker.m_rxGhostLineDelta << "\n";
-    out << "RxGhostWeakRatio=" << m_tracker.m_rxGhostWeakRatio << "\n";
-    out << "RxGhostOnlyNew=" << (m_tracker.m_rxGhostOnlyNew?"1":"0") << "\n";
-    out << "StylusSuppressGlobalEnabled=" << (m_tracker.m_stylusSuppressGlobalEnabled?"1":"0") << "\n";
-    out << "StylusSuppressLocalEnabled=" << (m_tracker.m_stylusSuppressLocalEnabled?"1":"0") << "\n";
-    out << "StylusSuppressLocalDistance=" << m_tracker.m_stylusSuppressLocalDistance << "\n";
-    out << "StylusSuppressPenPeakThreshold=" << m_tracker.m_stylusSuppressPenPeakThreshold << "\n";
-    out << "StylusSuppressTouchSignalKeep=" << m_tracker.m_stylusSuppressTouchSignalKeep << "\n";
-    out << "StylusSuppressTouchAreaKeep=" << m_tracker.m_stylusSuppressTouchAreaKeep << "\n";
-    out << "StylusAftEnabled=" << (m_tracker.m_stylusAftEnabled?"1":"0") << "\n";
-    out << "StylusAftRecentFrames=" << m_tracker.m_stylusAftRecentFrames << "\n";
-    out << "StylusAftRadius=" << m_tracker.m_stylusAftRadius << "\n";
-    out << "StylusAftDebounceFrames=" << m_tracker.m_stylusAftDebounceFrames << "\n";
-    out << "StylusAftWeakSignalThreshold=" << m_tracker.m_stylusAftWeakSignalThreshold << "\n";
-    out << "StylusAftWeakSizeThresholdMm=" << m_tracker.m_stylusAftWeakSizeThresholdMm << "\n";
-    out << "StylusAftSuppressFrames=" << m_tracker.m_stylusAftSuppressFrames << "\n";
-    out << "StylusAftPalmSuppressFrames=" << m_tracker.m_stylusAftPalmSuppressFrames << "\n";
-    out << "StylusAftPalmAreaThreshold=" << m_tracker.m_stylusAftPalmAreaThreshold << "\n";
-    out << "StylusAftPalmSizeThresholdMm=" << m_tracker.m_stylusAftPalmSizeThresholdMm << "\n";
+    configOut << "TrackerEnabled=" << (m_tracker.m_enabled?"1":"0") << "\n";
+    configOut << "UseHungarian=" << (m_tracker.m_useHungarian?"1":"0") << "\n";
+    configOut << "MaxTrackDistance=" << m_tracker.m_maxTrackDistance << "\n";
+    configOut << "AlwaysMatchDistance=" << m_tracker.m_alwaysMatchDistance << "\n";
+    configOut << "EdgeTrackBoost=" << m_tracker.m_edgeTrackBoost << "\n";
+    configOut << "AccThresholdBoost=" << m_tracker.m_accThresholdBoost << "\n";
+    configOut << "AccBoostSizeMm=" << m_tracker.m_accBoostSizeMm << "\n";
+    configOut << "PredictionScale=" << m_tracker.m_predictionScale << "\n";
+    configOut << "GapRelinkEnabled=" << (m_tracker.m_gapRelinkEnabled?"1":"0") << "\n";
+    configOut << "GapRelinkWindowFrames=" << m_tracker.m_gapRelinkWindowFrames << "\n";
+    configOut << "TouchDownDebounceFrames=" << m_tracker.m_touchDownDebounceFrames << "\n";
+    configOut << "DynamicDebounceEnabled=" << (m_tracker.m_dynamicDebounceEnabled?"1":"0") << "\n";
+    configOut << "TouchDownDebounceMaxExtra=" << m_tracker.m_touchDownDebounceMaxExtra << "\n";
+    configOut << "TouchDownWeakSignalThreshold=" << m_tracker.m_touchDownWeakSignalThreshold << "\n";
+    configOut << "TouchDownSmallSizeThresholdMm=" << m_tracker.m_touchDownSmallSizeThresholdMm << "\n";
+    configOut << "TouchDownRejectEnabled=" << (m_tracker.m_touchDownRejectEnabled?"1":"0") << "\n";
+    configOut << "TouchDownRejectMinSignal=" << m_tracker.m_touchDownRejectMinSignal << "\n";
+    configOut << "TouchDownRejectMinSizeMm=" << m_tracker.m_touchDownRejectMinSizeMm << "\n";
+    configOut << "TouchDownEdgeRejectMinSignal=" << m_tracker.m_touchDownEdgeRejectMinSignal << "\n";
+    configOut << "FallbackSizeMm=" << m_tracker.m_fallbackSizeMm << "\n";
+    configOut << "SizeAreaScale=" << m_tracker.m_sizeAreaScale << "\n";
+    configOut << "SizeSignalScale=" << m_tracker.m_sizeSignalScale << "\n";
+    configOut << "RxGhostFilterEnabled=" << (m_tracker.m_rxGhostFilterEnabled?"1":"0") << "\n";
+    configOut << "RxGhostLineDelta=" << m_tracker.m_rxGhostLineDelta << "\n";
+    configOut << "RxGhostWeakRatio=" << m_tracker.m_rxGhostWeakRatio << "\n";
+    configOut << "RxGhostOnlyNew=" << (m_tracker.m_rxGhostOnlyNew?"1":"0") << "\n";
+    configOut << "StylusSuppressGlobalEnabled=" << (m_tracker.m_stylusSuppressGlobalEnabled?"1":"0") << "\n";
+    configOut << "StylusSuppressLocalEnabled=" << (m_tracker.m_stylusSuppressLocalEnabled?"1":"0") << "\n";
+    configOut << "StylusSuppressLocalDistance=" << m_tracker.m_stylusSuppressLocalDistance << "\n";
+    configOut << "StylusSuppressPenPeakThreshold=" << m_tracker.m_stylusSuppressPenPeakThreshold << "\n";
+    configOut << "StylusSuppressTouchSignalKeep=" << m_tracker.m_stylusSuppressTouchSignalKeep << "\n";
+    configOut << "StylusSuppressTouchAreaKeep=" << m_tracker.m_stylusSuppressTouchAreaKeep << "\n";
+    configOut << "StylusAftEnabled=" << (m_tracker.m_stylusAftEnabled?"1":"0") << "\n";
+    configOut << "StylusAftRecentFrames=" << m_tracker.m_stylusAftRecentFrames << "\n";
+    configOut << "StylusAftRadius=" << m_tracker.m_stylusAftRadius << "\n";
+    configOut << "StylusAftDebounceFrames=" << m_tracker.m_stylusAftDebounceFrames << "\n";
+    configOut << "StylusAftWeakSignalThreshold=" << m_tracker.m_stylusAftWeakSignalThreshold << "\n";
+    configOut << "StylusAftWeakSizeThresholdMm=" << m_tracker.m_stylusAftWeakSizeThresholdMm << "\n";
+    configOut << "StylusAftSuppressFrames=" << m_tracker.m_stylusAftSuppressFrames << "\n";
+    configOut << "StylusAftPalmSuppressFrames=" << m_tracker.m_stylusAftPalmSuppressFrames << "\n";
+    configOut << "StylusAftPalmAreaThreshold=" << m_tracker.m_stylusAftPalmAreaThreshold << "\n";
+    configOut << "StylusAftPalmSizeThresholdMm=" << m_tracker.m_stylusAftPalmSizeThresholdMm << "\n";
     // Phase 5: CoordinateFilter
-    out << "CoordFilterEnabled=" << (m_coordFilter.m_enabled?"1":"0") << "\n";
-    out << "OneEuroMinCutoff=" << m_coordFilter.m_minCutoff << "\n";
-    out << "OneEuroBeta=" << m_coordFilter.m_beta << "\n";
-    out << "OneEuroDCutoff=" << m_coordFilter.m_dCutoff << "\n";
+    configOut << "CoordFilterEnabled=" << (m_coordFilter.m_enabled?"1":"0") << "\n";
+    configOut << "OneEuroMinCutoff=" << m_coordFilter.m_minCutoff << "\n";
+    configOut << "OneEuroBeta=" << m_coordFilter.m_beta << "\n";
+    configOut << "OneEuroDCutoff=" << m_coordFilter.m_dCutoff << "\n";
     // Phase 6: GestureStateMachine
-    out << "GestureEnabled=" << (m_gesture.m_enabled?"1":"0") << "\n";
-    out << "PressCandidateFrames=" << m_gesture.m_pressCandidateFrames << "\n";
-    out << "PressCandidateMinSignal=" << m_gesture.m_pressCandidateMinSignal << "\n";
-    out << "PressCandidateMinSizeMm=" << m_gesture.m_pressCandidateMinSizeMm << "\n";
-    out << "DragThreshold=" << m_gesture.m_dragThreshold << "\n";
-    out << "LongPressFrames=" << m_gesture.m_longPressFrames << "\n";
-    out << "LongPressMoveTolerance=" << m_gesture.m_longPressMoveTolerance << "\n";
-    out << "ReleasePendingFrames=" << m_gesture.m_releasePendingFrames << "\n";
-    out << "BypassStateMachine=" << (m_gesture.m_bypassStateMachine?"1":"0") << "\n";
+    configOut << "GestureEnabled=" << (m_gesture.m_enabled?"1":"0") << "\n";
+    configOut << "PressCandidateFrames=" << m_gesture.m_pressCandidateFrames << "\n";
+    configOut << "PressCandidateMinSignal=" << m_gesture.m_pressCandidateMinSignal << "\n";
+    configOut << "PressCandidateMinSizeMm=" << m_gesture.m_pressCandidateMinSizeMm << "\n";
+    configOut << "DragThreshold=" << m_gesture.m_dragThreshold << "\n";
+    configOut << "LongPressFrames=" << m_gesture.m_longPressFrames << "\n";
+    configOut << "LongPressMoveTolerance=" << m_gesture.m_longPressMoveTolerance << "\n";
+    configOut << "ReleasePendingFrames=" << m_gesture.m_releasePendingFrames << "\n";
+    configOut << "BypassStateMachine=" << (m_gesture.m_bypassStateMachine?"1":"0") << "\n";
+
+    std::istringstream lines(serialized.str());
+    std::string line;
+    while (std::getline(lines, line)) {
+        const size_t separator = line.find('=');
+        if (separator != std::string::npos &&
+            IsFrozenCurrentTouchConfigKey(std::string_view(line).substr(0, separator))) {
+            continue;
+        }
+        out << line << '\n';
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -582,6 +738,8 @@ void TouchPipeline::SaveConfig(std::ostream& out) const {
 // ══════════════════════════════════════════════════════════════════════
 void TouchPipeline::LoadConfig(const std::string& key,
                                 const std::string& value) {
+    if (IsFrozenCurrentTouchConfigKey(key)) return;
+
     auto toBool = [&](const std::string& v) { return ParseConfigBool(key, v); };
     try {
     // Phase 1

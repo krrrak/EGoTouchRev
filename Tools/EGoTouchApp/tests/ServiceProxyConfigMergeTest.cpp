@@ -22,6 +22,18 @@ size_t CountOccurrences(const std::string& text, const std::string& needle) {
     return count;
 }
 
+void RequireMissingSubstring(const std::string& text, const char* substring) {
+    if (text.find(substring) != std::string::npos) {
+        throw std::runtime_error(std::string("unexpected config text: ") + substring);
+    }
+}
+
+void RequirePresentSubstring(const std::string& text, const char* substring) {
+    if (text.find(substring) == std::string::npos) {
+        throw std::runtime_error(std::string("missing config text: ") + substring);
+    }
+}
+
 void LoadTouchPipelineFromSectionText(const std::string& text,
                                   Solvers::TouchPipeline& pipeline) {
     std::istringstream in(text);
@@ -80,11 +92,11 @@ void TestBuildServiceConfigSection() {
                                                                PenButtonMode::NativeBarrel,
                                                                PenButtonRoute::Win32Only);
     Require(section.find("[Service]\n") == 0, "service config should start with [Service]");
-    Require(section.find("mode=touch_only") != std::string::npos, "service mode should serialize touch_only");
-    Require(section.find("auto_mode=1") != std::string::npos, "service auto_mode should serialize true");
-    Require(section.find("stylus_vhf_enabled=0") != std::string::npos, "service stylus setting should serialize false");
-    Require(section.find("pen_button_mode=") != std::string::npos, "service pen_button_mode should serialize");
-    Require(section.find("pen_button_route=") != std::string::npos, "service pen_button_route should serialize");
+    RequirePresentSubstring(section, "mode=touch_only");
+    RequirePresentSubstring(section, "auto_mode=1");
+    RequirePresentSubstring(section, "stylus_vhf_enabled=0");
+    RequirePresentSubstring(section, "pen_button_mode=");
+    RequirePresentSubstring(section, "pen_button_route=");
 }
 
 void TestMasterParserOnlySnapshotRestore() {
@@ -120,7 +132,7 @@ void TestMasterParserOnlySnapshotRestore() {
     Require(pipeline.m_gesture.m_enabled, "gesture should restore exact original state");
 }
 
-void TestPersistedTouchConfigUsesSnapshotWhileOverlayActive() {
+void TestPersistedTouchConfigSkipsFrozenKeysWhileOverlayActive() {
     Solvers::TouchPipeline pipeline;
     pipeline.m_baseline.m_enabled = true;
     pipeline.m_cmf.m_enabled = false;
@@ -128,7 +140,10 @@ void TestPersistedTouchConfigUsesSnapshotWhileOverlayActive() {
     pipeline.m_coordFilter.m_enabled = true;
     pipeline.m_gesture.m_enabled = false;
     pipeline.m_baseline.m_baseline = 123;
+    pipeline.m_baseline.m_settleFrames = 9;
     pipeline.m_tracker.m_maxTrackDistance = 7.5f;
+    pipeline.m_tracker.m_stylusSuppressPenPeakThreshold = 2468;
+    pipeline.m_gesture.m_bypassStateMachine = true;
 
     const auto snapshot = App::CaptureTouchPipelineModuleEnableState(pipeline);
 
@@ -142,16 +157,21 @@ void TestPersistedTouchConfigUsesSnapshotWhileOverlayActive() {
     App::ApplyTouchPipelineModuleEnableState(pipeline, parserOnlyState);
 
     const std::string persistedText = App::BuildTouchPipelineConfigSection(pipeline, &snapshot);
+    RequirePresentSubstring(persistedText, "[TouchPipeline]\n");
+    RequirePresentSubstring(persistedText, "BaselineSettleFrames=9");
+    RequireMissingSubstring(persistedText, "BaselineEnabled=");
+    RequireMissingSubstring(persistedText, "BaselineValue=");
+    RequireMissingSubstring(persistedText, "CMFEnabled=");
+    RequireMissingSubstring(persistedText, "TrackerEnabled=");
+    RequireMissingSubstring(persistedText, "MaxTrackDistance=");
+    RequireMissingSubstring(persistedText, "StylusSuppressPenPeakThreshold=");
+    RequireMissingSubstring(persistedText, "BypassStateMachine=");
+    RequireMissingSubstring(persistedText, "GridIIREnabled=");
+
     Solvers::TouchPipeline loaded;
     LoadTouchPipelineFromSectionText(persistedText, loaded);
-
-    Require(loaded.m_baseline.m_enabled, "persisted baseline flag should come from snapshot");
-    Require(!loaded.m_cmf.m_enabled, "persisted cmf flag should come from snapshot");
-    Require(!loaded.m_tracker.m_enabled, "persisted tracker flag should come from snapshot");
-    Require(loaded.m_coordFilter.m_enabled, "persisted coord filter flag should come from snapshot");
-    Require(!loaded.m_gesture.m_enabled, "persisted gesture flag should come from snapshot");
-    Require(loaded.m_baseline.m_baseline == 123, "non-overlay touch config should still persist");
-    Require(loaded.m_tracker.m_maxTrackDistance == 7.5f, "non-overlay tracker config should still persist");
+    Require(loaded.m_baseline.m_settleFrames == 9,
+            "non-frozen baseline settle frames should still persist");
 }
 
 void TestPersistedGridIIRStateIsNotInjectedWhenPipelineOmitsGridIIR() {
@@ -160,8 +180,7 @@ void TestPersistedGridIIRStateIsNotInjectedWhenPipelineOmitsGridIIR() {
     snapshot.gridIIREnabled = false;
 
     const std::string persistedText = App::BuildTouchPipelineConfigSection(pipeline, &snapshot);
-    Require(persistedText.find("GridIIREnabled=") == std::string::npos,
-            "disabled GridIIR should not be injected into current TouchPipeline config while GridIIR is not an active pipeline module");
+    RequireMissingSubstring(persistedText, "GridIIREnabled=");
 }
 
 void TestMergeWithEmptyServiceSectionRemovesExistingService() {
@@ -182,8 +201,7 @@ void TestMergeWithEmptyServiceSectionRemovesExistingService() {
 
     Require(merged.find("[Service]") == std::string::npos,
             "empty service section should remove existing client-side [Service]");
-    Require(merged.find("[Unrelated]\nalpha=1") != std::string::npos,
-            "empty service merge should preserve unrelated sections");
+    RequirePresentSubstring(merged, "[Unrelated]\nalpha=1");
     Require(CountOccurrences(merged, "[TouchPipeline]") == 1,
             "empty service merge should still write touch pipeline section");
     Require(CountOccurrences(merged, "[StylusPipeline]") == 1,
@@ -213,13 +231,13 @@ void TestMergeDeduplicatesOwnedSections() {
             "legacy and canonical touch sections should collapse to one canonical section");
     Require(CountOccurrences(merged, "[StylusPipeline]") == 1,
             "duplicate [StylusPipeline] sections should collapse to one canonical section");
-    Require(merged.find("[Baseline Subtraction]") == std::string::npos,
-            "legacy touch section should not remain after dedupe");
+    RequireMissingSubstring(merged, "[Baseline Subtraction]");
 }
 
 void TestMergePreservesUnrelatedSectionsAndReplacesTouchSections() {
     Solvers::TouchPipeline touchPipeline;
     touchPipeline.m_baseline.m_enabled = false;
+    touchPipeline.m_baseline.m_settleFrames = 6;
     touchPipeline.m_tracker.m_enabled = true;
     Solvers::StylusPipeline stylusPipeline;
     stylusPipeline.m_postPressure.m_btFreqShiftDebounceFrames = 2;
@@ -256,32 +274,25 @@ void TestMergePreservesUnrelatedSectionsAndReplacesTouchSections() {
         App::BuildTouchPipelineConfigSection(touchPipeline),
         App::BuildStylusPipelineConfigSection(stylusPipeline));
 
-    Require(merged.find("; keep header comment") != std::string::npos,
-            "merge should preserve top-level comments");
-    Require(merged.find("[Unrelated]\nalpha=1") != std::string::npos,
-            "merge should preserve unrelated sections before owned sections");
-    Require(merged.find("[Tail]\nomega=2") != std::string::npos,
-            "merge should preserve unrelated sections after owned sections");
-    Require(merged.find("[Baseline Subtraction]") == std::string::npos,
-            "merge should remove legacy touch sections");
-    Require(merged.find("[Touch Tracker (IDT)]") == std::string::npos,
-            "merge should remove legacy tracker sections");
+    RequirePresentSubstring(merged, "; keep header comment");
+    RequirePresentSubstring(merged, "[Unrelated]\nalpha=1");
+    RequirePresentSubstring(merged, "[Tail]\nomega=2");
+    RequireMissingSubstring(merged, "[Baseline Subtraction]");
+    RequireMissingSubstring(merged, "[Touch Tracker (IDT)]");
     Require(CountOccurrences(merged, "[Service]") == 1,
             "merge should keep exactly one service section");
     Require(CountOccurrences(merged, "[TouchPipeline]") == 1,
             "merge should keep exactly one touch pipeline section");
     Require(CountOccurrences(merged, "[StylusPipeline]") == 1,
             "merge should keep exactly one stylus pipeline section");
-    Require(merged.find("mode=full") != std::string::npos,
-            "merge should replace service mode with current value");
-    Require(merged.find("auto_mode=1") != std::string::npos,
-            "merge should replace service auto_mode with current value");
-    Require(merged.find("stylus_vhf_enabled=0") != std::string::npos,
-            "merge should write service stylus setting");
-    Require(merged.find("BaselineEnabled=0") != std::string::npos,
-            "merge should write canonical touch pipeline content");
-    Require(merged.find("sp.btFreqShiftDebounceFrames=2") != std::string::npos,
-            "merge should write canonical stylus pipeline content");
+    RequirePresentSubstring(merged, "mode=full");
+    RequirePresentSubstring(merged, "auto_mode=1");
+    RequirePresentSubstring(merged, "stylus_vhf_enabled=0");
+    RequireMissingSubstring(merged, "BaselineEnabled=");
+    RequireMissingSubstring(merged, "BaselineValue=");
+    RequireMissingSubstring(merged, "MaxTrackDistance=");
+    RequirePresentSubstring(merged, "BaselineSettleFrames=6");
+    RequirePresentSubstring(merged, "sp.btFreqShiftDebounceFrames=2");
 }
 
 } // namespace
@@ -291,7 +302,7 @@ int main() {
         TestTrimParseAndLegacyMapping();
         TestBuildServiceConfigSection();
         TestMasterParserOnlySnapshotRestore();
-        TestPersistedTouchConfigUsesSnapshotWhileOverlayActive();
+        TestPersistedTouchConfigSkipsFrozenKeysWhileOverlayActive();
         TestPersistedGridIIRStateIsNotInjectedWhenPipelineOmitsGridIIR();
         TestMergeWithEmptyServiceSectionRemovesExistingService();
         TestMergeDeduplicatesOwnedSections();

@@ -1,7 +1,6 @@
 #include "ServiceProxyInternal.h"
 #include "DvrFormat.h"
 
-#include <cstring>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -27,6 +26,14 @@ const App::DvrRuntimeConfigValue* FindValue(const App::DvrRuntimeConfigSnapshot&
         if (value.fieldId == field.fieldId) return &value;
     }
     return nullptr;
+}
+
+void RequireMissingField(const App::DvrRuntimeConfigSnapshot& snapshot,
+                         const std::string& section,
+                         const std::string& key) {
+    if (FindField(snapshot, section, key) != nullptr) {
+        throw std::runtime_error("unexpected runtime config field: " + section + "." + key);
+    }
 }
 
 void RequireStringValue(const App::DvrRuntimeConfigSnapshot& snapshot,
@@ -90,18 +97,20 @@ void TestPipelineFieldsAndTypes() {
     Solvers::StylusPipeline stylusPipeline;
     touchPipeline.m_baseline.m_enabled = false;
     touchPipeline.m_baseline.m_baseline = 123;
+    touchPipeline.m_baseline.m_settleFrames = 7;
     touchPipeline.m_tracker.m_maxTrackDistance = 7.5f;
+    touchPipeline.m_tracker.m_stylusSuppressPenPeakThreshold = 2468;
+    touchPipeline.m_gesture.m_bypassStateMachine = true;
     stylusPipeline.m_postPressure.m_btFreqShiftDebounceFrames = 2;
 
     const auto snapshot = App::BuildRuntimeConfigSnapshotFromState({}, {}, touchPipeline, stylusPipeline);
 
-    RequireRawValue(snapshot, "TouchPipeline", "BaselineEnabled", Dvr::Format::Dvr2ConfigValueType::Bool, 0);
-    RequireRawValue(snapshot, "TouchPipeline", "BaselineValue", Dvr::Format::Dvr2ConfigValueType::Int32, 123);
-
-    uint32_t maxTrackDistanceBits = 0;
-    const float maxTrackDistance = 7.5f;
-    std::memcpy(&maxTrackDistanceBits, &maxTrackDistance, sizeof(maxTrackDistanceBits));
-    RequireRawValue(snapshot, "TouchPipeline", "MaxTrackDistance", Dvr::Format::Dvr2ConfigValueType::Float32, maxTrackDistanceBits);
+    RequireMissingField(snapshot, "TouchPipeline", "BaselineEnabled");
+    RequireMissingField(snapshot, "TouchPipeline", "BaselineValue");
+    RequireMissingField(snapshot, "TouchPipeline", "MaxTrackDistance");
+    RequireMissingField(snapshot, "TouchPipeline", "StylusSuppressPenPeakThreshold");
+    RequireMissingField(snapshot, "TouchPipeline", "BypassStateMachine");
+    RequireRawValue(snapshot, "TouchPipeline", "BaselineSettleFrames", Dvr::Format::Dvr2ConfigValueType::Int32, 7);
     RequireRawValue(snapshot, "StylusPipeline", "sp.btFreqShiftDebounceFrames", Dvr::Format::Dvr2ConfigValueType::Int32, 2);
 }
 

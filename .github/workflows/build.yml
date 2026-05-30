@@ -67,8 +67,37 @@ jobs:
           wix build -ext WixToolset.UI.wixext -arch arm64 -d BuildVersion=$env:APP_VERSION scripts\EGoTouchSetup.wxs -loc scripts\zh-CN.wxl -out build\EGoTouchSetup_arm64.msi
           wix build -ext WixToolset.UI.wixext -arch arm64 -d BuildVersion=$env:APP_VERSION scripts\EGoTouchTestSetup.wxs -loc scripts\zh-CN.wxl -out build\EGoTouchTestSetup_arm64.msi
 
-      - name: Upload Installer Artifacts
+      - name: Package Installer Artifacts
+        run: |
+          $artifactDir = "build\artifacts\EGoTouch-Installers-ARM64-Release"
+          New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+
+          $installers = @(
+            "build\EGoTouchSetup_arm64.msi",
+            "build\EGoTouchTestSetup_arm64.msi"
+          )
+
+          foreach ($installer in $installers) {
+            if (-not (Test-Path $installer)) {
+              throw "Missing WiX installer artifact: $installer"
+            }
+            Copy-Item $installer $artifactDir
+          }
+
+          $checksumLines = foreach ($installer in Get-ChildItem -Path $artifactDir -Filter "*.msi") {
+            $hash = Get-FileHash -Path $installer.FullName -Algorithm SHA256
+            "$($hash.Hash)  $($installer.Name)"
+          }
+          $checksumLines | Set-Content -Path "$artifactDir\SHA256SUMS.txt" -Encoding UTF8
+
+          Compress-Archive -Path "$artifactDir\*" -DestinationPath "build\EGoTouch-Installers-ARM64-Release.zip" -Force
+
+      - name: Upload Release Installer Package
         uses: actions/upload-artifact@v4
         with:
-          name: EGoTouch-Installers-ARM64
-          path: build\*.msi
+          name: EGoTouch-Installers-ARM64-Release
+          path: |
+            build\EGoTouch-Installers-ARM64-Release.zip
+            build\artifacts\EGoTouch-Installers-ARM64-Release
+          if-no-files-found: error
+          retention-days: 30
