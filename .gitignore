@@ -12,3 +12,4 @@ temp/
 .antigravitycli/*
 out/
 .clangd
+docs/artifacts/
