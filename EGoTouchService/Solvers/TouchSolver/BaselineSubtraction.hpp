@@ -1,10 +1,9 @@
 #pragma once
-// ── TouchPipeline Module: BaselineSubtraction ──
-// Header-only. Dynamic per-cell baseline tracker with gated EMA updates.
 
 #include "SolverTypes.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -33,6 +32,21 @@ public:
     int  m_acquisitionAlphaShift = 3;
     int  m_acquisitionMaxStep = 128;
     bool m_noiseTrackingEnabled = true;
+    int  m_settleFrames = 2;
+
+    inline void RequestReacquireFrames(int frames) {
+        const int requested = std::clamp(frames, 0, 255);
+        if (requested <= 0) {
+            return;
+        }
+
+        int current = m_reacquireFrames.load(std::memory_order_relaxed);
+        while (current < requested &&
+               !m_reacquireFrames.compare_exchange_weak(
+                   current, requested, std::memory_order_relaxed)) {
+        }
+        m_snapshotBaseline.store(true, std::memory_order_relaxed);
+    }
 
     inline bool Process(HeatmapFrame& frame) {
         int16_t* outPtr = &frame.heatmapMatrix[0][0];
@@ -45,14 +59,27 @@ public:
             Initialize();
         }
 
+        if (m_snapshotBaseline.exchange(false, std::memory_order_relaxed)) {
+            SnapshotBaseline(outPtr);
+        }
+
+        if (m_settleCountdown > 0) {
+            --m_settleCountdown;
+            ZeroOutput(outPtr);
+            return true;
+        }
+
+        const bool reacquiring = m_reacquireFrames.load(std::memory_order_relaxed) > 0;
         int positiveFreezeCandidates = 0;
-        for (int i = 0; i < kCellCount; ++i) {
-            const int baseline = m_baselineQ8[static_cast<size_t>(i)] >> kBaselineFractionBits;
-            if (static_cast<int>(RawCell(outPtr[i])) - baseline >= m_touchFreezeThreshold) {
-                ++positiveFreezeCandidates;
+        if (!reacquiring) {
+            for (int i = 0; i < kCellCount; ++i) {
+                const int baseline = m_baselineQ8[static_cast<size_t>(i)] >> kBaselineFractionBits;
+                if (static_cast<int>(RawCell(outPtr[i])) - baseline >= m_touchFreezeThreshold) {
+                    ++positiveFreezeCandidates;
+                }
             }
         }
-        const bool broadPositiveShift = positiveFreezeCandidates > (kCellCount / 8);
+        const bool broadPositiveShift = !reacquiring && positiveFreezeCandidates > (kCellCount / 8);
 
         for (int i = 0; i < kCellCount; ++i) {
             const int raw = static_cast<int>(RawCell(outPtr[i]));
@@ -60,7 +87,25 @@ public:
             const int delta = raw - baseline;
             const int absDelta = std::abs(delta);
 
-            if (!m_acquired[static_cast<size_t>(i)]) {
+            if (reacquiring) {
+                m_releaseHold[static_cast<size_t>(i)] = 0;
+                if (absDelta <= m_noiseDeadband) {
+                    m_acquired[static_cast<size_t>(i)] = 1;
+                } else {
+                    UpdateBaseline(i, delta, m_acquisitionAlphaShift, m_acquisitionMaxStep);
+                }
+            } else if (m_snapshotHighCells[static_cast<size_t>(i)]) {
+                if (delta < -m_negativeDeadband) {
+                    SetBaselineToRaw(i, raw);
+                    m_snapshotHighCells[static_cast<size_t>(i)] = 0;
+                } else if (delta > 0) {
+                    UpdateBaseline(i, delta, m_acquisitionAlphaShift, m_acquisitionMaxStep);
+                } else if (absDelta <= m_noiseDeadband && delta != 0) {
+                    UpdateBaseline(i, delta, m_noiseAlphaShift, 1);
+                }
+                outPtr[i] = 0;
+                continue;
+            } else if (!m_acquired[static_cast<size_t>(i)]) {
                 if (absDelta <= m_noiseDeadband) {
                     m_acquired[static_cast<size_t>(i)] = 1;
                 } else {
@@ -91,15 +136,29 @@ public:
 
             const int adjustedBaseline = m_baselineQ8[static_cast<size_t>(i)] >> kBaselineFractionBits;
             const int residual = raw - adjustedBaseline;
+            if (reacquiring && std::abs(residual) <= m_noiseDeadband) {
+                m_acquired[static_cast<size_t>(i)] = 1;
+            }
             outPtr[i] = (std::abs(residual) <= m_noiseDeadband) ? 0 : SaturateInt16(residual);
+        }
+        if (reacquiring) {
+            int current = m_reacquireFrames.load(std::memory_order_relaxed);
+            while (current > 0 &&
+                   !m_reacquireFrames.compare_exchange_weak(
+                       current, current - 1, std::memory_order_relaxed)) {
+            }
         }
         return true;
     }
 
     inline void Reset() {
         m_initialized = false;
+        m_reacquireFrames.store(0, std::memory_order_relaxed);
+        m_snapshotBaseline.store(false, std::memory_order_relaxed);
+        m_settleCountdown = 0;
         m_releaseHold.fill(0);
         m_acquired.fill(0);
+        m_snapshotHighCells.fill(0);
         m_baselineQ8.fill(0);
     }
 
@@ -107,16 +166,47 @@ private:
     static constexpr int kBaselineFractionBits = 8;
 
     bool m_initialized = false;
+    std::atomic<int> m_reacquireFrames{0};
+    std::atomic<bool> m_snapshotBaseline{false};
+    int m_settleCountdown = 0;
     std::array<int32_t, kCellCount> m_baselineQ8{};
     std::array<uint8_t, kCellCount> m_releaseHold{};
     std::array<uint8_t, kCellCount> m_acquired{};
+    std::array<uint8_t, kCellCount> m_snapshotHighCells{};
 
     inline void Initialize() {
         const int initialBaseline = std::clamp(m_baseline, 0, 0xFFFF);
         m_baselineQ8.fill(static_cast<int32_t>(initialBaseline) << kBaselineFractionBits);
         m_releaseHold.fill(0);
         m_acquired.fill(0);
+        m_snapshotHighCells.fill(0);
         m_initialized = true;
+    }
+
+    inline void SnapshotBaseline(int16_t* cells) {
+        for (int i = 0; i < kCellCount; ++i) {
+            const int raw = static_cast<int>(RawCell(cells[i]));
+            const int previousBaseline = m_baselineQ8[static_cast<size_t>(i)] >> kBaselineFractionBits;
+            m_snapshotHighCells[static_cast<size_t>(i)] =
+                (raw - previousBaseline >= m_touchFreezeThreshold) ? 1 : 0;
+            SetBaselineToRaw(i, raw);
+            m_acquired[static_cast<size_t>(i)] = 1;
+            m_releaseHold[static_cast<size_t>(i)] = 0;
+        }
+        m_settleCountdown = std::clamp(m_settleFrames, 0, 255);
+        m_reacquireFrames.store(0, std::memory_order_relaxed);
+    }
+
+    inline void SetBaselineToRaw(int index, int raw) {
+        const int clampedRaw = std::clamp(raw, 0, 0xFFFF);
+        m_baselineQ8[static_cast<size_t>(index)] =
+            static_cast<int32_t>(clampedRaw) << kBaselineFractionBits;
+    }
+
+    static inline void ZeroOutput(int16_t* cells) {
+        for (int i = 0; i < kCellCount; ++i) {
+            cells[i] = 0;
+        }
     }
 
     inline void UpdateBaseline(int index, int delta, int alphaShift, int maxStep) {

@@ -47,7 +47,6 @@ void TestMasterParserOnlySnapshotRestore() {
     Solvers::TouchPipeline pipeline;
     pipeline.m_baseline.m_enabled = false;
     pipeline.m_cmf.m_enabled = true;
-    pipeline.m_gridIIR.m_enabled = false;
     pipeline.m_tracker.m_enabled = true;
     pipeline.m_coordFilter.m_enabled = false;
     pipeline.m_gesture.m_enabled = true;
@@ -65,7 +64,6 @@ void TestMasterParserOnlySnapshotRestore() {
 
     Require(!pipeline.m_baseline.m_enabled, "baseline should be disabled in parser-only mode");
     Require(!pipeline.m_cmf.m_enabled, "cmf should be disabled in parser-only mode");
-    Require(!pipeline.m_gridIIR.m_enabled, "grid iir should be disabled in parser-only mode");
     Require(!pipeline.m_tracker.m_enabled, "tracker should be disabled in parser-only mode");
     Require(!pipeline.m_coordFilter.m_enabled, "coord filter should be disabled in parser-only mode");
     Require(!pipeline.m_gesture.m_enabled, "gesture should be disabled in parser-only mode");
@@ -73,7 +71,6 @@ void TestMasterParserOnlySnapshotRestore() {
     App::ApplyTouchPipelineModuleEnableState(pipeline, snapshot);
     Require(!pipeline.m_baseline.m_enabled, "baseline should restore exact original state");
     Require(pipeline.m_cmf.m_enabled, "cmf should restore exact original state");
-    Require(!pipeline.m_gridIIR.m_enabled, "grid iir should restore exact original state");
     Require(pipeline.m_tracker.m_enabled, "tracker should restore exact original state");
     Require(!pipeline.m_coordFilter.m_enabled, "coord filter should restore exact original state");
     Require(pipeline.m_gesture.m_enabled, "gesture should restore exact original state");
@@ -83,7 +80,6 @@ void TestPersistedTouchConfigUsesSnapshotWhileOverlayActive() {
     Solvers::TouchPipeline pipeline;
     pipeline.m_baseline.m_enabled = true;
     pipeline.m_cmf.m_enabled = false;
-    pipeline.m_gridIIR.m_enabled = true;
     pipeline.m_tracker.m_enabled = false;
     pipeline.m_coordFilter.m_enabled = true;
     pipeline.m_gesture.m_enabled = false;
@@ -107,7 +103,6 @@ void TestPersistedTouchConfigUsesSnapshotWhileOverlayActive() {
 
     Require(loaded.m_baseline.m_enabled, "persisted baseline flag should come from snapshot");
     Require(!loaded.m_cmf.m_enabled, "persisted cmf flag should come from snapshot");
-    Require(loaded.m_gridIIR.m_enabled, "persisted grid iir flag should come from snapshot");
     Require(!loaded.m_tracker.m_enabled, "persisted tracker flag should come from snapshot");
     Require(loaded.m_coordFilter.m_enabled, "persisted coord filter flag should come from snapshot");
     Require(!loaded.m_gesture.m_enabled, "persisted gesture flag should come from snapshot");

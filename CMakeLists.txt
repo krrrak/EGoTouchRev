@@ -199,8 +199,23 @@ if (WIN32)
     target_link_libraries(Host PUBLIC advapi32)
 endif()
 
-# --- EGoTouchApp (Debug Diagnostics Workbench) ---
+# --- DVR Module ---
 set(APP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Tools/EGoTouchApp")
+set(DVR_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Common/DVRCore")
+file(GLOB DVR_SOURCES "${DVR_ROOT}/source/*.cpp")
+file(GLOB DVR_HEADERS "${DVR_ROOT}/include/*.h")
+
+add_library(DVRCore STATIC
+    ${DVR_SOURCES}
+    ${DVR_HEADERS}
+)
+
+target_include_directories(DVRCore PUBLIC
+    "${DVR_ROOT}/include"
+)
+target_link_libraries(DVRCore PUBLIC Solvers Common)
+
+# --- EGoTouchApp (Debug Diagnostics Workbench) ---
 file(GLOB APP_SOURCES "${APP_ROOT}/source/*.cpp")
 file(GLOB APP_HEADERS "${APP_ROOT}/include/*.h")
 
@@ -224,7 +239,7 @@ target_include_directories(EGoTouchApp PRIVATE
 
 # Link D3D11 for the ImGui DX11 backend
 target_compile_definitions(EGoTouchApp PRIVATE EGOTOUCH_DIAGNOSTICS)
-target_link_libraries(EGoTouchApp PRIVATE Device Solvers Host Common ImGuiCommon d3d11 d3dcompiler dwmapi setupapi)
+target_link_libraries(EGoTouchApp PRIVATE DVRCore Device Solvers Host Common ImGuiCommon d3d11 d3dcompiler dwmapi setupapi)
 if(MSVC)
     target_link_options(EGoTouchApp PRIVATE "/MANIFESTUAC:level='requireAdministrator'")
 endif()
@@ -240,7 +255,7 @@ add_executable(EGoTouchService
 target_include_directories(EGoTouchService PRIVATE
     "${SERVICE_ROOT}/include"
 )
-target_link_libraries(EGoTouchService PRIVATE Device Host Common advapi32 setupapi hid)
+target_link_libraries(EGoTouchService PRIVATE DVRCore Device Host Common advapi32 setupapi hid)
 
 # EGoTouchService uses wmain (console subsystem) for service/console dual mode
 if(MSVC)
@@ -274,7 +289,7 @@ if (EGO_BUILD_TESTS)
         Tools/tests/RawdataBenchmarkTest.cpp
     )
     target_include_directories(SolversRawdataBenchmarkTest PRIVATE "${APP_ROOT}/include")
-    target_link_libraries(SolversRawdataBenchmarkTest PRIVATE Solvers Common)
+    target_link_libraries(SolversRawdataBenchmarkTest PRIVATE DVRCore Solvers Common)
 
     add_executable(CommonLoggerTest
         Tools/tests/LoggerTest.cpp
@@ -287,10 +302,10 @@ if (EGO_BUILD_TESTS)
     )
     target_link_libraries(TouchTrackerSilentGapTest PRIVATE Solvers Common)
 
-    add_executable(TouchGridIIRProcessorTest
-        Tools/tests/TouchGridIIRProcessorTest.cpp
+    add_executable(TouchBaselineReacquireTest
+        Tools/tests/TouchBaselineReacquireTest.cpp
     )
-    target_link_libraries(TouchGridIIRProcessorTest PRIVATE Solvers Common)
+    target_link_libraries(TouchBaselineReacquireTest PRIVATE Solvers Common)
 
     add_executable(TouchTrackerStylusSuppressTest
         Tools/tests/TouchTrackerStylusSuppressTest.cpp
@@ -324,7 +339,18 @@ if (EGO_BUILD_TESTS)
     target_include_directories(ServiceProxyConfigMergeTest PRIVATE
         "${APP_ROOT}/include"
     )
-    target_link_libraries(ServiceProxyConfigMergeTest PRIVATE Solvers Common)
+    target_link_libraries(ServiceProxyConfigMergeTest PRIVATE DVRCore Solvers Common)
+
+    add_executable(DvrRuntimeConfigRoundTripTest
+        Tools/tests/DvrRuntimeConfigRoundTripTest.cpp
+        Tools/EGoTouchApp/source/ServiceProxy.Dvr.cpp
+        Tools/EGoTouchApp/source/ServiceProxy.DynamicDebug.cpp
+        Tools/EGoTouchApp/source/ServiceProxy.cpp
+    )
+    target_include_directories(DvrRuntimeConfigRoundTripTest PRIVATE
+        "${APP_ROOT}/include"
+    )
+    target_link_libraries(DvrRuntimeConfigRoundTripTest PRIVATE DVRCore Solvers Common)
 
     add_executable(StylusLinearFilterProcessTest
         Tools/tests/StylusLinearFilterProcessTest.cpp
@@ -374,13 +400,14 @@ if (EGO_BUILD_TESTS)
     add_test(NAME CommonLoggerTest COMMAND CommonLoggerTest)
     add_test(NAME HostSystemStateMonitorTest COMMAND HostSystemStateMonitorTest)
     add_test(NAME TouchTrackerSilentGapTest COMMAND TouchTrackerSilentGapTest)
-    add_test(NAME TouchGridIIRProcessorTest COMMAND TouchGridIIRProcessorTest)
+    add_test(NAME TouchBaselineReacquireTest COMMAND TouchBaselineReacquireTest)
     add_test(NAME TouchTrackerStylusSuppressTest COMMAND TouchTrackerStylusSuppressTest)
     add_test(NAME TouchPipelineConfigRoundTripTest COMMAND TouchPipelineConfigRoundTripTest)
     add_test(NAME TouchEdgeCompensationTest COMMAND TouchEdgeCompensationTest)
     add_test(NAME TouchPalmRejectionMvpTest COMMAND TouchPalmRejectionMvpTest)
     add_test(NAME TouchCloseSplitTest COMMAND TouchCloseSplitTest)
     add_test(NAME ServiceProxyConfigMergeTest COMMAND ServiceProxyConfigMergeTest)
+    add_test(NAME DvrRuntimeConfigRoundTripTest COMMAND DvrRuntimeConfigRoundTripTest)
     add_test(NAME StylusLinearFilterProcessTest COMMAND StylusLinearFilterProcessTest)
     add_test(NAME StylusHpp3PostPressureProcessTest COMMAND StylusHpp3PostPressureProcessTest)
     add_test(NAME VhfReporterStylusPacketTest COMMAND VhfReporterStylusPacketTest)

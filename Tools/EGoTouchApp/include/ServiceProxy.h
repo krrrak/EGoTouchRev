@@ -145,6 +145,7 @@ private:
     DvrDynamicDebugSchema CaptureDynamicDebugSchema() const;
     DvrDynamicDebugFrame CaptureDynamicDebugFrame() const;
     Dvr::DvrDynamicDebugFrameSlot CaptureDvrDynamicDebugFrameSlot(uint64_t dvrSeq) const;
+    DvrRuntimeConfigSnapshot CaptureRuntimeConfigSnapshot() const;
 
     static constexpr const wchar_t* kSharedMemName =
         L"Global\\EGoTouchSharedFrame";

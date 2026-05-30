@@ -334,6 +334,11 @@ void DeviceRuntime::IngestPolicyEvent(const RuntimePolicyEvent &ev) {
     }
 
     const workerState state = m_state.load(std::memory_order_acquire);
+    if (IsRunning() &&
+        (cancelledDisplayOff || clearedScreenOff || resumedAfterSystemSuspend ||
+         state == workerState::suspend)) {
+      m_touchPipeline.RequestBaselineReacquire();
+    }
     if (state == workerState::suspend ||
         (resumedAfterSystemSuspend && IsRunning())) {
       m_chip.CancelPendingFrameRead();
@@ -515,6 +520,7 @@ void DeviceRuntime::OnReady() {
       SetState(workerState::recover);
       return;
     }
+    m_touchPipeline.RequestBaselineReacquire();
     SetState(workerState::streaming);
   } else {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -833,6 +839,7 @@ void DeviceRuntime::OnRecover() {
 
   LOG_INFO("Runtime", __func__, "Recover",
            "Recovery succeeded after {} attempts.", m_recoverCount);
+  m_touchPipeline.RequestBaselineReacquire();
   SetState(workerState::streaming);
   m_recoverCount = 0;
 }

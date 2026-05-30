@@ -114,10 +114,10 @@ inline void TZ_GetEdgeTouchedFlag(ZoneEdgeInfo& ei) {
 
 inline uint8_t TZ_GetCentroidEdgeFlags(const ZoneEdgeInfo& ei, float col, float row) {
     uint8_t flags = 0;
-    if (ei.minCol <= kGridColMin && col < static_cast<float>(kGridColMin + 2)) flags |= 0x01;
-    if (ei.maxCol >= kGridColMax && col > static_cast<float>(kGridColMax - 1)) flags |= 0x02;
-    if (ei.minRow <= kGridRowMin && row < static_cast<float>(kGridRowMin + 2)) flags |= 0x04;
-    if (ei.maxRow >= kGridRowMax && row > static_cast<float>(kGridRowMax - 1)) flags |= 0x08;
+    if (ei.minCol <= kGridColMin && col < static_cast<float>(kGridColMin + 1)) flags |= 0x01;
+    if (ei.maxCol >= kGridColMax && col > static_cast<float>(kGridColMax)) flags |= 0x02;
+    if (ei.minRow <= kGridRowMin && row < static_cast<float>(kGridRowMin + 1)) flags |= 0x04;
+    if (ei.maxRow >= kGridRowMax && row > static_cast<float>(kGridRowMax)) flags |= 0x08;
     return flags;
 }
 
@@ -214,10 +214,10 @@ static const uint16_t g_ctd256Ln[256] = {
 
 // ── Default EC profiles (per edge direction) ──
 static const ECProfile g_defaultECProfiles[4] = {
-    { 1, { {7, 16, 224}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0} } },
-    { 1, { {7, 16, 224}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0} } },
-    { 1, { {7, 16, 96}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0} } },
-    { 1, { {7, 16, 96}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0} } },
+    { 3, { {64, 2, 32}, {128, 32, 96}, {255, 96, 192}, {0, 0, 0} } },
+    { 3, { {64, 2, 32}, {128, 32, 96}, {255, 96, 192}, {0, 0, 0} } },
+    { 3, { {64, 2, 32}, {128, 32, 96}, {255, 96, 192}, {0, 0, 0} } },
+    { 3, { {64, 2, 32}, {128, 32, 96}, {255, 96, 192}, {0, 0, 0} } },
 };
 
 static inline int ECGetOffset(uint8_t subIdx, uint8_t touchSize,
@@ -237,13 +237,14 @@ static inline int ECGetOffset(uint8_t subIdx, uint8_t touchSize,
     return std::min(r, 0xFF);
 }
 
-static inline int ECGetFinalOffset(int rawDist, int compOff, int blendWidth) {
+static inline int ECGetFinalOffset(int rawDist, int compOff,
+                                   int blendStart, int blendWidth) {
     if (rawDist < 0) return 0;
-    const int blendStart = 0x100;
+    const int start = std::max(1, blendStart);
     const int width = std::max(1, blendWidth);
-    if (rawDist <= blendStart) return compOff;
-    if (rawDist >= blendStart + width) return rawDist;
-    const int t = ((rawDist - blendStart) * 0x100) / width;
+    if (rawDist <= start) return compOff;
+    if (rawDist >= start + width) return rawDist;
+    const int t = ((rawDist - start) * 0x100) / width;
     int blended = rawDist * t + compOff * (0x100 - t);
     if (blended < 0) blended += 0xff;
     return blended >> 8;
@@ -271,7 +272,9 @@ class EdgeCompensator {
 public:
     bool m_enabled = true;
     EdgeBounds m_bounds;
-    float m_ecBlendRange = 0.25f;
+    float m_ecStrength = 1.0f;
+    float m_ecFullCompRange = 0.5f;  // 全量补偿区宽度（传感器间距数）
+    float m_ecBlendRange = 0.505f;   // 线性混合过渡区宽度
     ECProfile m_profiles[4] = {
         g_defaultECProfiles[0],
         g_defaultECProfiles[1],
@@ -290,19 +293,17 @@ public:
             tc.edgeFlags |= ei.edgeFlags;
             tc.centroidEdgeFlags |= TZ_GetCentroidEdgeFlags(ei, tc.x, tc.y);
 
-            // Centroid-distance fallback: when the zone does not touch grid
-            // boundaries but the centroid is within the physical margin,
-            // manually set the direction bits so ProcessDim can activate.
-            constexpr float kEdgeDistFallbackMm = 5.0f;
+            // Centroid-distance fallback: only arm compensation inside the outermost sensor cell.
+            constexpr float kEdgeDistFallbackCell = 1.0f;
             const float dLeft   = tc.x - bounds.colMin;
             const float dRight  = bounds.colMax - tc.x;
             const float dTop    = tc.y - bounds.rowMin;
             const float dBottom = bounds.rowMax - tc.y;
             if (tc.centroidEdgeFlags == 0) {
-                if (dLeft   < kEdgeDistFallbackMm) tc.centroidEdgeFlags |= 0x01;
-                if (dRight  < kEdgeDistFallbackMm) tc.centroidEdgeFlags |= 0x02;
-                if (dTop    < kEdgeDistFallbackMm) tc.centroidEdgeFlags |= 0x04;
-                if (dBottom < kEdgeDistFallbackMm) tc.centroidEdgeFlags |= 0x08;
+                if (dLeft   < kEdgeDistFallbackCell) tc.centroidEdgeFlags |= 0x01;
+                if (dRight  < kEdgeDistFallbackCell) tc.centroidEdgeFlags |= 0x02;
+                if (dTop    < kEdgeDistFallbackCell) tc.centroidEdgeFlags |= 0x04;
+                if (dBottom < kEdgeDistFallbackCell) tc.centroidEdgeFlags |= 0x08;
             }
 
             const bool edge = (tc.edgeFlags & (0x20 | 0x80000)) != 0 ||
@@ -318,12 +319,14 @@ public:
                                              ei, tc.centroidEdgeFlags,
                                              0x01, 0x02,
                                              ECEdge::Dim1Near, ECEdge::Dim1Far,
-                                             tc.sizeMm);
+                                             tc.sizeMm,
+                                             tc.y, bounds.rowMin, bounds.rowMax);
             ECDimResult yResult = ProcessDim(tc.y, bounds.rowMin, bounds.rowMax,
                                              ei, tc.centroidEdgeFlags,
                                              0x04, 0x08,
                                              ECEdge::Dim2Near, ECEdge::Dim2Far,
-                                             tc.sizeMm);
+                                             tc.sizeMm,
+                                             tc.x, bounds.colMin, bounds.colMax);
 
             if (xResult.active) {
                 tc.ecWidthX = xResult.edgeWidth;
@@ -348,7 +351,10 @@ private:
                                   uint8_t farMask,
                                   ECEdge nearProfile,
                                   ECEdge farProfile,
-                                  float touchSizeMm) const {
+                                  float touchSizeMm,
+                                  float crossAxisCoord,
+                                  float crossAxisMin,
+                                  float crossAxisMax) const {
         ECDimResult result;
         result.nearEdge = (centroidFlags & nearMask) != 0;
         result.farEdge = (centroidFlags & farMask) != 0;
@@ -364,13 +370,22 @@ private:
         const bool isDimX = nearMask == 0x01;
         result.edgeWidth = isDimX ? ei.colEdgeWidth : ei.rowEdgeWidth;
 
-        const uint8_t subIdx = static_cast<uint8_t>(std::min(result.rawDistQ8, 255));
+        // subIdx: 次轴方向的归一化坐标，用于索引对数 LUT
+        // 固件中 CTD_ECGetOffset 的 param_1 是质心在垂直于补偿方向上的传感器索引
+        const float crossRange = std::max(1.0f, crossAxisMax - crossAxisMin);
+        const float crossNorm = std::clamp(
+            (crossAxisCoord - crossAxisMin) / crossRange, 0.0f, 1.0f);
+        const uint8_t subIdx = static_cast<uint8_t>(crossNorm * 255.0f);
         const int profileIndex = static_cast<int>(useFar ? farProfile : nearProfile);
         const uint8_t touchSizeByte = static_cast<uint8_t>(std::min(touchSizeMm, 255.0f));
         const int offset = ECGetOffset(subIdx, touchSizeByte, m_profiles[profileIndex]);
         const int compOff = 256 - offset;
+        const int blendStart = std::max(1, static_cast<int>(m_ecFullCompRange * 256.0f));
         const int blendWidth = std::max(1, static_cast<int>(m_ecBlendRange * 256.0f));
-        result.finalOffQ8 = ECGetFinalOffset(result.rawDistQ8, compOff, blendWidth);
+        const int targetOffQ8 = ECGetFinalOffset(result.rawDistQ8, compOff, blendStart, blendWidth);
+        const float strength = std::clamp(m_ecStrength, 0.0f, 1.0f);
+        const int deltaQ8 = targetOffQ8 - result.rawDistQ8;
+        result.finalOffQ8 = result.rawDistQ8 + static_cast<int>(static_cast<float>(deltaQ8) * strength);
         result.correctedDistance = static_cast<float>(result.finalOffQ8) / 256.0f;
 
         const int oldQ8 = q8coord;

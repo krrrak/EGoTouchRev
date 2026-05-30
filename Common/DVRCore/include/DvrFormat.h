@@ -27,6 +27,7 @@ enum DvrBinaryFlags : uint32_t {
     kDvrFlagHasStructuredSuffix     = 1u << 1,
     kDvrFlagHasReceiveSystemEpochUs = 1u << 2,
     kDvrFlagHasDynamicDebug         = 1u << 3,
+    kDvrFlagHasRuntimeConfig        = 1u << 4,
 };
 
 enum class Dvr2SectionType : uint32_t {
@@ -36,6 +37,8 @@ enum class Dvr2SectionType : uint32_t {
     DynamicDebugSchema = 4,
     DynamicDebugValues = 5,
     FrameSchema = 6,
+    RuntimeConfigSchema = 7,
+    RuntimeConfigValues = 8,
 };
 
 enum class Dvr2ValueType : uint8_t {
@@ -48,6 +51,16 @@ enum class Dvr2ValueType : uint8_t {
     Float32 = 6,
     Bool = 7,
     Bytes = 8,
+};
+
+enum class Dvr2ConfigValueType : uint8_t {
+    Bool = 0,
+    Int32 = 1,
+    UInt8 = 2,
+    UInt16 = 3,
+    Float32 = 4,
+    Float64 = 5,
+    String = 6,
 };
 
 enum class Dvr2FieldRank : uint8_t {
@@ -158,6 +171,44 @@ struct Dvr2DynamicDebugSample {
     uint8_t flags = 0;
     uint32_t reserved = 0;
     uint64_t rawValue = 0;
+};
+
+struct Dvr2RuntimeConfigSchemaHeader {
+    uint16_t schemaVersion = 1;
+    uint16_t fieldCount = 0;
+    uint32_t schemaHash = 0;
+    uint32_t recordSize = 0;
+    uint32_t reserved = 0;
+};
+
+struct Dvr2RuntimeConfigFieldDef {
+    uint32_t fieldId = 0;
+    uint8_t valueType = static_cast<uint8_t>(Dvr2ConfigValueType::String);
+    uint8_t category = 0;
+    uint16_t flags = 0;
+    float minValue = 0.0f;
+    float maxValue = 0.0f;
+    char section[32]{};
+    char key[64]{};
+    char displayName[64]{};
+    char moduleTag[32]{};
+    char unit[16]{};
+};
+
+struct Dvr2RuntimeConfigValuesHeader {
+    uint16_t valueCount = 0;
+    uint16_t recordSize = 0;
+    uint32_t schemaHash = 0;
+    uint32_t reserved[2]{};
+};
+
+struct Dvr2RuntimeConfigValueRecord {
+    uint32_t fieldId = 0;
+    uint8_t valueType = static_cast<uint8_t>(Dvr2ConfigValueType::String);
+    uint8_t flags = 0;
+    uint16_t stringLength = 0;
+    uint64_t rawValue = 0;
+    char stringValue[128]{};
 };
 
 struct Dvr2IndexEntry {
@@ -329,6 +380,10 @@ static_assert(sizeof(Dvr2DynamicDebugSchemaHeader) == 16);
 static_assert(sizeof(Dvr2DynamicDebugValuesHeader) == 8);
 static_assert(sizeof(Dvr2DynamicDebugFrameHeader) == 8);
 static_assert(sizeof(Dvr2DynamicDebugSample) == 16);
+static_assert(sizeof(Dvr2RuntimeConfigSchemaHeader) == 16);
+static_assert(sizeof(Dvr2RuntimeConfigFieldDef) == 224);
+static_assert(sizeof(Dvr2RuntimeConfigValuesHeader) == 16);
+static_assert(sizeof(Dvr2RuntimeConfigValueRecord) == 144);
 static_assert(std::is_trivially_copyable_v<Dvr2FramePayload>);
 static_assert(std::is_standard_layout_v<Dvr2FramePayload>);
 static_assert(offsetof(Dvr2FrameCore, heatmapMatrix) == 28);
@@ -363,6 +418,14 @@ inline uint32_t HashBytes(uint32_t h, const void* data, size_t bytes) {
 }
 
 inline uint32_t ComputeFieldSchemaHash(const std::vector<Dvr2FieldDef>& fields) {
+    uint32_t h = 2166136261u;
+    for (const auto& field : fields) {
+        h = HashBytes(h, &field, sizeof(field));
+    }
+    return h;
+}
+
+inline uint32_t ComputeRuntimeConfigSchemaHash(const std::vector<Dvr2RuntimeConfigFieldDef>& fields) {
     uint32_t h = 2166136261u;
     for (const auto& field : fields) {
         h = HashBytes(h, &field, sizeof(field));

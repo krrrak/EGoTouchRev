@@ -1,6 +1,6 @@
 #include "DiagnosticsWorkbench.h"
 #include "ServiceProxy.h"
-#include "ServiceProxyInternal.h"
+#include "DvrCsvExport.h"
 #include "Logger.h"
 #include <chrono>
 #include <ctime>

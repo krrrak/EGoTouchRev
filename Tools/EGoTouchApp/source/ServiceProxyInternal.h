@@ -1,11 +1,9 @@
 #pragma once
 
 #include "ServiceProxy.h"
-#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <vector>
 
 namespace App {
 
@@ -36,31 +34,5 @@ std::string MergeServiceProxyConfigSections(
     std::string_view serviceSection,
     std::string_view touchSection,
     std::string_view stylusSection);
-
-std::filesystem::path ResolveReplayBinaryPath(const std::filesystem::path& input);
-bool WriteDvrBinaryFile(const std::filesystem::path& filePath,
-                        const std::vector<Dvr::DvrFrameSlot>& frames,
-                        const DvrDynamicDebugSchema* dynamicSchema = nullptr,
-                        const std::vector<Dvr::DvrDynamicDebugFrameSlot>* dynamicFrames = nullptr,
-                        uint32_t* outFlags = nullptr);
-bool ReadDvrBinaryFile(const std::filesystem::path& filePath,
-                       std::vector<Solvers::HeatmapFrame>& outFrames,
-                       int& outVersion,
-                       uint32_t* outFlags = nullptr,
-                       std::string* outError = nullptr,
-                       DvrDynamicDebugSchema* outDynamicSchema = nullptr,
-                       std::vector<DvrDynamicDebugFrame>* outDynamicFrames = nullptr);
-bool WriteFrameCsvFile(const std::filesystem::path& filePath,
-                       const Solvers::HeatmapFrame& frame,
-                       const Solvers::TouchPipeline* pipeline,
-                       bool includeHeatmap,
-                       bool includeMasterStatus,
-                       bool includeSlaveStatus,
-                       std::string_view captureMode,
-                       bool includeMetadataHeader = true,
-                       int formatVersion = 0,
-                       std::string_view sourceName = {},
-                       const DvrDynamicDebugSchema* dynamicSchema = nullptr,
-                       const DvrDynamicDebugFrame* dynamicFrame = nullptr);
 
 } // namespace App

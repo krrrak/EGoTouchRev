@@ -28,13 +28,23 @@ Solvers::ZoneEdgeInfo MakeEdgeInfo(uint8_t minCol, uint8_t maxCol,
     return info;
 }
 
-void TestDefaultProfilesMatchW273() {
+void TestDefaultProfilesMatchRuntimeConfig() {
     Solvers::Touch::EdgeCompensator compensator;
-    Require(compensator.m_profiles[0].numSegments == 1, "Dim1 near should use one EC segment");
-    Require(compensator.m_profiles[0].segments[0].touchSizeThreshold == 7, "Dim1 near threshold should match TSAPrmt");
-    Require(compensator.m_profiles[0].segments[0].lutIdxLow == 16, "Dim1 near low LUT should match TSAPrmt");
-    Require(compensator.m_profiles[0].segments[0].lutIdxHigh == 224, "Dim1 near high LUT should match TSAPrmt");
-    Require(compensator.m_profiles[2].segments[0].lutIdxHigh == 96, "Dim2 near high LUT should match TSAPrmt");
+    RequireNear(compensator.m_ecStrength, 1.0f, 0.0001f, "EC strength should match runtime config");
+    RequireNear(compensator.m_ecFullCompRange, 0.5f, 0.0001f, "EC full range should match runtime config");
+    RequireNear(compensator.m_ecBlendRange, 0.505f, 0.0001f, "EC blend range should match runtime config");
+    for (int edge = 0; edge < 4; ++edge) {
+        Require(compensator.m_profiles[edge].numSegments == 3, "EC edge should use three runtime-config segments");
+        Require(compensator.m_profiles[edge].segments[0].touchSizeThreshold == 64, "EC segment 0 width should match runtime config");
+        Require(compensator.m_profiles[edge].segments[0].lutIdxLow == 2, "EC segment 0 low LUT should match runtime config");
+        Require(compensator.m_profiles[edge].segments[0].lutIdxHigh == 32, "EC segment 0 high LUT should match runtime config");
+        Require(compensator.m_profiles[edge].segments[1].touchSizeThreshold == 128, "EC segment 1 width should match runtime config");
+        Require(compensator.m_profiles[edge].segments[1].lutIdxLow == 32, "EC segment 1 low LUT should match runtime config");
+        Require(compensator.m_profiles[edge].segments[1].lutIdxHigh == 96, "EC segment 1 high LUT should match runtime config");
+        Require(compensator.m_profiles[edge].segments[2].touchSizeThreshold == 255, "EC segment 2 width should match runtime config");
+        Require(compensator.m_profiles[edge].segments[2].lutIdxLow == 96, "EC segment 2 low LUT should match runtime config");
+        Require(compensator.m_profiles[edge].segments[2].lutIdxHigh == 192, "EC segment 2 high LUT should match runtime config");
+    }
 }
 
 void TestDim1NearCorrectionMetadata() {
@@ -77,6 +87,46 @@ void TestDim2FarCorrectionMetadata() {
     RequireNear(contacts[0].rawYBeforeEC, 39.5f, 0.0001f, "raw Y should be retained");
     Require(contacts[0].edgeDistY > 0.0f, "corrected Y edge distance should be populated");
     Require(std::fabs(contacts[0].y - 39.5f) > 0.0001f, "Y coordinate should be corrected");
+}
+
+void TestOnlyOutermostCellTriggersCorrection() {
+    Solvers::Touch::EdgeCompensator compensator;
+    compensator.m_ecFullCompRange = 4.0f;
+    std::vector<Solvers::TouchContact> contacts(2);
+    contacts[0].x = 0.5f;
+    contacts[0].y = 20.0f;
+    contacts[1].x = 1.5f;
+    contacts[1].y = 20.0f;
+
+    std::vector<Solvers::ZoneEdgeInfo> edgeInfos(2, MakeEdgeInfo(0, 2, 18, 22));
+    compensator.Process(contacts, edgeInfos, Solvers::EdgeBounds{});
+
+    Require((contacts[0].ecFlags & 0x100) != 0, "outermost cell should receive Dim1 correction");
+    Require((contacts[1].centroidEdgeFlags & 0x01) == 0, "second cell should not receive Dim1 edge direction");
+    Require((contacts[1].ecFlags & 0x100) == 0, "second cell should not receive Dim1 correction");
+    RequireNear(contacts[1].x, 1.5f, 0.0001f, "second cell X should not change");
+}
+
+void TestStrengthScalesCorrectionAmplitude() {
+    std::vector<Solvers::ZoneEdgeInfo> edgeInfos(1, MakeEdgeInfo(0, 2, 18, 22));
+
+    Solvers::Touch::EdgeCompensator fullCompensator;
+    fullCompensator.m_ecStrength = 1.0f;
+    std::vector<Solvers::TouchContact> fullContacts(1);
+    fullContacts[0].x = 0.5f;
+    fullContacts[0].y = 20.0f;
+    fullCompensator.Process(fullContacts, edgeInfos, Solvers::EdgeBounds{});
+
+    Solvers::Touch::EdgeCompensator reducedCompensator;
+    std::vector<Solvers::TouchContact> reducedContacts(1);
+    reducedContacts[0].x = 0.5f;
+    reducedContacts[0].y = 20.0f;
+    reducedCompensator.Process(reducedContacts, edgeInfos, Solvers::EdgeBounds{});
+
+    const float fullDelta = std::fabs(fullContacts[0].x - 0.5f);
+    const float reducedDelta = std::fabs(reducedContacts[0].x - 0.5f);
+    Require(reducedDelta > 0.0f, "default EC strength should still apply correction");
+    Require(reducedDelta < fullDelta, "default EC strength should reduce correction amplitude");
 }
 
 void TestEdgeWidthScansThreshold() {
@@ -137,9 +187,11 @@ void TestEdgeRejectorDoesNotSuppressCorrectedContact() {
 
 int main() {
     try {
-        TestDefaultProfilesMatchW273();
+        TestDefaultProfilesMatchRuntimeConfig();
         TestDim1NearCorrectionMetadata();
         TestDim2FarCorrectionMetadata();
+        TestOnlyOutermostCellTriggersCorrection();
+        TestStrengthScalesCorrectionAmplitude();
         TestEdgeWidthScansThreshold();
         TestNonEdgeContactIsUnchanged();
         TestEdgeRejectorDoesNotSuppressCorrectedContact();

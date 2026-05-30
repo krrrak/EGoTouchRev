@@ -134,9 +134,28 @@ void TestStylusSuppressRoundTrip() {
             "rx ghost only-new flag should round-trip");
 }
 
+void TestBaselineSettleFramesRoundTrip() {
+    Solvers::TouchPipeline pipeline;
+    pipeline.m_baseline.m_settleFrames = 7;
+
+    std::ostringstream out;
+    pipeline.SaveConfig(out);
+    const std::string saved = out.str();
+
+    Require(saved.find("BaselineSettleFrames=7") != std::string::npos,
+            "saved config should include baseline settle frames");
+
+    Solvers::TouchPipeline loaded;
+    LoadFromSavedText(loaded, saved);
+
+    Require(loaded.m_baseline.m_settleFrames == 7,
+            "baseline settle frames should round-trip");
+}
+
 void TestEdgeCompensationProfileRoundTrip() {
     Solvers::TouchPipeline pipeline;
     pipeline.m_edgeComp.m_enabled = false;
+    pipeline.m_edgeComp.m_ecStrength = 0.42f;
     pipeline.m_edgeComp.m_ecBlendRange = 0.5f;
     pipeline.m_edgeComp.m_profiles[0].numSegments = 4;
     pipeline.m_edgeComp.m_profiles[0].segments[0].touchSizeThreshold = 11;
@@ -153,6 +172,8 @@ void TestEdgeCompensationProfileRoundTrip() {
 
     Require(saved.find("ECEnabled=0") != std::string::npos,
             "saved config should include EC enabled flag");
+    Require(saved.find("ECStrength=0.42") != std::string::npos,
+            "saved config should include EC strength");
     Require(saved.find("ECBlendRange=0.5") != std::string::npos,
             "saved config should include EC blend range");
     Require(saved.find("ECDim1NearSegments=4") != std::string::npos,
@@ -166,6 +187,8 @@ void TestEdgeCompensationProfileRoundTrip() {
     LoadFromSavedText(loaded, saved);
 
     Require(!loaded.m_edgeComp.m_enabled, "EC enabled flag should round-trip");
+    RequireNear(loaded.m_edgeComp.m_ecStrength, 0.42f, 0.0001f,
+                "EC strength should round-trip");
     RequireNear(loaded.m_edgeComp.m_ecBlendRange, 0.5f, 0.0001f,
                 "EC blend range should round-trip");
     Require(loaded.m_edgeComp.m_profiles[0].numSegments == 4,
@@ -197,6 +220,8 @@ void TestStylusSuppressSchemaContainsNewKeys() {
         return false;
     };
 
+    Require(hasKey("BaselineSettleFrames"),
+            "schema should expose baseline settle frames");
     Require(hasKey("StylusSuppressPenPeakThreshold"),
             "schema should expose stylus peak threshold");
     Require(hasKey("StylusAftDebounceFrames"),
@@ -230,17 +255,13 @@ void TestStylusSuppressSchemaContainsNewKeys() {
 void TestInvalidConfigValuesAreIgnored() {
     Solvers::TouchPipeline touch;
     touch.m_peakDet.m_threshold = 1234;
-    touch.m_gridIIR.m_gateRatio = 0.25f;
     touch.m_tracker.m_enabled = true;
 
     touch.LoadConfig("PeakThreshold", "abc");
-    touch.LoadConfig("GateRatio", "nan");
     touch.LoadConfig("TrackerEnabled", "maybe");
 
     Require(touch.m_peakDet.m_threshold == 1234,
             "invalid touch integer config should preserve current value");
-    RequireNear(touch.m_gridIIR.m_gateRatio, 0.25f, 0.0001f,
-                "invalid touch float config should preserve current value");
     Require(touch.m_tracker.m_enabled,
             "invalid touch boolean config should preserve current value");
 
@@ -266,6 +287,7 @@ void TestInvalidConfigValuesAreIgnored() {
 int main() {
     try {
         TestStylusSuppressRoundTrip();
+        TestBaselineSettleFramesRoundTrip();
         TestEdgeCompensationProfileRoundTrip();
         TestStylusSuppressSchemaContainsNewKeys();
         TestInvalidConfigValuesAreIgnored();

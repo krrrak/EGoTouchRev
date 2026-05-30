@@ -1267,7 +1267,7 @@ void ServiceHost::HandleIpcGetLogs(Ipc::IpcResponse& resp) {
 
     resp.dataLen = static_cast<uint16_t>(std::min(packed.size(), sizeof(resp.data)));
     std::memcpy(resp.data, packed.data(), resp.dataLen);
-    resp.success = true;
+    Ipc::MarkSuccess(resp);
 }
 
 void ServiceHost::HandleIpcGetPenBridgeStatus(Ipc::IpcResponse& resp) {
@@ -1297,7 +1297,7 @@ void ServiceHost::HandleIpcGetPenBridgeStatus(Ipc::IpcResponse& resp) {
 
     std::memcpy(resp.data, buf, sizeof(buf));
     resp.dataLen = sizeof(buf);
-    resp.success = true;
+    Ipc::MarkSuccess(resp);
 }
 
 void ServiceHost::HandleIpcGetDebugSchema(const Ipc::IpcRequest& req, Ipc::IpcResponse& resp) {
@@ -1331,7 +1331,7 @@ void ServiceHost::HandleIpcGetDebugSchema(const Ipc::IpcRequest& req, Ipc::IpcRe
     }
 
     resp.dataLen = static_cast<uint16_t>(cursor);
-    resp.success = true;
+    Ipc::MarkSuccess(resp);
 }
 
 void ServiceHost::HandleIpcGetDebugSnapshot(Ipc::IpcResponse& resp) {
@@ -1387,7 +1387,7 @@ void ServiceHost::HandleIpcGetDebugSnapshot(Ipc::IpcResponse& resp) {
     }
 
     resp.dataLen = static_cast<uint16_t>(cursor);
-    resp.success = true;
+    Ipc::MarkSuccess(resp);
 }
 
 // ── IPC Command Handler ──────────────────────────────
@@ -1396,7 +1396,7 @@ Ipc::IpcResponse ServiceHost::HandleIpcCommand(const Ipc::IpcRequest& req) {
 
     switch (req.command) {
     case Ipc::IpcCommand::Ping:
-        resp.success = true;
+        Ipc::MarkSuccess(resp);
         break;
 
     case Ipc::IpcCommand::EnterDebugMode:
@@ -1408,9 +1408,14 @@ Ipc::IpcResponse ServiceHost::HandleIpcCommand(const Ipc::IpcRequest& req) {
         break;
 
     case Ipc::IpcCommand::AfeCommand:
-        if (req.paramLen >= 2 && m_deviceRuntime) {
-            resp.success = m_deviceRuntime->SubmitExternalAfeCommand(
-                static_cast<AFE_Command>(req.param[0]), req.param[1]);
+        if (req.paramLen < 2) {
+            Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidRequest);
+        } else if (!m_deviceRuntime) {
+            Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidState);
+        } else if (m_deviceRuntime->SubmitExternalAfeCommand(static_cast<AFE_Command>(req.param[0]), req.param[1])) {
+            Ipc::MarkSuccess(resp);
+        } else {
+            Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidState);
         }
         break;
 
@@ -1418,19 +1423,21 @@ Ipc::IpcResponse ServiceHost::HandleIpcCommand(const Ipc::IpcRequest& req) {
         if (m_deviceRuntime) {
             switch (m_deviceRuntime->RequestStart()) {
             case DeviceRuntime::StartRequestResult::Started:
-                resp.success = true;
+                Ipc::MarkSuccess(resp);
                 LOG_INFO("Service", __func__, "IPC", "StartRuntime accepted: runtime started.");
                 break;
             case DeviceRuntime::StartRequestResult::AlreadyRunning:
-                resp.success = true;
+                Ipc::MarkSuccess(resp);
                 LOG_INFO("Service", __func__, "IPC", "StartRuntime accepted: runtime already running (idempotent no-op).");
                 break;
             case DeviceRuntime::StartRequestResult::Failed:
             default:
-                resp.success = false;
+                Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InternalError);
                 LOG_WARN("Service", __func__, "IPC", "StartRuntime failed: runtime did not start.");
                 break;
             }
+        } else {
+            Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidState);
         }
         break;
 
@@ -1438,15 +1445,17 @@ Ipc::IpcResponse ServiceHost::HandleIpcCommand(const Ipc::IpcRequest& req) {
         if (m_deviceRuntime) {
             switch (m_deviceRuntime->RequestStop()) {
             case DeviceRuntime::StopRequestResult::Stopped:
-                resp.success = true;
+                Ipc::MarkSuccess(resp);
                 LOG_INFO("Service", __func__, "IPC", "StopRuntime accepted: runtime stopped.");
                 break;
             case DeviceRuntime::StopRequestResult::AlreadyStopped:
             default:
-                resp.success = true;
+                Ipc::MarkSuccess(resp);
                 LOG_INFO("Service", __func__, "IPC", "StopRuntime accepted: runtime already stopped (idempotent no-op).");
                 break;
             }
+        } else {
+            Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidState);
         }
         break;
 
@@ -1471,16 +1480,24 @@ Ipc::IpcResponse ServiceHost::HandleIpcCommand(const Ipc::IpcRequest& req) {
         break;
 
     case Ipc::IpcCommand::SetVhfEnabled:
-        if (m_deviceRuntime && req.paramLen >= 1) {
+        if (req.paramLen < 1) {
+            Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidRequest);
+        } else if (!m_deviceRuntime) {
+            Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidState);
+        } else {
             m_deviceRuntime->SetVhfEnabled(req.param[0] != 0);
-            resp.success = true;
+            Ipc::MarkSuccess(resp);
         }
         break;
 
     case Ipc::IpcCommand::SetVhfTranspose:
-        if (m_deviceRuntime && req.paramLen >= 1) {
+        if (req.paramLen < 1) {
+            Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidRequest);
+        } else if (!m_deviceRuntime) {
+            Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidState);
+        } else {
             m_deviceRuntime->SetVhfTransposeEnabled(req.param[0] != 0);
-            resp.success = true;
+            Ipc::MarkSuccess(resp);
         }
         break;
 

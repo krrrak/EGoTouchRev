@@ -1,9 +1,8 @@
 #pragma once
 
-#include "IpcProtocol.h"
+#include "DvrTypes.h"
 #include "SolverTypes.h"
 #include <cstdint>
-#include <string>
 #include <vector>
 
 namespace App {
@@ -19,46 +18,6 @@ struct PenBridgeStatus {
     uint16_t rawPress[4]  = {0,0,0,0};
     uint8_t  pressureMode = 1;
     uint16_t pressureMax  = 4095;
-};
-
-struct DynamicDebugField {
-    uint16_t fieldId = 0;
-    Ipc::DebugValueType valueType = Ipc::DebugValueType::UInt32;
-    Ipc::DebugSourceKind sourceKind = Ipc::DebugSourceKind::DerivedField;
-    int16_t sourceIndex = -1;
-    uint8_t uiOrder = 0;
-    Ipc::DebugDvrTarget dvrTarget = Ipc::DebugDvrTarget::None;
-    Ipc::DebugDvrPositionMode dvrPositionMode = Ipc::DebugDvrPositionMode::Append;
-    int16_t dvrIndex = -1;
-    std::string key;
-    std::string displayName;
-    std::string unit;
-    std::string uiGroup;
-    std::string dvrColumnName;
-    std::string dvrAnchor;
-};
-
-struct DynamicDebugValue {
-    Ipc::DebugValueType valueType = Ipc::DebugValueType::UInt32;
-    bool valid = false;
-    uint64_t rawValue = 0;
-};
-
-struct DvrDynamicDebugSample {
-    uint16_t fieldId = 0;
-    DynamicDebugValue value{};
-};
-
-struct DvrDynamicDebugSchema {
-    std::vector<DynamicDebugField> fields;
-    uint16_t schemaVersion = 0;
-    uint32_t schemaHash = 0;
-
-    bool Empty() const { return fields.empty(); }
-};
-
-struct DvrDynamicDebugFrame {
-    std::vector<DvrDynamicDebugSample> samples;
 };
 
 enum class FrameSourceMode {
@@ -87,6 +46,7 @@ struct DvrPlaybackDataset {
     uint32_t flags = 0;
     PlaybackTimingMode timingMode = PlaybackTimingMode::SyntheticFrameIndex;
     DvrDynamicDebugSchema dynamicDebugSchema{};
+    DvrRuntimeConfigSnapshot runtimeConfig{};
 
     bool Empty() const { return frames.empty(); }
     size_t Size() const { return frames.size(); }

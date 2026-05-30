@@ -1,4 +1,5 @@
-#include "ServiceProxyInternal.h"
+#include "ServiceProxy.h"
+#include "DvrBinaryIO.h"
 #include "FrameLayout.h"
 #include <algorithm>
 #include <chrono>
@@ -134,11 +135,12 @@ bool ServiceProxy::LoadDvrDataset(const std::filesystem::path& inputPath) {
     std::vector<Solvers::HeatmapFrame> importedFrames;
     DvrDynamicDebugSchema importedDynamicSchema;
     std::vector<DvrDynamicDebugFrame> importedDynamicFrames;
+    DvrRuntimeConfigSnapshot importedRuntimeConfig;
     int version = 0;
     uint32_t flags = 0;
     std::string error;
     const auto binPath = ResolveReplayBinaryPath(inputPath);
-    if (!ReadDvrBinaryFile(binPath, importedFrames, version, &flags, &error, &importedDynamicSchema, &importedDynamicFrames)) {
+    if (!ReadDvrBinaryFile(binPath, importedFrames, version, &flags, &error, &importedDynamicSchema, &importedDynamicFrames, &importedRuntimeConfig)) {
         std::lock_guard<std::mutex> lk(m_playbackMutex);
         m_playbackStatusMessage = error.empty() ? "Import failed: invalid or unsupported DVR2 .dvrbin" : ("Import failed: " + error);
         return false;
@@ -156,6 +158,7 @@ bool ServiceProxy::LoadDvrDataset(const std::filesystem::path& inputPath) {
     }
 
     dataset.dynamicDebugSchema = std::move(importedDynamicSchema);
+    dataset.runtimeConfig = std::move(importedRuntimeConfig);
     dataset.frames.reserve(importedFrames.size());
     for (size_t i = 0; i < importedFrames.size(); ++i) {
         DvrPlaybackFrame playbackFrame{};

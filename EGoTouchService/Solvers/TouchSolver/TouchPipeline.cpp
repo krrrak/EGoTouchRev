@@ -13,6 +13,10 @@ bool TouchPipeline::ProcessMasterParserOnly(HeatmapFrame& frame) {
     return true;
 }
 
+void TouchPipeline::RequestBaselineReacquire(int frames) {
+    m_baseline.RequestReacquireFrames(frames);
+}
+
 bool TouchPipeline::Process(HeatmapFrame& frame) {
     const size_t desiredContactCapacity = static_cast<size_t>(
         std::max(m_contactExtractor.m_zoneExp.m_maxTouches, m_tracker.m_maxTouchCount));
@@ -23,12 +27,8 @@ bool TouchPipeline::Process(HeatmapFrame& frame) {
     // ── Phase 1: Frame Parsing ──────────────────────────────────────
     m_frameParser.Process(frame);
 
-    const bool hasCurrentFinger =
-        frame.masterWasRead &&
-        frame.masterSuffixValid &&
-        frame.masterSuffix.hasFinger();
-    const bool hasLiveTouchState =
-        m_tracker.HasLiveTracks() || m_gesture.HasLiveState();
+    const bool hasCurrentFinger = frame.masterWasRead && frame.masterSuffixValid && frame.masterSuffix.hasFinger();
+    const bool hasLiveTouchState = m_tracker.HasLiveTracks() || m_gesture.HasLiveState();
     // ── Phase 2: Signal Conditioning ────────────────────────────────
     m_baseline.Process(frame);
 
@@ -38,7 +38,6 @@ bool TouchPipeline::Process(HeatmapFrame& frame) {
     }
 
     m_cmf.Process(frame);
-    m_gridIIR.Process(frame, m_peakDet.m_threshold);
 
     // ── Phase 3: Candidate Generation ───────────────────────────────
     frame.contacts.clear();
@@ -224,6 +223,8 @@ std::vector<ConfigParam> TouchPipeline::GetConfigSchema() const {
                    ConfigParam::Int, const_cast<int*>(&m_baseline.m_acquisitionMaxStep), 1, 1024).Module("Signal Conditioning");
     s.emplace_back("BaselineNoiseTrackingEnabled", "Baseline Noise Tracking Enabled",
                    ConfigParam::Bool, const_cast<bool*>(&m_baseline.m_noiseTrackingEnabled)).Module("Signal Conditioning");
+    s.emplace_back("BaselineSettleFrames", "Baseline Settle Frames After Reacquire",
+                   ConfigParam::Int, const_cast<int*>(&m_baseline.m_settleFrames), 0, 30).Module("Signal Conditioning");
 
     // ── Signal Conditioning: CMF ──
     s.emplace_back("CMFEnabled", "CMF Enabled",
@@ -232,18 +233,6 @@ std::vector<ConfigParam> TouchPipeline::GetConfigSchema() const {
                    ConfigParam::Int, const_cast<int*>(&m_cmf.m_exclusionThreshold), 50, 2000).Module("Signal Conditioning");
     s.emplace_back("CMFMaxCorrection", "CMF Max Correction",
                    ConfigParam::Int, const_cast<int*>(&m_cmf.m_maxCorrection), 10, 2000).Module("Signal Conditioning");
-
-    // ── Signal Conditioning: GridIIR ──
-    s.emplace_back("GridIIREnabled", "Grid IIR Enabled",
-                   ConfigParam::Bool, const_cast<bool*>(&m_gridIIR.m_enabled)).Module("Signal Conditioning");
-    s.emplace_back("GateRatio", "Gate Ratio",
-                   ConfigParam::Float, const_cast<float*>(&m_gridIIR.m_gateRatio), 0.02f, 0.30f).Module("Signal Conditioning");
-    s.emplace_back("GateStaticFloor", "Gate Static Floor",
-                   ConfigParam::Int, const_cast<int*>(&m_gridIIR.m_gateStaticFloor), 50, 500).Module("Signal Conditioning");
-    s.emplace_back("DecayWeight", "Decay Weight",
-                   ConfigParam::Int, const_cast<int*>(&m_gridIIR.m_decayWeight), 1, 256).Module("Signal Conditioning");
-    s.emplace_back("DecayStep", "Decay Step",
-                   ConfigParam::Int, const_cast<int*>(&m_gridIIR.m_decayStep), 0, 200).Module("Signal Conditioning");
 
     // ── Peak Detection ──
     s.emplace_back("PeakThreshold", "Peak Threshold",
@@ -282,6 +271,10 @@ std::vector<ConfigParam> TouchPipeline::GetConfigSchema() const {
                    ConfigParam::Int, const_cast<int*>(&m_contactExtractor.m_zoneExp.m_maxTouches), 1, 50).Module("Zone & Contact");
     s.emplace_back("ECEnabled", "Edge Compensation Enabled",
                    ConfigParam::Bool, const_cast<bool*>(&m_edgeComp.m_enabled)).Module("Zone & Contact");
+    s.emplace_back("ECStrength", "EC Strength",
+                   ConfigParam::Float, const_cast<float*>(&m_edgeComp.m_ecStrength), 0.0f, 1.0f).Module("Zone & Contact");
+    s.emplace_back("ECFullCompRange", "EC Full Comp Range (sensor pitches)",
+                   ConfigParam::Float, const_cast<float*>(&m_edgeComp.m_ecFullCompRange), 0.5f, 1.0f).Module("Zone & Contact");
     s.emplace_back("ECBlendRange", "EC Blend Range",
                    ConfigParam::Float, const_cast<float*>(&m_edgeComp.m_ecBlendRange), 0.0f, 5.0f).Module("Zone & Contact");
     const char* ecEdgeNames[4] = {"Dim1Near", "Dim1Far", "Dim2Near", "Dim2Far"};
@@ -497,20 +490,12 @@ void TouchPipeline::SaveConfig(std::ostream& out) const {
     out << "BaselineAcquisitionAlphaShift=" << m_baseline.m_acquisitionAlphaShift << "\n";
     out << "BaselineAcquisitionMaxStep=" << m_baseline.m_acquisitionMaxStep << "\n";
     out << "BaselineNoiseTrackingEnabled=" << (m_baseline.m_noiseTrackingEnabled?"1":"0") << "\n";
+    out << "BaselineSettleFrames=" << m_baseline.m_settleFrames << "\n";
     // Phase 2: CMF
     out << "CMFEnabled=" << (m_cmf.m_enabled?"1":"0") << "\n";
     out << "CMFDimensionMode=" << static_cast<int>(m_cmf.m_mode) << "\n";
     out << "CMFExclusionThreshold=" << m_cmf.m_exclusionThreshold << "\n";
     out << "CMFMaxCorrection=" << m_cmf.m_maxCorrection << "\n";
-    // Phase 2: GridIIR
-    out << "GridIIREnabled=" << (m_gridIIR.m_enabled?"1":"0") << "\n";
-    out << "GateRatio=" << m_gridIIR.m_gateRatio << "\n";
-    out << "GateStaticFloor=" << m_gridIIR.m_gateStaticFloor << "\n";
-    out << "DecayWeight=" << m_gridIIR.m_decayWeight << "\n";
-    out << "DecayStep=" << m_gridIIR.m_decayStep << "\n";
-    out << "NoiseFloorCutoff=" << m_gridIIR.m_noiseFloorCutoff << "\n";
-    out << "ResidualEnabled=" << (m_gridIIR.m_residualEnabled?"1":"0") << "\n";
-    out << "ResidualAlpha=" << m_gridIIR.m_residualAlpha << "\n";
     // Phase 3: PeakDetector (same keys as old FeatureExtractor)
     out << "PeakThreshold=" << m_peakDet.m_threshold << "\n";
     out << "SigTholdLimit=" << m_peakDet.m_sigTholdLimit << "\n";
@@ -531,6 +516,8 @@ void TouchPipeline::SaveConfig(std::ostream& out) const {
     out << "MaxTouches=" << m_contactExtractor.m_zoneExp.m_maxTouches << "\n";
     // Phase 4: EdgeCompensation
     out << "ECEnabled=" << (m_edgeComp.m_enabled?"1":"0") << "\n";
+    out << "ECStrength=" << m_edgeComp.m_ecStrength << "\n";
+    out << "ECFullCompRange=" << m_edgeComp.m_ecFullCompRange << "\n";
     out << "ECBlendRange=" << m_edgeComp.m_ecBlendRange << "\n";
     const char* ecEdgeNames[4] = {"Dim1Near", "Dim1Far", "Dim2Near", "Dim2Far"};
     for (int edge = 0; edge < 4; ++edge) {
@@ -688,20 +675,12 @@ void TouchPipeline::LoadConfig(const std::string& key,
     else if (key=="BaselineAcquisitionAlphaShift") m_baseline.m_acquisitionAlphaShift = ParseConfigInt(key, value);
     else if (key=="BaselineAcquisitionMaxStep") m_baseline.m_acquisitionMaxStep = ParseConfigInt(key, value);
     else if (key=="BaselineNoiseTrackingEnabled") m_baseline.m_noiseTrackingEnabled = toBool(value);
+    else if (key=="BaselineSettleFrames") m_baseline.m_settleFrames = std::clamp(ParseConfigInt(key, value), 0, 30);
     // Phase 2: CMF
     else if (key=="CMFEnabled")              m_cmf.m_enabled = toBool(value);
     else if (key=="CMFDimensionMode")        m_cmf.m_mode = static_cast<Touch::CMFProcessor::DimensionMode>(ParseConfigInt(key, value));
     else if (key=="CMFExclusionThreshold")   m_cmf.m_exclusionThreshold = ParseConfigInt(key, value);
     else if (key=="CMFMaxCorrection")        m_cmf.m_maxCorrection = ParseConfigInt(key, value);
-    // Phase 2: GridIIR
-    else if (key=="GridIIREnabled")          m_gridIIR.m_enabled = toBool(value);
-    else if (key=="GateRatio")               m_gridIIR.m_gateRatio = ParseConfigFloat(key, value);
-    else if (key=="GateStaticFloor")         m_gridIIR.m_gateStaticFloor = ParseConfigInt(key, value);
-    else if (key=="DecayWeight")             m_gridIIR.m_decayWeight = ParseConfigInt(key, value);
-    else if (key=="DecayStep")               m_gridIIR.m_decayStep = ParseConfigInt(key, value);
-    else if (key=="NoiseFloorCutoff")        m_gridIIR.m_noiseFloorCutoff = ParseConfigInt(key, value);
-    else if (key=="ResidualEnabled")         m_gridIIR.m_residualEnabled = toBool(value);
-    else if (key=="ResidualAlpha")           m_gridIIR.m_residualAlpha = ParseConfigFloat(key, value);
     // Phase 3: PeakDetector
     else if (key=="PeakThreshold")           m_peakDet.m_threshold = ParseConfigInt(key, value);
     else if (key=="SigTholdLimit")           m_peakDet.m_sigTholdLimit = ParseConfigInt(key, value);
@@ -722,6 +701,8 @@ void TouchPipeline::LoadConfig(const std::string& key,
     else if (key=="MaxTouches")              m_contactExtractor.m_zoneExp.m_maxTouches = ParseConfigInt(key, value);
     // Phase 4: EdgeCompensation
     else if (key=="ECEnabled")               m_edgeComp.m_enabled = toBool(value);
+    else if (key=="ECStrength")              m_edgeComp.m_ecStrength = std::clamp(ParseConfigFloat(key, value), 0.0f, 1.0f);
+    else if (key=="ECFullCompRange")         m_edgeComp.m_ecFullCompRange = std::clamp(ParseConfigFloat(key, value), 0.5f, 1.0f);
     else if (key=="ECBlendRange")            m_edgeComp.m_ecBlendRange = ParseConfigFloat(key, value);
     else if (loadECProfile(key))              {}
     // Phase 3: TouchClassifier

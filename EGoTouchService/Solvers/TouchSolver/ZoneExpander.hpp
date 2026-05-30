@@ -304,7 +304,7 @@ private:
                     unit.edgeArea++;
                     unit.edgeSignalSum += sig;
                     TZ_UpdateEdgeInfo(m_edgeInfos[peakIdx], sig,
-                        nc, nr, 0);
+                        nc, nr, 4);
                 }
             }
         }
