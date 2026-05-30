@@ -316,9 +316,8 @@ if (EGO_BUILD_TESTS)
     target_include_directories(CommonHeaderCompileTest PRIVATE "${IPC_ROOT}/include")
 
     add_executable(HostSystemStateMonitorTest
-        Tools/tests/SystemStateMonitorNamedEventTest.cpp
+        EGoTouchService/Host/tests/SystemStateMonitorNamedEventTest.cpp
     )
-    target_include_directories(HostSystemStateMonitorTest PRIVATE "${HOST_ROOT}/include")
     target_link_libraries(HostSystemStateMonitorTest PRIVATE Host Common)
 
     add_executable(SolversRawdataBenchmarkTest
@@ -481,6 +480,12 @@ if (EGO_BUILD_TESTS)
     target_link_libraries(PenPressurePacketParserTest PRIVATE Device Common)
 
     add_test(NAME HostSystemStateMonitorTest COMMAND HostSystemStateMonitorTest)
+    set_tests_properties(HostSystemStateMonitorTest PROPERTIES
+        LABELS "host;integration;windows;device-free;named-event"
+        TIMEOUT 15
+        RESOURCE_LOCK "host-system-state-named-events"
+    )
+
     if (WIN32 AND TARGET IPCCore)
         add_test(NAME IPCCoreProtocolAbiTest COMMAND IPCCoreProtocolAbiTest)
         set_tests_properties(IPCCoreProtocolAbiTest PROPERTIES
