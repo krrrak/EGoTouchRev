@@ -607,7 +607,7 @@ std::string BenchmarkModeName(BenchmarkMode mode) {
 
 void PrintUsage() {
     std::cout
-        << "Usage: SolversRawdataBenchmarkTest [options]\n"
+        << "Usage: SolversRawdataBenchmark [options]\n"
         << "  --frames <N>             Total replay steps (default 5000)\n"
         << "  --mode <linked|independent|both>\n"
         << "                           Benchmark mode (default linked)\n"
@@ -721,21 +721,21 @@ PriorityStatus ElevateBenchmarkPriority() {
 
 void PrintPriorityStatus(const PriorityStatus& status) {
     if (!status.supported) {
-        std::cout << "[RawdataBenchmarkTest] priority_control=unsupported\n";
+        std::cout << "[RawdataBenchmark] priority_control=unsupported\n";
         return;
     }
 
-    std::cout << "[RawdataBenchmarkTest] process_priority="
+    std::cout << "[RawdataBenchmark] process_priority="
               << (status.processRealtime ? "realtime" : "unchanged") << "\n";
     if (!status.processRealtime) {
-        std::cout << "[RawdataBenchmarkTest] process_priority_error="
+        std::cout << "[RawdataBenchmark] process_priority_error="
                   << status.processError << "\n";
     }
 
-    std::cout << "[RawdataBenchmarkTest] thread_priority="
+    std::cout << "[RawdataBenchmark] thread_priority="
               << (status.threadTimeCritical ? "time_critical" : "unchanged") << "\n";
     if (!status.threadTimeCritical) {
-        std::cout << "[RawdataBenchmarkTest] thread_priority_error="
+        std::cout << "[RawdataBenchmark] thread_priority_error="
                   << status.threadError << "\n";
     }
 }
@@ -750,7 +750,9 @@ RunStats RunBenchmark(BenchmarkMode mode,
 
     Solvers::TouchPipeline touchPipeline;
     Solvers::StylusPipeline stylusPipeline;
-    LoadConfigFromFile(touchPipeline, stylusPipeline, configPath);
+    if (!configPath.empty()) {
+        LoadConfigFromFile(touchPipeline, stylusPipeline, configPath);
+    }
 
     const std::vector<size_t> sequence = BuildReplaySequence(dataset.frames.size());
 
@@ -824,23 +826,23 @@ void PrintStats(const RunStats& stats,
             : 0.0;
 
     std::cout << std::fixed << std::setprecision(3);
-    std::cout << "[RawdataBenchmarkTest] mode=" << stats.modeName << "\n";
-    std::cout << "[RawdataBenchmarkTest] dataset=" << options.datasetPath.string() << "\n";
-    std::cout << "[RawdataBenchmarkTest] config_ini=" << configPath.string() << "\n";
-    std::cout << "[RawdataBenchmarkTest] dvr_format_version=" << stats.dvrFormatVersion << "\n";
-    std::cout << "[RawdataBenchmarkTest] dvr_flags=" << stats.dvrFlags << "\n";
-    std::cout << "[RawdataBenchmarkTest] stylus_pressure=" << stats.stylusPressure << "\n";
-    std::cout << "[RawdataBenchmarkTest] run_start=" << stats.runStart << "\n";
-    std::cout << "[RawdataBenchmarkTest] run_end=" << stats.runEnd << "\n";
-    std::cout << "[RawdataBenchmarkTest] benchmark_frames=" << stats.benchmarkFrames << "\n";
-    std::cout << "[RawdataBenchmarkTest] source_frames=" << stats.sourceFrames << "\n";
-    std::cout << "[RawdataBenchmarkTest] wall_total_ms=" << stats.wallTotalMs << "\n";
-    std::cout << "[RawdataBenchmarkTest] master_total_ms=" << stats.masterTotalMs << "\n";
-    std::cout << "[RawdataBenchmarkTest] master_avg_ms_per_frame=" << masterAvgMs << "\n";
-    std::cout << "[RawdataBenchmarkTest] master_failed_frames=" << stats.masterFailedFrames << "\n";
-    std::cout << "[RawdataBenchmarkTest] slave_total_ms=" << stats.slaveTotalMs << "\n";
-    std::cout << "[RawdataBenchmarkTest] slave_avg_ms_per_frame=" << slaveAvgMs << "\n";
-    std::cout << "[RawdataBenchmarkTest] slave_failed_frames=" << stats.slaveFailedFrames << "\n";
+    std::cout << "[RawdataBenchmark] mode=" << stats.modeName << "\n";
+    std::cout << "[RawdataBenchmark] dataset=" << options.datasetPath.string() << "\n";
+    std::cout << "[RawdataBenchmark] config_ini=" << configPath.string() << "\n";
+    std::cout << "[RawdataBenchmark] dvr_format_version=" << stats.dvrFormatVersion << "\n";
+    std::cout << "[RawdataBenchmark] dvr_flags=" << stats.dvrFlags << "\n";
+    std::cout << "[RawdataBenchmark] stylus_pressure=" << stats.stylusPressure << "\n";
+    std::cout << "[RawdataBenchmark] run_start=" << stats.runStart << "\n";
+    std::cout << "[RawdataBenchmark] run_end=" << stats.runEnd << "\n";
+    std::cout << "[RawdataBenchmark] benchmark_frames=" << stats.benchmarkFrames << "\n";
+    std::cout << "[RawdataBenchmark] source_frames=" << stats.sourceFrames << "\n";
+    std::cout << "[RawdataBenchmark] wall_total_ms=" << stats.wallTotalMs << "\n";
+    std::cout << "[RawdataBenchmark] master_total_ms=" << stats.masterTotalMs << "\n";
+    std::cout << "[RawdataBenchmark] master_avg_ms_per_frame=" << masterAvgMs << "\n";
+    std::cout << "[RawdataBenchmark] master_failed_frames=" << stats.masterFailedFrames << "\n";
+    std::cout << "[RawdataBenchmark] slave_total_ms=" << stats.slaveTotalMs << "\n";
+    std::cout << "[RawdataBenchmark] slave_avg_ms_per_frame=" << slaveAvgMs << "\n";
+    std::cout << "[RawdataBenchmark] slave_failed_frames=" << stats.slaveFailedFrames << "\n";
 }
 
 } // namespace
@@ -854,9 +856,7 @@ int main(int argc, char** argv) {
         const std::filesystem::path configPath = ResolveConfigPath(options.configPath);
         const std::filesystem::path datasetPath = ResolveDatasetPath(options.datasetPath, argv[0]);
         if (configPath.empty()) {
-            std::cerr << "[RawdataBenchmarkTest] config.ini not found.\n";
-            PrintUsage();
-            return 1;
+            std::cout << "[RawdataBenchmark] config_ini=<defaults>\n";
         }
 
         Options resolvedOptions = options;
@@ -868,7 +868,7 @@ int main(int argc, char** argv) {
             const auto replay480 = BuildReplaySequence(480);
             if (replay480.size() != 960 || replay480[479] != 479 || replay480[480] != 479 ||
                 replay480[481] != 478) {
-                std::cerr << "[RawdataBenchmarkTest] Internal replay-sequence validation failed.\n";
+                std::cerr << "[RawdataBenchmark] Internal replay-sequence validation failed.\n";
                 return 2;
             }
         }
@@ -890,7 +890,7 @@ int main(int argc, char** argv) {
 
         return 0;
     } catch (const std::exception& ex) {
-        std::cerr << "[RawdataBenchmarkTest] " << ex.what() << "\n";
+        std::cerr << "[RawdataBenchmark] " << ex.what() << "\n";
         return 10;
     }
 }

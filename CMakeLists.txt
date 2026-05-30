@@ -334,11 +334,7 @@ if (EGO_BUILD_TESTS)
     )
     target_link_libraries(HostSystemStateMonitorTest PRIVATE Host Common)
 
-    add_executable(SolversRawdataBenchmarkTest
-        Tools/tests/RawdataBenchmarkTest.cpp
-    )
-    target_include_directories(SolversRawdataBenchmarkTest PRIVATE "${APP_ROOT}/include")
-    target_link_libraries(SolversRawdataBenchmarkTest PRIVATE DVRCore Solvers Common)
+    add_subdirectory(EGoTouchService/Solvers/tests)
 
 
     if (WIN32 AND TARGET IPCCore)
@@ -363,40 +359,6 @@ if (EGO_BUILD_TESTS)
         target_link_libraries(IPCCorePipeLoopbackTest PRIVATE IPCCore)
     endif()
 
-    add_executable(TouchTrackerSilentGapTest
-        Tools/tests/TouchTrackerSilentGapTest.cpp
-    )
-    target_link_libraries(TouchTrackerSilentGapTest PRIVATE Solvers Common)
-
-    add_executable(TouchBaselineReacquireTest
-        Tools/tests/TouchBaselineReacquireTest.cpp
-    )
-    target_link_libraries(TouchBaselineReacquireTest PRIVATE Solvers Common)
-
-    add_executable(TouchTrackerStylusSuppressTest
-        Tools/tests/TouchTrackerStylusSuppressTest.cpp
-    )
-    target_link_libraries(TouchTrackerStylusSuppressTest PRIVATE Solvers Common)
-
-    add_executable(TouchPipelineConfigRoundTripTest
-        Tools/tests/TouchPipelineConfigRoundTripTest.cpp
-    )
-    target_link_libraries(TouchPipelineConfigRoundTripTest PRIVATE Solvers Common)
-
-    add_executable(TouchEdgeCompensationTest
-        Tools/tests/TouchEdgeCompensationTest.cpp
-    )
-    target_link_libraries(TouchEdgeCompensationTest PRIVATE Solvers Common)
-
-    add_executable(TouchPalmRejectionMvpTest
-        Tools/tests/TouchPalmRejectionMvpTest.cpp
-    )
-    target_link_libraries(TouchPalmRejectionMvpTest PRIVATE Solvers Common)
-
-    add_executable(TouchCloseSplitTest
-        Tools/tests/TouchCloseSplitTest.cpp
-    )
-    target_link_libraries(TouchCloseSplitTest PRIVATE Solvers Common)
 
     add_executable(EGoTouchApp_ServiceProxyConfigMergeTest
         Tools/EGoTouchApp/tests/ServiceProxyConfigMergeTest.cpp
@@ -485,15 +447,6 @@ if (EGO_BUILD_TESTS)
     )
     target_link_libraries(EGoTouchApp_DiagnosticsWorkbenchLogicTest PRIVATE DVRCore Solvers Common)
 
-    add_executable(StylusLinearFilterProcessTest
-        Tools/tests/StylusLinearFilterProcessTest.cpp
-    )
-    target_link_libraries(StylusLinearFilterProcessTest PRIVATE Solvers Common)
-
-    add_executable(StylusHpp3PostPressureProcessTest
-        Tools/tests/StylusHpp3PostPressureProcessTest.cpp
-    )
-    target_link_libraries(StylusHpp3PostPressureProcessTest PRIVATE Solvers Common)
 
     add_subdirectory("${DEVICE_ROOT}/tests")
 
@@ -558,13 +511,7 @@ if (EGO_BUILD_TESTS)
     )
     target_include_directories(ServiceHostLifecycleFakeIntegrationTest PRIVATE "${SERVICE_TEST_ROOT}/support")
     target_link_libraries(ServiceHostLifecycleFakeIntegrationTest PRIVATE EGoTouchServiceCore)
-    add_test(NAME TouchTrackerSilentGapTest COMMAND TouchTrackerSilentGapTest)
-    add_test(NAME TouchBaselineReacquireTest COMMAND TouchBaselineReacquireTest)
-    add_test(NAME TouchTrackerStylusSuppressTest COMMAND TouchTrackerStylusSuppressTest)
-    add_test(NAME TouchPipelineConfigRoundTripTest COMMAND TouchPipelineConfigRoundTripTest)
-    add_test(NAME TouchEdgeCompensationTest COMMAND TouchEdgeCompensationTest)
-    add_test(NAME TouchPalmRejectionMvpTest COMMAND TouchPalmRejectionMvpTest)
-    add_test(NAME TouchCloseSplitTest COMMAND TouchCloseSplitTest)
+
     add_test(NAME EGoTouchApp.ServiceProxyConfigMergeTest COMMAND EGoTouchApp_ServiceProxyConfigMergeTest)
     set_tests_properties(EGoTouchApp.ServiceProxyConfigMergeTest PROPERTIES
         LABELS "App;EGoTouchApp;ServiceProxy;PureLogic"
@@ -585,8 +532,7 @@ if (EGO_BUILD_TESTS)
         LABELS "App;EGoTouchApp;DiagnosticsWorkbench;PureLogic"
         TIMEOUT 30
         WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-    add_test(NAME StylusLinearFilterProcessTest COMMAND StylusLinearFilterProcessTest)
-    add_test(NAME StylusHpp3PostPressureProcessTest COMMAND StylusHpp3PostPressureProcessTest)
+
     add_test(NAME ServiceConfigParserTest COMMAND ServiceConfigParserTest)
     add_test(NAME ServiceHostConfigMutationTest COMMAND ServiceHostConfigMutationTest)
     add_test(NAME ServiceEntryArgumentRoutingTest COMMAND ServiceEntryArgumentRoutingTest)
