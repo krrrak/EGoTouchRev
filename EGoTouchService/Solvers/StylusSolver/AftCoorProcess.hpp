@@ -1,10 +1,11 @@
 #pragma once
 
-#include "AsaTypes.hpp"
+#include "StylusSolver/AsaTypes.hpp"
 #include "SolverTypes.h"
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 
 namespace Solvers::Stylus {
 

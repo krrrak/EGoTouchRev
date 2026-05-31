@@ -1,5 +1,6 @@
 #include "DvrBinaryIO.h"
 #include "DvrFormat.h"
+#include "StylusSolver/AsaTypes.hpp"
 
 #include <algorithm>
 #include <array>
@@ -390,6 +391,36 @@ bool TryReadBoolStridedField(const std::vector<uint8_t>& record,
     return true;
 }
 
+void SynthesizeRawGridFromLegacyFields(const std::vector<uint8_t>& record,
+                                       const std::vector<Dvr2FieldDef>& fields,
+                                       Solvers::HeatmapFrame& dst) {
+    auto& grid = dst.stylus.runtime.rawGrid.asaGrid;
+    if (grid.tx1.valid || grid.tx2.valid) return;
+
+    if (const auto* rawLenField = DvrFmt::FindField(fields, "rawDataLength")) {
+        const auto* rawField = DvrFmt::FindField(fields, "rawData");
+        if (rawField && rawLenField->offset + sizeof(uint16_t) <= record.size()) {
+            uint16_t rawLen = 0;
+            std::memcpy(&rawLen, record.data() + rawLenField->offset, sizeof(rawLen));
+            const size_t len = std::min<size_t>({rawLen, Frame::kTotalFrameSize, rawField->size});
+            if (rawField->offset + len <= record.size() && len >= static_cast<size_t>(Frame::kTotalFrameSize)) {
+                const size_t slaveOffset = rawField->offset + len - static_cast<size_t>(Frame::kSlaveFrameSize);
+                const uint8_t* payload = record.data() + slaveOffset + Asa::kSlaveHeaderBytes;
+                grid = Asa::ExtractGridFromSlavePayloadBytes(payload, static_cast<size_t>(Asa::kBlockWords * 2 * sizeof(uint16_t)));
+                dst.stylus.input.tx1BlockValid = grid.tx1.valid;
+                dst.stylus.input.tx2BlockValid = grid.tx2.valid;
+                if (grid.tx1.valid || grid.tx2.valid) return;
+            }
+        }
+    }
+
+    if (dst.slaveSuffixValid) {
+        grid = Asa::ExtractGridFromSlaveWords(dst.slaveSuffix.words, Frame::kSlaveSuffixWords);
+        dst.stylus.input.tx1BlockValid = grid.tx1.valid;
+        dst.stylus.input.tx2BlockValid = grid.tx2.valid;
+    }
+}
+
 bool TryReadRawGridBlock(const std::vector<uint8_t>& record,
                          const std::vector<Dvr2FieldDef>& fields,
                          std::string_view validPath,
@@ -596,13 +627,17 @@ bool PopulateHeatmapFrameFromRecordBytes(const std::vector<uint8_t>& record,
 
     if (!TryReadScalarField(record, fields, "rawDataLength", DvrFmt::Dvr2ValueType::UInt16, u16, outError)) return false;
     const auto* rawField = DvrFmt::FindField(fields, "rawData");
-    if (!rawField) return true;
+    if (!rawField) {
+        SynthesizeRawGridFromLegacyFields(record, fields, dst);
+        return true;
+    }
     if (!ValidateField(*rawField, record.size(), "rawData", DvrFmt::Dvr2ValueType::UInt8, DvrFmt::Dvr2FieldRank::Array, outError)) return false;
     if (rawField->elementSize != sizeof(uint8_t)) {
         if (outError) *outError = "DVR2 frame schema rawData element size mismatch";
         return false;
     }
     const size_t rawLen = std::min<size_t>({u16, Frame::kTotalFrameSize, rawField->size});
+    SynthesizeRawGridFromLegacyFields(record, fields, dst);
 #if EGOTOUCH_DIAG
     dst.rawData.assign(record.data() + rawField->offset, record.data() + rawField->offset + rawLen);
     dst.rawPtr = dst.rawData.empty() ? nullptr : dst.rawData.data();
@@ -1106,7 +1141,7 @@ bool ReadBinaryFile(const std::filesystem::path& filePath,
     if (meta.txCount != Frame::kTxCount || meta.rxCount != Frame::kRxCount ||
         meta.masterSuffixWords != Frame::kMasterSuffixWords ||
         meta.slaveSuffixWords != Frame::kSlaveSuffixWords ||
-        meta.maxContacts != DvrFmt::kMaxContacts || meta.maxPeaks != DvrFmt::kMaxPeaks ||
+        meta.maxContacts == 0 || meta.maxPeaks == 0 ||
         meta.rawFrameSize != Frame::kTotalFrameSize) {
         if (outError) *outError = "DVR2 meta dimensions are unsupported";
         return false;

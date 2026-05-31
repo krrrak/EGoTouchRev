@@ -42,9 +42,9 @@ constexpr double kTouchSampleRateHz = 120.0;
 constexpr int kDvrMaxContacts = 10;
 constexpr int kDvrMaxPeaks = 30;
 
-const std::filesystem::path kDefaultDatasetPath = std::filesystem::path("../Tools/tests/dataset.dvrbin");
-const std::filesystem::path kDefaultTouchDatasetPath = std::filesystem::path("EGoTouchService/Solvers/tests/perf/touch.dvrbin");
-const std::filesystem::path kDefaultStylusDatasetPath = std::filesystem::path("EGoTouchService/Solvers/tests/perf/stylus.dvrbin");
+const std::filesystem::path kDefaultDatasetPath = std::filesystem::path("Common/DVRCore/tests/fixtures/dvrbin/dataset.dvrbin");
+const std::filesystem::path kDefaultTouchDatasetPath = kDefaultDatasetPath;
+const std::filesystem::path kDefaultStylusDatasetPath = kDefaultDatasetPath;
 
 enum class BenchmarkMode {
     Linked,
@@ -263,7 +263,7 @@ bool HasStylusSignal(const Frame::SlaveSuffixView& suffix) {
 }
 
 bool RawFrameHasStylusSignal(const std::vector<uint8_t>& raw) {
-    if (raw.size() < static_cast<size_t>(Frame::kSlaveFrameSize)) {
+    if (raw.size() < static_cast<size_t>(Frame::kTotalFrameSize)) {
         return false;
     }
 
@@ -323,6 +323,24 @@ T ReadFrameFieldScalar(const std::vector<uint8_t>& record,
     const uint64_t offset = static_cast<uint64_t>(field.offset) + static_cast<uint64_t>(index) * field.stride;
     if (offset + sizeof(T) > record.size()) {
         throw std::runtime_error("DVR2 frame field exceeds record: " + std::string(path));
+    }
+    T value{};
+    std::memcpy(&value, record.data() + static_cast<size_t>(offset), sizeof(T));
+    return value;
+}
+
+template <typename T>
+T ReadOptionalFrameFieldScalar(const std::vector<uint8_t>& record,
+                               const std::vector<Dvr2FieldDef>& fields,
+                               std::string_view path,
+                               T defaultValue = {}) {
+    const auto* field = DvrFmt::FindField(fields, path);
+    if (!field) {
+        return defaultValue;
+    }
+    const uint64_t offset = field->offset;
+    if (offset + sizeof(T) > record.size()) {
+        throw std::runtime_error("DVR2 optional frame field exceeds record: " + std::string(path));
     }
     T value{};
     std::memcpy(&value, record.data() + static_cast<size_t>(offset), sizeof(T));
@@ -524,16 +542,16 @@ DvrDataset LoadDvrDataset(const std::filesystem::path& filePath) {
         if (sample.touchFrame.slaveSuffixValid && HasStylusSignal(sample.touchFrame.slaveSuffix)) {
             dataset.suffixStylusSignalFrames++;
         }
-        if (ReadFrameFieldScalar<uint8_t>(record, frameFields, "stylus.slaveValid") != 0) {
+        if (ReadOptionalFrameFieldScalar<uint8_t>(record, frameFields, "stylus.slaveValid") != 0) {
             dataset.recordedStylusSlaveValidFrames++;
         }
-        if (ReadFrameFieldScalar<uint8_t>(record, frameFields, "stylus.tx1BlockValid") != 0) {
+        if (ReadOptionalFrameFieldScalar<uint8_t>(record, frameFields, "stylus.tx1BlockValid") != 0) {
             dataset.recordedStylusTx1ValidFrames++;
         }
-        if (ReadFrameFieldScalar<uint8_t>(record, frameFields, "stylus.output.valid") != 0) {
+        if (ReadOptionalFrameFieldScalar<uint8_t>(record, frameFields, "stylus.output.valid") != 0) {
             dataset.recordedStylusOutputValidFrames++;
         }
-        if (ReadFrameFieldScalar<uint8_t>(record, frameFields, "stylus.point.valid") != 0) {
+        if (ReadOptionalFrameFieldScalar<uint8_t>(record, frameFields, "stylus.point.valid") != 0) {
             dataset.recordedStylusPointValidFrames++;
         }
         dataset.frames.push_back(std::move(sample));
@@ -627,15 +645,13 @@ std::filesystem::path ResolveDatasetPath(const std::filesystem::path& configured
 
     const std::filesystem::path cwd = std::filesystem::current_path();
     const std::filesystem::path exeDir = std::filesystem::absolute(argv0Path).parent_path();
-    const std::filesystem::path sourceRoot = std::filesystem::path("D:/source/repos/EGoTouchRev-rebuild");
-    const std::array<std::filesystem::path, 9> candidates = {
+    const std::array<std::filesystem::path, 8> candidates = {
         cwd / configuredPath,
         cwd / ".." / configuredPath,
         cwd / ".." / ".." / configuredPath,
         exeDir / configuredPath,
         exeDir / ".." / configuredPath,
         exeDir / ".." / ".." / configuredPath,
-        sourceRoot / configuredPath,
         kDefaultDatasetPath,
         configuredPath
     };
@@ -679,11 +695,11 @@ std::string BenchmarkModeName(BenchmarkMode mode) {
 void PrintUsage() {
     std::cout
         << "Usage: SolversRawdataBenchmark [options]\n"
-        << "  --frames <N>             Total replay steps (default 5000)\n"
+        << "  --frames <N>             Total replay steps (default " << kDefaultBenchmarkFrames << ")\n"
         << "  --mode <linked|independent|both>\n"
         << "                           Benchmark mode (default linked)\n"
-        << "  --touch-dataset <path>   Touch DVR2 .dvrbin input (default EGoTouchService/Solvers/tests/perf/touch.dvrbin)\n"
-        << "  --stylus-dataset <path>  Stylus DVR2 .dvrbin input (default EGoTouchService/Solvers/tests/perf/stylus.dvrbin)\n"
+        << "  --touch-dataset <path>   Touch DVR2 .dvrbin input (default " << kDefaultTouchDatasetPath.string() << ")\n"
+        << "  --stylus-dataset <path>  Stylus DVR2 .dvrbin input (default " << kDefaultStylusDatasetPath.string() << ")\n"
         << "  --dataset <path>         Use the same DVR2 .dvrbin input for touch and stylus\n"
         << "  --config <path>          Explicit config.ini path\n"
         << "  --stylus-pressure <N>    Fixed stylus pressure (default 512)\n"
@@ -971,7 +987,19 @@ void PrintStats(const RunStats& stats,
     std::cout << "[RawdataBenchmark] stylus_tx1_missing_frames=" << stats.stylusTx1MissingFrames << "\n";
 }
 
-void RequireStylusReadback(const RunStats& stats) {
+bool DatasetNeedsStylusReadback(const DvrDataset& dataset) {
+    return dataset.rawStylusSignalFrames > 0 ||
+           dataset.suffixStylusSignalFrames > 0 ||
+           dataset.recordedStylusSlaveValidFrames > 0 ||
+           dataset.recordedStylusTx1ValidFrames > 0 ||
+           dataset.recordedStylusOutputValidFrames > 0 ||
+           dataset.recordedStylusPointValidFrames > 0;
+}
+
+void RequireStylusReadback(const RunStats& stats, const DvrDataset& stylusDataset) {
+    if (!DatasetNeedsStylusReadback(stylusDataset)) {
+        return;
+    }
     if (stats.stylusValidFrames == 0 || stats.stylusSignalFrames == 0) {
         throw std::runtime_error(
             "Stylus dataset produced no valid stylus frames; check stylus rawData/slave payload");
@@ -1048,20 +1076,20 @@ int main(int argc, char** argv) {
                 BenchmarkMode::Linked, resolvedOptions, configPath, touchDataset, stylusDataset);
             PrintStats(linkedStats, resolvedOptions, configPath);
             PrintCtestMeasurements(linkedStats);
-            RequireStylusReadback(linkedStats);
+            RequireStylusReadback(linkedStats, stylusDataset);
             std::cout << "\n";
 
             const RunStats independentStats = RunBenchmark(
                 BenchmarkMode::Independent, resolvedOptions, configPath, touchDataset, stylusDataset);
             PrintStats(independentStats, resolvedOptions, configPath);
             PrintCtestMeasurements(independentStats);
-            RequireStylusReadback(independentStats);
+            RequireStylusReadback(independentStats, stylusDataset);
         } else {
             const RunStats stats = RunBenchmark(
                 options.mode, resolvedOptions, configPath, touchDataset, stylusDataset);
             PrintStats(stats, resolvedOptions, configPath);
             PrintCtestMeasurements(stats);
-            RequireStylusReadback(stats);
+            RequireStylusReadback(stats, stylusDataset);
         }
 
         return 0;

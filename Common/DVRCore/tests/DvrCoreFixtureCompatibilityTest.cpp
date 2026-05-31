@@ -26,7 +26,7 @@ void TestDatasetFixtureCompatibility() {
     DvrCoreTest::Require(Dvr::ReadBinaryFile(path, frames, version, &flags, &error, &dynamicSchema, &dynamicFrames, &runtimeConfig),
                          error.empty() ? "DVR2 fixture should be readable" : error.c_str());
 
-    DvrCoreTest::Require(version == Dvr::Format::kCurrentDvrFormatVersion, "fixture should be DVR2 v6");
+    DvrCoreTest::Require(version == 6, "fixture should be legacy DVR2 v6");
     DvrCoreTest::Require(flags == 7u, "fixture flags should match v6 4-section golden");
     DvrCoreTest::Require((flags & Dvr::Format::kDvrFlagHasRuntimeConfig) == 0, "fixture should not mark runtime config");
     DvrCoreTest::Require((flags & Dvr::Format::kDvrFlagHasDynamicDebug) == 0, "fixture should not mark dynamic debug");

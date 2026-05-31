@@ -32,6 +32,7 @@ void ServiceProxy::SaveConfig() {
     Ipc::ConfigMutationResultWire patchSummary{};
     bool havePatchSummary = false;
     bool skipLocalServiceSection = false;
+    bool servicePersistSucceeded = true;
 
     // Thin-client primary path: Service is authoritative for [Service] config.
     if (serviceConnected) {
@@ -60,9 +61,10 @@ void ServiceProxy::SaveConfig() {
 
         const auto persistResp = m_client.PersistConfig();
         if (!persistResp.success) {
+            servicePersistSucceeded = false;
             LOG_WARN("App", __func__, "IPC", "ApplyConfigPatch succeeded but PersistConfig failed with status={}", static_cast<unsigned int>(persistResp.status));
             // Service owns [Service] config in connected mode. If persist fails,
-            // do not write local [Service] section from client-side state.
+            // preserve any existing local [Service] instead of writing client-side state.
             skipLocalServiceSection = true;
         }
 
@@ -112,7 +114,8 @@ void ServiceProxy::SaveConfig() {
         existingText,
         skipLocalServiceSection ? std::string_view{} : std::string_view(serviceSection),
         BuildTouchPipelineConfigSection(m_pipeline, persistedModuleState),
-        BuildStylusPipelineConfigSection(m_stylusPipeline));
+        BuildStylusPipelineConfigSection(m_stylusPipeline),
+        skipLocalServiceSection);
 
     const std::string tempPath = kConfigPath + ".tmp";
     {
@@ -158,15 +161,18 @@ void ServiceProxy::SaveConfig() {
         summary.restartRequiredFields = reloadSummary.restartRequiredFields;
     }
 
-    if (summary.restartRequiredFields != 0u) {
+    const char* transactionState = servicePersistSucceeded ? "Config patched/persisted" : "Config patched but service persist failed";
+    if (summary.restartRequiredFields != 0u || !servicePersistSucceeded) {
         LOG_WARN("App", __func__, "IPC",
-                 "Config patched/persisted: changed=0x{:02X} applied_now=0x{:02X} restart_required=0x{:02X}.",
+                 "{}: changed=0x{:02X} applied_now=0x{:02X} restart_required=0x{:02X}.",
+                 transactionState,
                  static_cast<unsigned int>(summary.changedFields),
                  static_cast<unsigned int>(summary.appliedFields),
                  static_cast<unsigned int>(summary.restartRequiredFields));
     } else {
         LOG_INFO("App", __func__, "IPC",
-                 "Config patched/persisted: changed=0x{:02X} applied_now=0x{:02X} restart_required=0x{:02X}.",
+                 "{}: changed=0x{:02X} applied_now=0x{:02X} restart_required=0x{:02X}.",
+                 transactionState,
                  static_cast<unsigned int>(summary.changedFields),
                  static_cast<unsigned int>(summary.appliedFields),
                  static_cast<unsigned int>(summary.restartRequiredFields));
@@ -221,9 +227,9 @@ void ServiceProxy::LoadConfig() {
                     // Offline fallback has no runtime distinction; mirror desired->active.
                     m_srvActiveModeFull.store(desiredFull, std::memory_order_relaxed);
                 } else if (key == "auto_mode") {
-                    m_srvAutoMode.store(value == "1" || value == "true", std::memory_order_relaxed);
+                    m_srvAutoMode.store(ParseServiceBool(value), std::memory_order_relaxed);
                 } else if (key == "stylus_vhf_enabled") {
-                    m_srvStylusVhfEnabled.store(value == "1" || value == "true", std::memory_order_relaxed);
+                    m_srvStylusVhfEnabled.store(ParseServiceBool(value), std::memory_order_relaxed);
                 } else if (key == "pen_button_mode") {
                     int ival = std::atoi(value.c_str());
                     m_srvPenButtonMode.store(

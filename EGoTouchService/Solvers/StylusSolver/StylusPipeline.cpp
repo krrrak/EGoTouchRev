@@ -341,11 +341,35 @@ void StylusPipeline::LoadConfig(const std::string& key, const std::string& value
         if (!m_coorIIRProcess.m_enabled) {
             m_coorIIRProcess.Reset();
         }
+    } else if (key == "sp.iirCoefLowInBand") {
+        m_coorIIRProcess.m_coefLowInBand = static_cast<uint8_t>(std::clamp(ParseConfigInt(key, value), 0, 255));
+    } else if (key == "sp.iirCoefHighInBand") {
+        m_coorIIRProcess.m_coefHighInBand = static_cast<uint8_t>(std::clamp(ParseConfigInt(key, value), 0, 255));
+    } else if (key == "sp.iirSpeedTholdInBand") {
+        m_coorIIRProcess.m_speedTholdInBand = static_cast<uint8_t>(std::clamp(ParseConfigInt(key, value), 0, 255));
+    } else if (key == "sp.iirCoefLowEdge") {
+        m_coorIIRProcess.m_coefLowEdge = static_cast<uint8_t>(std::clamp(ParseConfigInt(key, value), 0, 255));
+    } else if (key == "sp.iirCoefHighEdge") {
+        m_coorIIRProcess.m_coefHighEdge = static_cast<uint8_t>(std::clamp(ParseConfigInt(key, value), 0, 255));
+    } else if (key == "sp.iirSpeedTholdEdge") {
+        m_coorIIRProcess.m_speedTholdEdge = static_cast<uint8_t>(std::clamp(ParseConfigInt(key, value), 0, 255));
+    } else if (key == "sp.iirSpeedMax") {
+        m_coorIIRProcess.m_speedMax = std::clamp(ParseConfigInt(key, value), 0, 1000);
+    } else if (key == "sp.iirMaxCoef") {
+        m_coorIIRProcess.m_maxCoef = static_cast<uint8_t>(std::clamp(ParseConfigInt(key, value), 0, 255));
     } else if (key == "sp.aftCoorEnabled") {
         m_aftCoorProcess.m_enabled = toBool(value);
         if (!m_aftCoorProcess.m_enabled) {
             m_aftCoorProcess.Reset();
         }
+    } else if (key == "sp.lockFlashInBandX") {
+        m_aftCoorProcess.m_lockFlashInBandX = static_cast<uint8_t>(std::clamp(ParseConfigInt(key, value), 0, 255));
+    } else if (key == "sp.lockFlashInBandY") {
+        m_aftCoorProcess.m_lockFlashInBandY = static_cast<uint8_t>(std::clamp(ParseConfigInt(key, value), 0, 255));
+    } else if (key == "sp.lockFlashEdgeX") {
+        m_aftCoorProcess.m_lockFlashEdgeX = static_cast<uint8_t>(std::clamp(ParseConfigInt(key, value), 0, 255));
+    } else if (key == "sp.lockFlashEdgeY") {
+        m_aftCoorProcess.m_lockFlashEdgeY = static_cast<uint8_t>(std::clamp(ParseConfigInt(key, value), 0, 255));
     } else if (key == "sp.lockSensorTxCount") {
         m_aftCoorProcess.m_sensorTxCount = std::max(1, ParseConfigInt(key, value));
     } else if (key == "sp.lockSensorRxCount") {

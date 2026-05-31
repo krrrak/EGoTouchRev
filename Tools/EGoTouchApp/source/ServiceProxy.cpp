@@ -1,5 +1,7 @@
 #include "ServiceProxyInternal.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <sstream>
 
@@ -26,6 +28,14 @@ bool ParseIniKeyValue(std::string_view line, std::string& key, std::string& valu
     key = TrimCopy(line.substr(0, eq));
     value = TrimCopy(line.substr(eq + 1));
     return !key.empty();
+}
+
+bool ParseServiceBool(std::string_view value) {
+    std::string lowered = TrimCopy(value);
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return lowered == "1" || lowered == "true" || lowered == "yes" || lowered == "on";
 }
 
 bool IsLegacyTouchSection(const std::string& section) {
@@ -324,7 +334,8 @@ std::string MergeServiceProxyConfigSections(
     std::string_view existingText,
     std::string_view serviceSection,
     std::string_view touchSection,
-    std::string_view stylusSection) {
+    std::string_view stylusSection,
+    bool preserveExistingServiceSection) {
     auto isCanonicalSection = [](const std::string& section) {
         return section == "Service" ||
                section == "TouchPipeline" ||
@@ -333,6 +344,14 @@ std::string MergeServiceProxyConfigSections(
     };
 
     auto appendSection = [](std::string& out, std::string_view sectionText) {
+        if (sectionText.empty()) return;
+        if (!out.empty() && out.back() != '\n') out.push_back('\n');
+        out.append(sectionText);
+        if (out.empty() || out.back() != '\n') out.push_back('\n');
+        out.push_back('\n');
+    };
+
+    auto preserveExistingSection = [](std::string& out, std::string_view sectionText) {
         if (sectionText.empty()) return;
         if (!out.empty() && out.back() != '\n') out.push_back('\n');
         out.append(sectionText);
@@ -376,7 +395,11 @@ std::string MergeServiceProxyConfigSections(
 
             if (isCanonicalSection(section)) {
                 if (section == "Service" && !wroteService) {
-                    appendSection(merged, serviceSection);
+                    if (serviceSection.empty() && preserveExistingServiceSection) {
+                        preserveExistingSection(merged, existingText.substr(pos, sectionEnd - pos));
+                    } else {
+                        appendSection(merged, serviceSection);
+                    }
                     wroteService = true;
                 } else if ((section == "TouchPipeline" || IsLegacyTouchSection(section)) && !wroteTouch) {
                     appendSection(merged, touchSection);

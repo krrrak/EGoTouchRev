@@ -11,6 +11,7 @@ extern const std::string kConfigPath;
 
 std::string TrimCopy(std::string_view input);
 bool ParseIniKeyValue(std::string_view line, std::string& key, std::string& value);
+bool ParseServiceBool(std::string_view value);
 bool IsLegacyTouchSection(const std::string& section);
 std::optional<std::string> MapLegacyTouchKey(const std::string& section, const std::string& key);
 
@@ -55,6 +56,7 @@ std::string MergeServiceProxyConfigSections(
     std::string_view existingText,
     std::string_view serviceSection,
     std::string_view touchSection,
-    std::string_view stylusSection);
+    std::string_view stylusSection,
+    bool preserveExistingServiceSection = false);
 
 } // namespace App

@@ -65,6 +65,10 @@ void TestTrimParseAndLegacyMapping() {
     Require(key == "mode", "ParseIniKeyValue should trim keys");
     Require(value == "full", "ParseIniKeyValue should trim values");
     Require(!App::ParseIniKeyValue("[Service]", key, value), "ParseIniKeyValue should reject lines without '='");
+    Require(App::ParseServiceBool("YES"), "ParseServiceBool should accept YES");
+    Require(App::ParseServiceBool("on"), "ParseServiceBool should accept on");
+    Require(App::ParseServiceBool("TRUE"), "ParseServiceBool should accept TRUE");
+    Require(!App::ParseServiceBool("off"), "ParseServiceBool should reject off");
 
     constexpr std::array<const char*, 8> legacySections{
         "Master Frame Parser",
@@ -183,6 +187,49 @@ void TestPersistedGridIIRStateIsNotInjectedWhenPipelineOmitsGridIIR() {
     RequireMissingSubstring(persistedText, "GridIIREnabled=");
 }
 
+void TestStylusPipelineConfigRoundTripCoversIirAndLockKeys() {
+    Solvers::StylusPipeline saved;
+    saved.m_coorIIRProcess.m_coefLowInBand = 11;
+    saved.m_coorIIRProcess.m_coefHighInBand = 12;
+    saved.m_coorIIRProcess.m_speedTholdInBand = 13;
+    saved.m_coorIIRProcess.m_coefLowEdge = 14;
+    saved.m_coorIIRProcess.m_coefHighEdge = 15;
+    saved.m_coorIIRProcess.m_speedTholdEdge = 16;
+    saved.m_coorIIRProcess.m_speedMax = 321;
+    saved.m_coorIIRProcess.m_maxCoef = 17;
+    saved.m_aftCoorProcess.m_lockFlashInBandX = 21;
+    saved.m_aftCoorProcess.m_lockFlashInBandY = 22;
+    saved.m_aftCoorProcess.m_lockFlashEdgeX = 23;
+    saved.m_aftCoorProcess.m_lockFlashEdgeY = 24;
+
+    std::ostringstream out;
+    saved.SaveConfig(out);
+
+    Solvers::StylusPipeline loaded;
+    std::istringstream in(out.str());
+    std::string line;
+    while (std::getline(in, line)) {
+        std::string key;
+        std::string value;
+        if (App::ParseIniKeyValue(App::TrimCopy(line), key, value)) {
+            loaded.LoadConfig(key, value);
+        }
+    }
+
+    Require(loaded.m_coorIIRProcess.m_coefLowInBand == 11, "IIR low in-band coefficient should round-trip");
+    Require(loaded.m_coorIIRProcess.m_coefHighInBand == 12, "IIR high in-band coefficient should round-trip");
+    Require(loaded.m_coorIIRProcess.m_speedTholdInBand == 13, "IIR in-band speed threshold should round-trip");
+    Require(loaded.m_coorIIRProcess.m_coefLowEdge == 14, "IIR low edge coefficient should round-trip");
+    Require(loaded.m_coorIIRProcess.m_coefHighEdge == 15, "IIR high edge coefficient should round-trip");
+    Require(loaded.m_coorIIRProcess.m_speedTholdEdge == 16, "IIR edge speed threshold should round-trip");
+    Require(loaded.m_coorIIRProcess.m_speedMax == 321, "IIR speed max should round-trip");
+    Require(loaded.m_coorIIRProcess.m_maxCoef == 17, "IIR max coefficient should round-trip");
+    Require(loaded.m_aftCoorProcess.m_lockFlashInBandX == 21, "AFT in-band X lock flash should round-trip");
+    Require(loaded.m_aftCoorProcess.m_lockFlashInBandY == 22, "AFT in-band Y lock flash should round-trip");
+    Require(loaded.m_aftCoorProcess.m_lockFlashEdgeX == 23, "AFT edge X lock flash should round-trip");
+    Require(loaded.m_aftCoorProcess.m_lockFlashEdgeY == 24, "AFT edge Y lock flash should round-trip");
+}
+
 void TestMergeWithEmptyServiceSectionRemovesExistingService() {
     Solvers::TouchPipeline touchPipeline;
     Solvers::StylusPipeline stylusPipeline;
@@ -200,12 +247,89 @@ void TestMergeWithEmptyServiceSectionRemovesExistingService() {
         App::BuildStylusPipelineConfigSection(stylusPipeline));
 
     Require(merged.find("[Service]") == std::string::npos,
-            "empty service section should remove existing client-side [Service]");
+            "empty service section should remove existing client-side [Service] when preserve is not requested");
     RequirePresentSubstring(merged, "[Unrelated]\nalpha=1");
     Require(CountOccurrences(merged, "[TouchPipeline]") == 1,
             "empty service merge should still write touch pipeline section");
     Require(CountOccurrences(merged, "[StylusPipeline]") == 1,
             "empty service merge should still write stylus pipeline section");
+}
+
+void TestMergeWithEmptyServiceSectionCanPreserveExistingService() {
+    Solvers::TouchPipeline touchPipeline;
+    Solvers::StylusPipeline stylusPipeline;
+    const std::string existing =
+        "; keep header comment\n"
+        "[Service]\n"
+        "mode=touch_only\n"
+        "auto_mode=0\n"
+        "stylus_vhf_enabled=0\n"
+        "pen_button_mode=2\n"
+        "pen_button_route=1\n"
+        "\n"
+        "[Unrelated]\n"
+        "alpha=1\n";
+
+    const std::string merged = App::MergeServiceProxyConfigSections(
+        existing,
+        {},
+        App::BuildTouchPipelineConfigSection(touchPipeline),
+        App::BuildStylusPipelineConfigSection(stylusPipeline),
+        true);
+
+    Require(CountOccurrences(merged, "[Service]") == 1,
+            "preserve merge should keep existing [Service] section");
+    RequirePresentSubstring(merged, "mode=touch_only");
+    RequirePresentSubstring(merged, "auto_mode=0");
+    RequirePresentSubstring(merged, "stylus_vhf_enabled=0");
+    RequirePresentSubstring(merged, "pen_button_mode=2");
+    RequirePresentSubstring(merged, "pen_button_route=1");
+    RequirePresentSubstring(merged, "[Unrelated]\nalpha=1");
+    Require(CountOccurrences(merged, "[TouchPipeline]") == 1,
+            "preserve merge should still write touch pipeline section");
+    Require(CountOccurrences(merged, "[StylusPipeline]") == 1,
+            "preserve merge should still write stylus pipeline section");
+
+    const std::string withoutService = App::MergeServiceProxyConfigSections(
+        "[Unrelated]\nalpha=1\n",
+        {},
+        App::BuildTouchPipelineConfigSection(touchPipeline),
+        App::BuildStylusPipelineConfigSection(stylusPipeline),
+        true);
+    Require(withoutService.find("[Service]") == std::string::npos,
+            "preserve merge should not invent [Service] when no existing section exists");
+}
+
+void TestMergeReplacesServiceWithCanonicalSection() {
+    Solvers::TouchPipeline touchPipeline;
+    Solvers::StylusPipeline stylusPipeline;
+    const std::string existing =
+        "[Service]\n"
+        "mode=touch_only\n"
+        "auto_mode=0\n"
+        "stylus_vhf_enabled=0\n"
+        "pen_button_mode=2\n"
+        "pen_button_route=1\n"
+        "\n"
+        "[Unrelated]\n"
+        "alpha=1\n";
+
+    const std::string merged = App::MergeServiceProxyConfigSections(
+        existing,
+        App::BuildServiceConfigSection(true, true, true,
+                                       PenButtonMode::OemCustom,
+                                       PenButtonRoute::VhfOnly),
+        App::BuildTouchPipelineConfigSection(touchPipeline),
+        App::BuildStylusPipelineConfigSection(stylusPipeline),
+        true);
+
+    Require(CountOccurrences(merged, "[Service]") == 1,
+            "canonical merge should keep exactly one [Service] section");
+    RequirePresentSubstring(merged, "mode=full");
+    RequirePresentSubstring(merged, "auto_mode=1");
+    RequirePresentSubstring(merged, "stylus_vhf_enabled=1");
+    RequireMissingSubstring(merged, "mode=touch_only");
+    RequirePresentSubstring(merged, "[Unrelated]\nalpha=1");
 }
 
 void TestMergeDeduplicatesOwnedSections() {
@@ -304,7 +428,10 @@ int main() {
         TestMasterParserOnlySnapshotRestore();
         TestPersistedTouchConfigSkipsFrozenKeysWhileOverlayActive();
         TestPersistedGridIIRStateIsNotInjectedWhenPipelineOmitsGridIIR();
+        TestStylusPipelineConfigRoundTripCoversIirAndLockKeys();
         TestMergeWithEmptyServiceSectionRemovesExistingService();
+        TestMergeWithEmptyServiceSectionCanPreserveExistingService();
+        TestMergeReplacesServiceWithCanonicalSection();
         TestMergeDeduplicatesOwnedSections();
         TestMergePreservesUnrelatedSectionsAndReplacesTouchSections();
         std::cout << "[TEST] ServiceProxy config merge tests passed.\n";

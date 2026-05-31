@@ -1,5 +1,8 @@
 #pragma once
 
+#ifndef EGOTOUCH_SOLVERS_STYLUSSOLVER_ASATYPES_HPP
+#define EGOTOUCH_SOLVERS_STYLUSSOLVER_ASATYPES_HPP
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -201,3 +204,5 @@ inline int32_t SensorPitchSizeMap(int32_t localCoor,
 }
 
 } // namespace Asa
+
+#endif // EGOTOUCH_SOLVERS_STYLUSSOLVER_ASATYPES_HPP
