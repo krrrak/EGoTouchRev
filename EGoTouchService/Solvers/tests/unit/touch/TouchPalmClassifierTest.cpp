@@ -384,55 +384,132 @@ void TestPalmConfigRoundTrip() {
     pipeline.SaveConfig(out);
     const std::string saved = out.str();
 
-    Require(saved.find("PalmAreaThreshold=77") != std::string::npos,
-            "old palm area key should be saved");
-    Require(saved.find("PeakEvalFingerProminence=333") != std::string::npos,
-            "new peak evaluator key should be saved");
-    Require(saved.find("PalmShadowRadius=6") != std::string::npos,
-            "palm shadow radius key should be saved");
-    Require(saved.find("PalmShadowSeedScore=0.72") != std::string::npos,
-            "palm shadow seed score key should be saved");
+    const char* frozenSerializedKeys[] = {
+        "PalmEnabled=",
+        "PalmAreaThreshold=",
+        "PalmSignalSumThreshold=",
+        "PalmDensityThresholdLow=",
+        "PalmAreaMinForDensity=",
+        "PalmElongatedEnabled=",
+        "PalmElongatedMinArea=",
+        "PalmElongatedAspectRatio=",
+        "PalmAnalyzerEnabled=",
+        "PalmCandidateAreaThreshold=",
+        "PalmCandidateSignalThreshold=",
+        "PalmLikelyAreaThreshold=",
+        "PalmFillRatioThreshold=",
+        "PalmFlatSharpnessThreshold=",
+        "PalmStrongPeakProminence=",
+        "PeakEvalEnabled=",
+        "PeakEvalFingerProminence=",
+        "PeakEvalFingerSharpness=",
+        "PeakEvalPalmSharpnessMax=",
+        "PeakEvalAmbiguousMargin=",
+        "PalmAwareExpansionEnabled=",
+        "PalmFingerInPalmThresholdRatio=",
+        "PalmFingerInPalmMaxRadius=",
+        "PalmLikelyAllowContact=",
+        "PalmShadowEnabled=",
+        "PalmShadowRadius=",
+        "PalmShadowHoldFrames=",
+        "PalmShadowSeedScore=",
+    };
+    for (const char* key : frozenSerializedKeys) {
+        Require(saved.find(key) == std::string::npos,
+                "frozen palm classifier key should not be saved");
+    }
 
     Solvers::TouchPipeline loaded;
+    const auto defaults = loaded.m_touchClassifier;
     LoadFromSavedText(loaded, saved);
 
-    Require(!loaded.m_touchClassifier.m_enabled, "old PalmEnabled key should round-trip");
-    Require(loaded.m_touchClassifier.m_areaThreshold == 77, "old palm area key should round-trip");
-    Require(loaded.m_touchClassifier.m_signalSumThreshold == 123456, "old palm signal key should round-trip");
-    RequireNear(loaded.m_touchClassifier.m_densityThresholdLow, 321.5f, 0.0001f,
-                "old palm density key should round-trip");
-    Require(!loaded.m_touchClassifier.m_elongatedEnabled, "old palm elongated key should round-trip");
-    Require(!loaded.m_touchClassifier.m_analyzerEnabled, "new analyzer enabled key should round-trip");
-    Require(loaded.m_touchClassifier.m_areaMinForDensity == 22, "old palm density min area key should round-trip");
-    Require(loaded.m_touchClassifier.m_elongatedMinArea == 12, "old palm elongated min area key should round-trip");
-    RequireNear(loaded.m_touchClassifier.m_elongatedAspectRatio, 3.25f, 0.0001f,
-                "old palm elongated aspect key should round-trip");
-    Require(loaded.m_touchClassifier.m_candidateAreaThreshold == 44, "new candidate area key should round-trip");
-    Require(loaded.m_touchClassifier.m_candidateSignalThreshold == 65432, "new candidate signal key should round-trip");
-    Require(loaded.m_touchClassifier.m_likelyAreaThreshold == 66, "new likely area key should round-trip");
-    RequireNear(loaded.m_touchClassifier.m_fillRatioThreshold, 0.55f, 0.0001f,
-                "new fill ratio key should round-trip");
-    RequireNear(loaded.m_touchClassifier.m_flatSharpnessThreshold, 1.22f, 0.0001f,
-                "new flat sharpness key should round-trip");
-    Require(loaded.m_touchClassifier.m_strongPeakProminence == 222, "new strong peak key should round-trip");
-    Require(!loaded.m_touchClassifier.m_peakEvalEnabled, "new peak evaluator enabled key should round-trip");
-    Require(loaded.m_touchClassifier.m_fingerProminence == 333, "new peak evaluator prominence key should round-trip");
-    RequireNear(loaded.m_touchClassifier.m_fingerSharpness, 1.77f, 0.0001f,
-                "new peak evaluator sharpness key should round-trip");
-    RequireNear(loaded.m_touchClassifier.m_palmSharpnessMax, 1.11f, 0.0001f,
-                "new peak evaluator palm max key should round-trip");
-    RequireNear(loaded.m_touchClassifier.m_ambiguousMargin, 0.25f, 0.0001f,
-                "new peak evaluator ambiguous key should round-trip");
-    Require(!loaded.m_touchClassifier.m_palmAwareExpansionEnabled, "new palm-aware expansion key should round-trip");
-    RequireNear(loaded.m_touchClassifier.m_fingerInPalmThresholdRatio, 0.8f, 0.0001f,
-                "new finger-in-palm threshold key should round-trip");
-    Require(loaded.m_touchClassifier.m_fingerInPalmMaxRadius == 4, "new finger-in-palm radius key should round-trip");
-    Require(loaded.m_touchClassifier.m_palmLikelyAllowContact, "new palm allow contact key should round-trip");
-    Require(!loaded.m_touchClassifier.m_palmShadowEnabled, "palm shadow enabled key should round-trip");
-    Require(loaded.m_touchClassifier.m_palmShadowRadius == 6, "palm shadow radius key should round-trip");
-    Require(loaded.m_touchClassifier.m_palmShadowHoldFrames == 33, "palm shadow hold key should round-trip");
-    RequireNear(loaded.m_touchClassifier.m_palmShadowSeedScore, 0.72f, 0.0001f,
-                "palm shadow seed score key should round-trip");
+    loaded.LoadConfig("PalmEnabled", "0");
+    loaded.LoadConfig("PalmAreaThreshold", "77");
+    loaded.LoadConfig("PalmSignalSumThreshold", "123456");
+    loaded.LoadConfig("PalmDensityThresholdLow", "321.5");
+    loaded.LoadConfig("PalmAreaMinForDensity", "22");
+    loaded.LoadConfig("PalmElongatedEnabled", "0");
+    loaded.LoadConfig("PalmElongatedMinArea", "12");
+    loaded.LoadConfig("PalmElongatedAspectRatio", "3.25");
+    loaded.LoadConfig("PalmAnalyzerEnabled", "0");
+    loaded.LoadConfig("PalmCandidateAreaThreshold", "44");
+    loaded.LoadConfig("PalmCandidateSignalThreshold", "65432");
+    loaded.LoadConfig("PalmLikelyAreaThreshold", "66");
+    loaded.LoadConfig("PalmFillRatioThreshold", "0.55");
+    loaded.LoadConfig("PalmFlatSharpnessThreshold", "1.22");
+    loaded.LoadConfig("PalmStrongPeakProminence", "222");
+    loaded.LoadConfig("PeakEvalEnabled", "0");
+    loaded.LoadConfig("PeakEvalFingerProminence", "333");
+    loaded.LoadConfig("PeakEvalFingerSharpness", "1.77");
+    loaded.LoadConfig("PeakEvalPalmSharpnessMax", "1.11");
+    loaded.LoadConfig("PeakEvalAmbiguousMargin", "0.25");
+    loaded.LoadConfig("PalmAwareExpansionEnabled", "0");
+    loaded.LoadConfig("PalmFingerInPalmThresholdRatio", "0.8");
+    loaded.LoadConfig("PalmFingerInPalmMaxRadius", "4");
+    loaded.LoadConfig("PalmLikelyAllowContact", "1");
+    loaded.LoadConfig("PalmShadowEnabled", "0");
+    loaded.LoadConfig("PalmShadowRadius", "6");
+    loaded.LoadConfig("PalmShadowHoldFrames", "33");
+    loaded.LoadConfig("PalmShadowSeedScore", "0.72");
+
+    Require(loaded.m_touchClassifier.m_enabled == defaults.m_enabled,
+            "frozen PalmEnabled key should not load");
+    Require(loaded.m_touchClassifier.m_areaThreshold == defaults.m_areaThreshold,
+            "frozen palm area key should not load");
+    Require(loaded.m_touchClassifier.m_signalSumThreshold == defaults.m_signalSumThreshold,
+            "frozen palm signal key should not load");
+    RequireNear(loaded.m_touchClassifier.m_densityThresholdLow, defaults.m_densityThresholdLow, 0.0001f,
+                "frozen palm density key should not load");
+    Require(loaded.m_touchClassifier.m_areaMinForDensity == defaults.m_areaMinForDensity,
+            "frozen palm density min area key should not load");
+    Require(loaded.m_touchClassifier.m_elongatedEnabled == defaults.m_elongatedEnabled,
+            "frozen palm elongated key should not load");
+    Require(loaded.m_touchClassifier.m_elongatedMinArea == defaults.m_elongatedMinArea,
+            "frozen palm elongated min area key should not load");
+    RequireNear(loaded.m_touchClassifier.m_elongatedAspectRatio, defaults.m_elongatedAspectRatio, 0.0001f,
+                "frozen palm elongated aspect key should not load");
+    Require(loaded.m_touchClassifier.m_analyzerEnabled == defaults.m_analyzerEnabled,
+            "frozen analyzer enabled key should not load");
+    Require(loaded.m_touchClassifier.m_candidateAreaThreshold == defaults.m_candidateAreaThreshold,
+            "frozen candidate area key should not load");
+    Require(loaded.m_touchClassifier.m_candidateSignalThreshold == defaults.m_candidateSignalThreshold,
+            "frozen candidate signal key should not load");
+    Require(loaded.m_touchClassifier.m_likelyAreaThreshold == defaults.m_likelyAreaThreshold,
+            "frozen likely area key should not load");
+    RequireNear(loaded.m_touchClassifier.m_fillRatioThreshold, defaults.m_fillRatioThreshold, 0.0001f,
+                "frozen fill ratio key should not load");
+    RequireNear(loaded.m_touchClassifier.m_flatSharpnessThreshold, defaults.m_flatSharpnessThreshold, 0.0001f,
+                "frozen flat sharpness key should not load");
+    Require(loaded.m_touchClassifier.m_strongPeakProminence == defaults.m_strongPeakProminence,
+            "frozen strong peak key should not load");
+    Require(loaded.m_touchClassifier.m_peakEvalEnabled == defaults.m_peakEvalEnabled,
+            "frozen peak evaluator enabled key should not load");
+    Require(loaded.m_touchClassifier.m_fingerProminence == defaults.m_fingerProminence,
+            "frozen peak evaluator prominence key should not load");
+    RequireNear(loaded.m_touchClassifier.m_fingerSharpness, defaults.m_fingerSharpness, 0.0001f,
+                "frozen peak evaluator sharpness key should not load");
+    RequireNear(loaded.m_touchClassifier.m_palmSharpnessMax, defaults.m_palmSharpnessMax, 0.0001f,
+                "frozen peak evaluator palm max key should not load");
+    RequireNear(loaded.m_touchClassifier.m_ambiguousMargin, defaults.m_ambiguousMargin, 0.0001f,
+                "frozen peak evaluator ambiguous key should not load");
+    Require(loaded.m_touchClassifier.m_palmAwareExpansionEnabled == defaults.m_palmAwareExpansionEnabled,
+            "frozen palm-aware expansion key should not load");
+    RequireNear(loaded.m_touchClassifier.m_fingerInPalmThresholdRatio,
+                defaults.m_fingerInPalmThresholdRatio,
+                0.0001f,
+                "frozen finger-in-palm threshold key should not load");
+    Require(loaded.m_touchClassifier.m_fingerInPalmMaxRadius == defaults.m_fingerInPalmMaxRadius,
+            "frozen finger-in-palm radius key should not load");
+    Require(loaded.m_touchClassifier.m_palmLikelyAllowContact == defaults.m_palmLikelyAllowContact,
+            "frozen palm allow contact key should not load");
+    Require(loaded.m_touchClassifier.m_palmShadowEnabled == defaults.m_palmShadowEnabled,
+            "frozen palm shadow enabled key should not load");
+    Require(loaded.m_touchClassifier.m_palmShadowRadius == defaults.m_palmShadowRadius,
+            "frozen palm shadow radius key should not load");
+    Require(loaded.m_touchClassifier.m_palmShadowHoldFrames == defaults.m_palmShadowHoldFrames,
+            "frozen palm shadow hold key should not load");
+    RequireNear(loaded.m_touchClassifier.m_palmShadowSeedScore, defaults.m_palmShadowSeedScore, 0.0001f,
+                "frozen palm shadow seed score key should not load");
 }
 
 } // namespace

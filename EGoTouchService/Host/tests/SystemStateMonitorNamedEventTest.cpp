@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -9,7 +10,9 @@
 #include <cstdint>
 #include <iostream>
 #include <mutex>
+#include <sstream>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -20,6 +23,28 @@ constexpr auto kWorkerWarmup = std::chrono::milliseconds(80);
 constexpr auto kCallbackTimeout = std::chrono::seconds(2);
 constexpr auto kNoExtraCallbackWindow = std::chrono::milliseconds(200);
 
+struct TestEventNames {
+    std::array<std::wstring, Host::SystemStateMonitor::kEventCount> storage{};
+    const wchar_t* names[Host::SystemStateMonitor::kEventCount]{};
+
+    explicit TestEventNames(const wchar_t* scenario) {
+        const DWORD process_id = GetCurrentProcessId();
+        const DWORD thread_id = GetCurrentThreadId();
+        for (std::size_t i = 0; i < Host::SystemStateMonitor::kEventCount; ++i) {
+            std::wostringstream stream;
+            stream << L"Local\\EGoTouchSystemStateMonitorTest_"
+                   << process_id << L"_" << thread_id << L"_"
+                   << scenario << L"_" << i;
+            storage[i] = stream.str();
+            names[i] = storage[i].c_str();
+        }
+    }
+
+    const wchar_t* const (&List() const noexcept)[Host::SystemStateMonitor::kEventCount] {
+        return names;
+    }
+};
+
 void ResetNamedEventBestEffort(const wchar_t* event_name) {
     HANDLE event_handle = OpenEventW(EVENT_MODIFY_STATE, FALSE, event_name);
     if (event_handle == nullptr) {
@@ -29,8 +54,7 @@ void ResetNamedEventBestEffort(const wchar_t* event_name) {
     CloseHandle(event_handle);
 }
 
-void ResetAllNamedEventsBestEffort() {
-    const auto& named_events = Host::SystemStateMonitor::NamedEventList();
+void ResetAllNamedEventsBestEffort(const wchar_t* const (&named_events)[Host::SystemStateMonitor::kEventCount]) {
     for (const wchar_t* event_name : named_events) {
         ResetNamedEventBestEffort(event_name);
     }
@@ -48,9 +72,8 @@ struct TestEventHandles {
 
     TestEventHandles() = default;
 
-    bool OpenAll() {
+    bool OpenAll(const wchar_t* const (&named_events)[Host::SystemStateMonitor::kEventCount]) {
         Close();
-        const auto& named_events = Host::SystemStateMonitor::NamedEventList();
         handles.reserve(Host::SystemStateMonitor::kEventCount);
 
         for (const wchar_t* event_name : named_events) {
@@ -163,10 +186,11 @@ bool ExpectTypes(const std::vector<Host::SystemStateEventType>& expected,
 
 bool SignalAndWaitForCount(Host::SystemStateMonitor& monitor,
                            EventRecorder& recorder,
+                           const wchar_t* const (&event_names)[Host::SystemStateMonitor::kEventCount],
                            Host::SystemStateNamedEventId id,
                            std::size_t expected_count,
                            const char* scenario) {
-    if (!Host::SystemStateMonitor::SignalNamedEvent(id)) {
+    if (!Host::SystemStateMonitor::SignalNamedEvent(id, event_names)) {
         monitor.Stop();
         std::cerr << "[TEST] Failed to signal named event in " << scenario << ". id="
                   << static_cast<int>(id) << "\n";
@@ -185,10 +209,11 @@ bool SignalAndWaitForCount(Host::SystemStateMonitor& monitor,
 
 bool SignalAndExpectNoAdditionalCallback(Host::SystemStateMonitor& monitor,
                                          EventRecorder& recorder,
+                                         const wchar_t* const (&event_names)[Host::SystemStateMonitor::kEventCount],
                                          Host::SystemStateNamedEventId id,
                                          std::size_t stable_count,
                                          const char* scenario) {
-    if (!Host::SystemStateMonitor::SignalNamedEvent(id)) {
+    if (!Host::SystemStateMonitor::SignalNamedEvent(id, event_names)) {
         monitor.Stop();
         std::cerr << "[TEST] Failed to signal duplicate named event in " << scenario << ". id="
                   << static_cast<int>(id) << "\n";
@@ -224,32 +249,34 @@ bool RunNamedEventInfrastructureTest() {
         }
     }
 
+    TestEventNames event_names(L"Infrastructure");
     TestEventHandles event_handles;
-    if (!event_handles.OpenAll()) {
+    if (!event_handles.OpenAll(event_names.List())) {
         std::cerr << "[TEST] Failed to create/open all named events in infrastructure test.\n";
         return false;
     }
 
-    ResetAllNamedEventsBestEffort();
+    ResetAllNamedEventsBestEffort(event_names.List());
     if (!event_handles.Set(Host::SystemStateNamedEventId::MonitorConsoleDisplayOn) ||
         WaitForSingleObject(event_handles.handles[Host::ToIndex(Host::SystemStateNamedEventId::MonitorConsoleDisplayOn)], 0) != WAIT_OBJECT_0 ||
         !event_handles.Reset(Host::SystemStateNamedEventId::MonitorConsoleDisplayOn) ||
         WaitForSingleObject(event_handles.handles[Host::ToIndex(Host::SystemStateNamedEventId::MonitorConsoleDisplayOn)], 0) == WAIT_OBJECT_0) {
         std::cerr << "[TEST] Named event SetEvent/ResetEvent sanity check failed.\n";
-        ResetAllNamedEventsBestEffort();
+        ResetAllNamedEventsBestEffort(event_names.List());
         return false;
     }
 
-    ResetAllNamedEventsBestEffort();
+    ResetAllNamedEventsBestEffort(event_names.List());
     return true;
 }
 
 bool RunNamedEventSequenceTest() {
     using namespace std::chrono_literals;
 
-    ResetAllNamedEventsBestEffort();
+    TestEventNames event_names(L"Sequence");
+    ResetAllNamedEventsBestEffort(event_names.List());
 
-    Host::SystemStateMonitor monitor;
+    Host::SystemStateMonitor monitor(event_names.List());
     EventRecorder recorder;
 
     const bool started = monitor.Start([&](const Host::SystemStateEvent& event) {
@@ -273,14 +300,14 @@ bool RunNamedEventSequenceTest() {
     };
 
     for (std::size_t i = 0; i < script.size(); ++i) {
-        if (!SignalAndWaitForCount(monitor, recorder, script[i].first, i + 1, "sequence test")) {
+        if (!SignalAndWaitForCount(monitor, recorder, event_names.List(), script[i].first, i + 1, "sequence test")) {
             return false;
         }
         std::this_thread::sleep_for(30ms);
     }
 
     monitor.Stop();
-    ResetAllNamedEventsBestEffort();
+    ResetAllNamedEventsBestEffort(event_names.List());
 
     std::vector<Host::SystemStateEventType> expected;
     expected.reserve(script.size());
@@ -292,10 +319,11 @@ bool RunNamedEventSequenceTest() {
 }
 
 bool RunAliasAndCanonicalBatchTest() {
-    ResetAllNamedEventsBestEffort();
+    TestEventNames event_names(L"AliasCanonicalBatch");
+    ResetAllNamedEventsBestEffort(event_names.List());
 
     TestEventHandles event_handles;
-    if (!event_handles.OpenAll()) {
+    if (!event_handles.OpenAll(event_names.List())) {
         std::cerr << "[TEST] Failed to create named events in alias/canonical batch test.\n";
         return false;
     }
@@ -305,11 +333,11 @@ bool RunAliasAndCanonicalBatchTest() {
         !event_handles.Set(Host::SystemStateNamedEventId::MonitorPowerOff) ||
         !event_handles.Set(Host::SystemStateNamedEventId::MonitorConsoleDisplayOff)) {
         std::cerr << "[TEST] Failed to pre-signal alias/canonical events.\n";
-        ResetAllNamedEventsBestEffort();
+        ResetAllNamedEventsBestEffort(event_names.List());
         return false;
     }
 
-    Host::SystemStateMonitor monitor;
+    Host::SystemStateMonitor monitor(event_names.List());
     EventRecorder recorder;
 
     const bool started = monitor.Start([&](const Host::SystemStateEvent& event) {
@@ -318,13 +346,13 @@ bool RunAliasAndCanonicalBatchTest() {
 
     if (!started) {
         std::cerr << "[TEST] SystemStateMonitor start failed in alias/canonical batch test.\n";
-        ResetAllNamedEventsBestEffort();
+        ResetAllNamedEventsBestEffort(event_names.List());
         return false;
     }
 
     if (!recorder.WaitForCount(1)) {
         monitor.Stop();
-        ResetAllNamedEventsBestEffort();
+        ResetAllNamedEventsBestEffort(event_names.List());
         std::cerr << "[TEST] Timeout waiting for alias/canonical batch event. observed="
                   << recorder.Size() << "\n";
         return false;
@@ -332,14 +360,14 @@ bool RunAliasAndCanonicalBatchTest() {
 
     if (recorder.WaitForCount(2, kNoExtraCallbackWindow)) {
         monitor.Stop();
-        ResetAllNamedEventsBestEffort();
+        ResetAllNamedEventsBestEffort(event_names.List());
         std::cerr << "[TEST] Alias/canonical display burst emitted more than one normalized event.\n";
         DumpObserved(recorder.Snapshot());
         return false;
     }
 
     monitor.Stop();
-    ResetAllNamedEventsBestEffort();
+    ResetAllNamedEventsBestEffort(event_names.List());
 
     const auto observed = recorder.Snapshot();
     const std::uint32_t canonical_on_index = static_cast<std::uint32_t>(Host::ToIndex(Host::SystemStateNamedEventId::MonitorConsoleDisplayOn));
@@ -358,9 +386,10 @@ bool RunAliasAndCanonicalBatchTest() {
 bool RunStateNormalizationDedupTest() {
     using namespace std::chrono_literals;
 
-    ResetAllNamedEventsBestEffort();
+    TestEventNames event_names(L"StateNormalizationDedup");
+    ResetAllNamedEventsBestEffort(event_names.List());
 
-    Host::SystemStateMonitor monitor;
+    Host::SystemStateMonitor monitor(event_names.List());
     EventRecorder recorder;
 
     const bool started = monitor.Start([&](const Host::SystemStateEvent& event) {
@@ -374,21 +403,21 @@ bool RunStateNormalizationDedupTest() {
 
     std::this_thread::sleep_for(kWorkerWarmup);
 
-    if (!SignalAndWaitForCount(monitor, recorder, Host::SystemStateNamedEventId::MonitorConsoleDisplayOn, 1, "state normalization test") ||
-        !SignalAndExpectNoAdditionalCallback(monitor, recorder, Host::SystemStateNamedEventId::MonitorPowerOn, 1, "duplicate DisplayOn alias test") ||
-        !SignalAndWaitForCount(monitor, recorder, Host::SystemStateNamedEventId::MonitorConsoleDisplayOff, 2, "DisplayOff transition test") ||
-        !SignalAndExpectNoAdditionalCallback(monitor, recorder, Host::SystemStateNamedEventId::MonitorPowerOff, 2, "duplicate DisplayOff alias test") ||
-        !SignalAndWaitForCount(monitor, recorder, Host::SystemStateNamedEventId::MonitorLidOn, 3, "LidOn transition test") ||
-        !SignalAndExpectNoAdditionalCallback(monitor, recorder, Host::SystemStateNamedEventId::MonitorLidOn, 3, "duplicate LidOn test") ||
-        !SignalAndWaitForCount(monitor, recorder, Host::SystemStateNamedEventId::MonitorShutDown, 4, "Shutdown transition test") ||
-        !SignalAndExpectNoAdditionalCallback(monitor, recorder, Host::SystemStateNamedEventId::MonitorShutDown, 4, "duplicate Shutdown test") ||
-        !SignalAndWaitForCount(monitor, recorder, Host::SystemStateNamedEventId::PbtApmResumeAutomatic, 5, "first ResumeAutomatic test") ||
-        !SignalAndWaitForCount(monitor, recorder, Host::SystemStateNamedEventId::PbtApmResumeSuspend, 6, "second ResumeAutomatic test")) {
+    if (!SignalAndWaitForCount(monitor, recorder, event_names.List(), Host::SystemStateNamedEventId::MonitorConsoleDisplayOn, 1, "state normalization test") ||
+        !SignalAndExpectNoAdditionalCallback(monitor, recorder, event_names.List(), Host::SystemStateNamedEventId::MonitorPowerOn, 1, "duplicate DisplayOn alias test") ||
+        !SignalAndWaitForCount(monitor, recorder, event_names.List(), Host::SystemStateNamedEventId::MonitorConsoleDisplayOff, 2, "DisplayOff transition test") ||
+        !SignalAndExpectNoAdditionalCallback(monitor, recorder, event_names.List(), Host::SystemStateNamedEventId::MonitorPowerOff, 2, "duplicate DisplayOff alias test") ||
+        !SignalAndWaitForCount(monitor, recorder, event_names.List(), Host::SystemStateNamedEventId::MonitorLidOn, 3, "LidOn transition test") ||
+        !SignalAndExpectNoAdditionalCallback(monitor, recorder, event_names.List(), Host::SystemStateNamedEventId::MonitorLidOn, 3, "duplicate LidOn test") ||
+        !SignalAndWaitForCount(monitor, recorder, event_names.List(), Host::SystemStateNamedEventId::MonitorShutDown, 4, "Shutdown transition test") ||
+        !SignalAndExpectNoAdditionalCallback(monitor, recorder, event_names.List(), Host::SystemStateNamedEventId::MonitorShutDown, 4, "duplicate Shutdown test") ||
+        !SignalAndWaitForCount(monitor, recorder, event_names.List(), Host::SystemStateNamedEventId::PbtApmResumeAutomatic, 5, "first ResumeAutomatic test") ||
+        !SignalAndWaitForCount(monitor, recorder, event_names.List(), Host::SystemStateNamedEventId::PbtApmResumeSuspend, 6, "second ResumeAutomatic test")) {
         return false;
     }
 
     monitor.Stop();
-    ResetAllNamedEventsBestEffort();
+    ResetAllNamedEventsBestEffort(event_names.List());
 
     const std::vector<Host::SystemStateEventType> expected = {
         Host::SystemStateEventType::DisplayOn,
@@ -403,10 +432,11 @@ bool RunStateNormalizationDedupTest() {
 }
 
 bool RunDisplayBurstCoalescingTest() {
-    ResetAllNamedEventsBestEffort();
+    TestEventNames event_names(L"DisplayBurstCoalescing");
+    ResetAllNamedEventsBestEffort(event_names.List());
 
     TestEventHandles event_handles;
-    if (!event_handles.OpenAll()) {
+    if (!event_handles.OpenAll(event_names.List())) {
         std::cerr << "[TEST] Failed to create named events in display burst coalescing test.\n";
         return false;
     }
@@ -414,11 +444,11 @@ bool RunDisplayBurstCoalescingTest() {
     if (!event_handles.Set(Host::SystemStateNamedEventId::MonitorConsoleDisplayOff) ||
         !event_handles.Set(Host::SystemStateNamedEventId::MonitorConsoleDisplayOn)) {
         std::cerr << "[TEST] Failed to pre-signal display burst events.\n";
-        ResetAllNamedEventsBestEffort();
+        ResetAllNamedEventsBestEffort(event_names.List());
         return false;
     }
 
-    Host::SystemStateMonitor monitor;
+    Host::SystemStateMonitor monitor(event_names.List());
     EventRecorder recorder;
 
     const bool started = monitor.Start([&](const Host::SystemStateEvent& event) {
@@ -427,27 +457,27 @@ bool RunDisplayBurstCoalescingTest() {
 
     if (!started) {
         std::cerr << "[TEST] SystemStateMonitor start failed in display burst coalescing test.\n";
-        ResetAllNamedEventsBestEffort();
+        ResetAllNamedEventsBestEffort(event_names.List());
         return false;
     }
 
     if (!recorder.WaitForCount(1)) {
         monitor.Stop();
-        ResetAllNamedEventsBestEffort();
+        ResetAllNamedEventsBestEffort(event_names.List());
         std::cerr << "[TEST] Timeout waiting for display burst event.\n";
         return false;
     }
 
     if (recorder.WaitForCount(2, kNoExtraCallbackWindow)) {
         monitor.Stop();
-        ResetAllNamedEventsBestEffort();
+        ResetAllNamedEventsBestEffort(event_names.List());
         std::cerr << "[TEST] Display burst emitted more than one event.\n";
         DumpObserved(recorder.Snapshot());
         return false;
     }
 
     monitor.Stop();
-    ResetAllNamedEventsBestEffort();
+    ResetAllNamedEventsBestEffort(event_names.List());
 
     return ExpectTypes({Host::SystemStateEventType::DisplayOn}, recorder.Snapshot(), "display burst coalescing test");
 }
@@ -455,9 +485,10 @@ bool RunDisplayBurstCoalescingTest() {
 bool RunCallbackExceptionContainmentTest() {
     using namespace std::chrono_literals;
 
-    ResetAllNamedEventsBestEffort();
+    TestEventNames event_names(L"CallbackExceptionContainment");
+    ResetAllNamedEventsBestEffort(event_names.List());
 
-    Host::SystemStateMonitor monitor;
+    Host::SystemStateMonitor monitor(event_names.List());
 
     std::atomic<int> callback_count{0};
     std::mutex mu;
@@ -479,7 +510,7 @@ bool RunCallbackExceptionContainmentTest() {
 
     std::this_thread::sleep_for(kWorkerWarmup);
 
-    if (!Host::SystemStateMonitor::SignalNamedEvent(Host::SystemStateNamedEventId::MonitorConsoleDisplayOn)) {
+    if (!Host::SystemStateMonitor::SignalNamedEvent(Host::SystemStateNamedEventId::MonitorConsoleDisplayOn, event_names.List())) {
         monitor.Stop();
         std::cerr << "[TEST] Failed first signal in exception containment test.\n";
         return false;
@@ -487,7 +518,7 @@ bool RunCallbackExceptionContainmentTest() {
 
     std::this_thread::sleep_for(30ms);
 
-    if (!Host::SystemStateMonitor::SignalNamedEvent(Host::SystemStateNamedEventId::MonitorLidOn)) {
+    if (!Host::SystemStateMonitor::SignalNamedEvent(Host::SystemStateNamedEventId::MonitorLidOn, event_names.List())) {
         monitor.Stop();
         std::cerr << "[TEST] Failed second signal in exception containment test.\n";
         return false;
@@ -507,16 +538,17 @@ bool RunCallbackExceptionContainmentTest() {
     }
 
     monitor.Stop();
-    ResetAllNamedEventsBestEffort();
+    ResetAllNamedEventsBestEffort(event_names.List());
     return true;
 }
 
 bool RunCallbackReentrantStopTest() {
     using namespace std::chrono_literals;
 
-    ResetAllNamedEventsBestEffort();
+    TestEventNames event_names(L"CallbackReentrantStop");
+    ResetAllNamedEventsBestEffort(event_names.List());
 
-    Host::SystemStateMonitor monitor;
+    Host::SystemStateMonitor monitor(event_names.List());
 
     std::atomic<int> callback_count{0};
     std::mutex mu;
@@ -535,7 +567,7 @@ bool RunCallbackReentrantStopTest() {
 
     std::this_thread::sleep_for(kWorkerWarmup);
 
-    if (!Host::SystemStateMonitor::SignalNamedEvent(Host::SystemStateNamedEventId::MonitorPowerOn)) {
+    if (!Host::SystemStateMonitor::SignalNamedEvent(Host::SystemStateNamedEventId::MonitorPowerOn, event_names.List())) {
         monitor.Stop();
         std::cerr << "[TEST] Failed signal in reentrant Stop test.\n";
         return false;
@@ -554,7 +586,7 @@ bool RunCallbackReentrantStopTest() {
     }
 
     monitor.Stop();
-    ResetAllNamedEventsBestEffort();
+    ResetAllNamedEventsBestEffort(event_names.List());
 
     if (monitor.IsRunning()) {
         std::cerr << "[TEST] Monitor still running after reentrant Stop test.\n";

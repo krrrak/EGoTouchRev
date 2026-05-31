@@ -18,6 +18,7 @@ public:
     static constexpr std::size_t kEventCount = kSystemStateNamedEventCount;
 
     SystemStateMonitor();
+    explicit SystemStateMonitor(const wchar_t* const (&eventNames)[kEventCount]);
     ~SystemStateMonitor();
 
     SystemStateMonitor(const SystemStateMonitor&) = delete;
@@ -33,6 +34,7 @@ public:
     static const SystemStateNamedEventSpec (&NamedEventSpecs() noexcept)[kEventCount];
     static const wchar_t* const (&NamedEventList() noexcept)[kEventCount];
     static bool SignalNamedEvent(SystemStateNamedEventId id) noexcept;
+    static bool SignalNamedEvent(SystemStateNamedEventId id, const wchar_t* const (&eventNames)[kEventCount]) noexcept;
 
 private:
     struct Impl;

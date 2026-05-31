@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <exception>
+#include <string>
 #include <thread>
 #include <utility>
 
@@ -16,6 +17,7 @@
 namespace Host {
 
 struct SystemStateMonitor::Impl {
+    std::array<std::wstring, kEventCount> eventNames{};
     HANDLE events[kEventCount]{};
     HANDLE stopEvent = nullptr;
     EventCallback callback;
@@ -39,6 +41,15 @@ struct NamedEventNameListHolder {
 };
 
 inline constexpr NamedEventNameListHolder kNamedEventNameListHolder{};
+
+std::array<std::wstring, SystemStateMonitor::kEventCount> CopyEventNames(
+    const wchar_t* const (&eventNames)[SystemStateMonitor::kEventCount]) {
+    std::array<std::wstring, SystemStateMonitor::kEventCount> copied{};
+    for (std::size_t i = 0; i < SystemStateMonitor::kEventCount; ++i) {
+        copied[i] = eventNames[i] != nullptr ? eventNames[i] : L"";
+    }
+    return copied;
+}
 
 HANDLE OpenOrCreateNamedEvent(const wchar_t* name) {
     HANDLE handle = OpenEventW(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE, name);
@@ -98,7 +109,12 @@ const char* ToString(SystemStateEventType type) noexcept {
 }
 
 SystemStateMonitor::SystemStateMonitor()
-    : m_impl(std::make_unique<Impl>()) {}
+    : SystemStateMonitor(kNamedEventNameListHolder.names) {}
+
+SystemStateMonitor::SystemStateMonitor(const wchar_t* const (&eventNames)[kEventCount])
+    : m_impl(std::make_unique<Impl>()) {
+    m_impl->eventNames = CopyEventNames(eventNames);
+}
 
 SystemStateMonitor::~SystemStateMonitor() {
     Stop();
@@ -165,20 +181,15 @@ void RememberNormalizedEvent(ImplT& impl, SystemStateEventType type) noexcept {
     }
 }
 
-SystemStateEvent BuildEvent(std::size_t index) {
+SystemStateEvent BuildEvent(std::size_t index, const wchar_t* rawName) {
     SystemStateEvent event{};
     event.source = SystemStateEventSource::ThpServiceNamedEvent;
     event.timestamp = std::chrono::system_clock::now();
     event.raw_index = static_cast<std::uint32_t>(index);
+    event.raw_name = rawName != nullptr ? rawName : L"";
 
     const SystemStateNamedEventSpec* spec = TryGetNamedEventSpec(index);
-    if (spec != nullptr) {
-        event.raw_name = spec->name;
-        event.type = spec->type;
-    } else {
-        event.raw_name = L"";
-        event.type = SystemStateEventType::Unknown;
-    }
+    event.type = spec != nullptr ? spec->type : SystemStateEventType::Unknown;
 
     return event;
 }
@@ -244,7 +255,7 @@ void DispatchNormalizedBatch(
     for (std::size_t position = 0; position < batchCount; ++position) {
         const std::size_t eventIndex = batchIndices[position];
         const SystemStateNamedEventSpec* spec = TryGetNamedEventSpec(eventIndex);
-        SystemStateEvent event = BuildEvent(eventIndex);
+        SystemStateEvent event = BuildEvent(eventIndex, impl.eventNames[eventIndex].c_str());
         NormalizedBatchEntry& entry = entries[ToIndex(event.type)];
 
         if (!entry.present) {
@@ -337,8 +348,12 @@ void DispatchNormalizedBatch(
 template <typename ImplT>
 bool OpenOrCreateEvents(ImplT& impl) {
     for (std::size_t i = 0; i < SystemStateMonitor::kEventCount; ++i) {
-        const SystemStateNamedEventSpec& spec = kSystemStateNamedEventSpecs[i];
-        impl.events[i] = OpenOrCreateNamedEvent(spec.name);
+        const std::wstring& eventName = impl.eventNames[i];
+        if (eventName.empty()) {
+            return false;
+        }
+
+        impl.events[i] = OpenOrCreateNamedEvent(eventName.c_str());
         if (impl.events[i] == nullptr || impl.events[i] == INVALID_HANDLE_VALUE) {
             return false;
         }
@@ -481,12 +496,16 @@ const wchar_t* const (&SystemStateMonitor::NamedEventList() noexcept)[SystemStat
 }
 
 bool SystemStateMonitor::SignalNamedEvent(SystemStateNamedEventId id) noexcept {
-    const SystemStateNamedEventSpec* spec = TryGetNamedEventSpec(id);
-    if (spec == nullptr || spec->name == nullptr || spec->name[0] == L'\0') {
+    return SignalNamedEvent(id, kNamedEventNameListHolder.names);
+}
+
+bool SystemStateMonitor::SignalNamedEvent(SystemStateNamedEventId id, const wchar_t* const (&eventNames)[kEventCount]) noexcept {
+    const std::size_t index = ToIndex(id);
+    if (index >= kEventCount || eventNames[index] == nullptr || eventNames[index][0] == L'\0') {
         return false;
     }
 
-    HANDLE event_handle = OpenEventW(EVENT_MODIFY_STATE, FALSE, spec->name);
+    HANDLE event_handle = OpenEventW(EVENT_MODIFY_STATE, FALSE, eventNames[index]);
     if (event_handle == nullptr || event_handle == INVALID_HANDLE_VALUE) {
         return false;
     }
