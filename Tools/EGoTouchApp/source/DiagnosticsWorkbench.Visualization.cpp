@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <sstream>
 #include <vector>
 
 namespace App {
