@@ -34,7 +34,8 @@ function(ego_add_solvers_perf name)
     add_test(
         NAME ${name}
         COMMAND ${name}
-            --dataset "${CMAKE_SOURCE_DIR}/Tools/tests/dataset.dvrbin"
+            --touch-dataset "${CMAKE_SOURCE_DIR}/EGoTouchService/Solvers/tests/perf/touch.dvrbin"
+            --stylus-dataset "${CMAKE_SOURCE_DIR}/EGoTouchService/Solvers/tests/perf/stylus.dvrbin"
             --frames 120
             --mode linked
     )

@@ -31,11 +31,22 @@ public:
         parse = {};
         rawGrid = {};
 
-        const StylusBtInputSnapshot btSample = stylus.input.btSample;
+        const StylusInputSnapshot priorInput = stylus.input;
         stylus.input = {};
-        stylus.input.btSample = btSample;
+        stylus.input.btSample = priorInput.btSample;
 
-        if (!m_enabled || frame.rawPtr == nullptr) {
+        if (!m_enabled) {
+            flow.terminal = true;
+            parse.valid = false;
+            parse.slaveValid = false;
+            parse.checksumOk = false;
+            return true;
+        }
+
+        if (frame.rawPtr == nullptr) {
+            if (TryProcessFromSlaveSuffix(frame, priorInput)) {
+                return true;
+            }
             flow.terminal = true;
             parse.valid = false;
             parse.slaveValid = false;
@@ -45,6 +56,9 @@ public:
 
         const std::size_t available = std::min(frame.rawLen, kSlaveFrameBytes);
         if (available < kMinimumSlaveSignalBytes) {
+            if (TryProcessFromSlaveSuffix(frame, priorInput)) {
+                return true;
+            }
             flow.terminal = true;
             parse.valid = false;
             parse.slaveValid = false;
@@ -72,6 +86,9 @@ public:
         stylus.input.status = status;
 
         if (available < kSlaveFrameBytes) {
+            if (TryProcessFromSlaveSuffix(frame, priorInput)) {
+                return true;
+            }
             parse.checksumOk = false;
             stylus.input.checksumOk = false;
             flow.terminal = true;
@@ -123,6 +140,52 @@ public:
     }
 
 private:
+    static inline bool TryProcessFromSlaveSuffix(HeatmapFrame& frame,
+                                                 const StylusInputSnapshot& priorInput) {
+        if (!frame.slaveSuffixValid) return false;
+
+        auto& stylus = frame.stylus;
+        auto& flow = stylus.runtime.flow;
+        auto& parse = stylus.runtime.parse;
+        auto& rawGrid = stylus.runtime.rawGrid;
+
+        rawGrid.asaGrid = Asa::ExtractGridFromSlaveWords(
+            frame.slaveSuffix.words, Frame::kSlaveSuffixWords);
+
+        parse.slaveValid = true;
+        parse.status = priorInput.status;
+        parse.checksum16 = priorInput.checksum16;
+        parse.checksumOk = priorInput.checksumOk;
+        parse.hasCurrentStylusSignal = rawGrid.asaGrid.tx1.valid || rawGrid.asaGrid.tx2.valid;
+
+        stylus.input.slaveValid = true;
+        stylus.input.checksumOk = priorInput.checksumOk;
+        stylus.input.slaveWordOffset = priorInput.slaveWordOffset;
+        stylus.input.checksum16 = priorInput.checksum16;
+        stylus.input.status = priorInput.status;
+        stylus.input.tx1BlockValid = rawGrid.asaGrid.tx1.valid;
+        stylus.input.tx2BlockValid = rawGrid.asaGrid.tx2.valid;
+
+        if (!parse.hasCurrentStylusSignal) {
+            flow.terminal = true;
+            flow.frameClass = Asa::StylusFrameClass::NoSignal;
+            parse.valid = false;
+            return true;
+        }
+
+        if (!rawGrid.asaGrid.tx1.valid) {
+            flow.terminal = true;
+            flow.frameClass = Asa::StylusFrameClass::Tx1Missing;
+            parse.valid = false;
+            return true;
+        }
+
+        flow.terminal = false;
+        flow.frameClass = Asa::StylusFrameClass::Valid;
+        parse.valid = true;
+        return true;
+    }
+
     static inline uint16_t ReadLe16(const uint8_t* ptr) {
         return static_cast<uint16_t>(
             static_cast<uint16_t>(ptr[0]) |

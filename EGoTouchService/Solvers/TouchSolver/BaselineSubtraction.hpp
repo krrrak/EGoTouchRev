@@ -3,12 +3,22 @@
 #include "SolverTypes.h"
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 
 namespace Solvers { namespace Touch {
+
+enum class FingerState {
+    Unknown,
+    NoFinger,
+    Finger,
+};
+
+struct BaselineInputState {
+    bool masterValid = true;
+    FingerState fingerState = FingerState::Unknown;
+};
 
 class BaselineSubtraction {
 public:
@@ -17,12 +27,13 @@ public:
     static constexpr int kCellCount = kRows * kCols;
 
     bool m_enabled = true;
-    int  m_baseline = 32768;
+    int  m_baseline = 0x7FEE;
 
     int  m_noiseDeadband = 90;
     int  m_positiveDriftDeadband = 14;
     int  m_negativeDeadband = 13;
     int  m_touchFreezeThreshold = 305;
+    int  m_freezeCandidateThreshold = 350;
     int  m_releaseHoldFrames = 60;
     int  m_positiveAlphaShift = 7;
     int  m_negativeAlphaShift = 5;
@@ -31,24 +42,26 @@ public:
     int  m_negativeMaxStep = 20;
     int  m_acquisitionAlphaShift = 3;
     int  m_acquisitionMaxStep = 128;
+    int  m_noFingerAlphaShift = 3;
+    int  m_noFingerMaxStep = 512;
+    int  m_fingerBackgroundAlphaShift = 3;
+    int  m_fingerBackgroundMaxStep = 512;
     bool m_noiseTrackingEnabled = true;
-    int  m_settleFrames = 2;
 
     inline void RequestReacquireFrames(int frames) {
-        const int requested = std::clamp(frames, 0, 255);
-        if (requested <= 0) {
-            return;
-        }
-
-        int current = m_reacquireFrames.load(std::memory_order_relaxed);
-        while (current < requested &&
-               !m_reacquireFrames.compare_exchange_weak(
-                   current, requested, std::memory_order_relaxed)) {
-        }
-        m_snapshotBaseline.store(true, std::memory_order_relaxed);
+        (void)frames;
+        Reset();
     }
 
     inline bool Process(HeatmapFrame& frame) {
+        return ProcessFallback(frame);
+    }
+
+    inline bool Process(HeatmapFrame& frame, const BaselineInputState& input) {
+        if (input.masterValid && input.fingerState == FingerState::Unknown) {
+            return ProcessFallback(frame);
+        }
+
         int16_t* outPtr = &frame.heatmapMatrix[0][0];
 
         if (!m_enabled) {
@@ -59,70 +72,118 @@ public:
             Initialize();
         }
 
-        if (m_snapshotBaseline.exchange(false, std::memory_order_relaxed)) {
-            SnapshotBaseline(outPtr);
-        }
-
-        if (m_settleCountdown > 0) {
-            --m_settleCountdown;
+        if (!input.masterValid) {
+            m_freezeMask.fill(0);
             ZeroOutput(outPtr);
             return true;
         }
 
-        const bool reacquiring = m_reacquireFrames.load(std::memory_order_relaxed) > 0;
-        int positiveFreezeCandidates = 0;
-        if (!reacquiring) {
-            for (int i = 0; i < kCellCount; ++i) {
-                const int baseline = m_baselineQ8[static_cast<size_t>(i)] >> kBaselineFractionBits;
-                if (static_cast<int>(RawCell(outPtr[i])) - baseline >= m_touchFreezeThreshold) {
-                    ++positiveFreezeCandidates;
-                }
-            }
-        }
-        const bool broadPositiveShift = !reacquiring && positiveFreezeCandidates > (kCellCount / 8);
+        const int commonDiff = BuildFreezeMask(outPtr, input.fingerState);
 
         for (int i = 0; i < kCellCount; ++i) {
             const int raw = static_cast<int>(RawCell(outPtr[i]));
             const int baseline = m_baselineQ8[static_cast<size_t>(i)] >> kBaselineFractionBits;
             const int delta = raw - baseline;
-            const int absDelta = std::abs(delta);
+            const int localDiff = delta - commonDiff;
 
-            if (reacquiring) {
+            if (input.fingerState == FingerState::NoFinger) {
                 m_releaseHold[static_cast<size_t>(i)] = 0;
-                if (absDelta <= m_noiseDeadband) {
+                UpdateNoFingerBaseline(i, delta);
+
+                const int adjustedBaseline = m_baselineQ8[static_cast<size_t>(i)] >> kBaselineFractionBits;
+                const int diff = raw - adjustedBaseline;
+                if (std::abs(diff) <= m_noiseDeadband) {
                     m_acquired[static_cast<size_t>(i)] = 1;
-                } else {
-                    UpdateBaseline(i, delta, m_acquisitionAlphaShift, m_acquisitionMaxStep);
-                }
-            } else if (m_snapshotHighCells[static_cast<size_t>(i)]) {
-                if (delta < -m_negativeDeadband) {
-                    SetBaselineToRaw(i, raw);
-                    m_snapshotHighCells[static_cast<size_t>(i)] = 0;
-                } else if (delta > 0) {
-                    UpdateBaseline(i, delta, m_acquisitionAlphaShift, m_acquisitionMaxStep);
-                } else if (absDelta <= m_noiseDeadband && delta != 0) {
-                    UpdateBaseline(i, delta, m_noiseAlphaShift, 1);
                 }
                 outPtr[i] = 0;
                 continue;
-            } else if (!m_acquired[static_cast<size_t>(i)]) {
-                if (absDelta <= m_noiseDeadband) {
+            }
+
+            if (m_freezeMask[static_cast<size_t>(i)] != 0) {
+                m_releaseHold[static_cast<size_t>(i)] = static_cast<uint8_t>(
+                    std::clamp(m_releaseHoldFrames, 0, 255));
+                m_acquired[static_cast<size_t>(i)] = 1;
+                if (commonDiff != 0) {
+                    UpdateBaseline(i, commonDiff,
+                                   m_fingerBackgroundAlphaShift,
+                                   m_fingerBackgroundMaxStep);
+                }
+                outPtr[i] = SaturateInt16(localDiff);
+                continue;
+            }
+
+            m_releaseHold[static_cast<size_t>(i)] = 0;
+            UpdateFingerBackgroundBaseline(i, delta);
+
+            if (std::abs(localDiff) <= m_noiseDeadband) {
+                m_acquired[static_cast<size_t>(i)] = 1;
+            }
+            outPtr[i] = (std::abs(localDiff) <= m_noiseDeadband)
+                ? 0
+                : SaturateInt16(localDiff);
+        }
+
+        return true;
+    }
+
+    inline void Reset() {
+        m_initialized = false;
+        m_releaseHold.fill(0);
+        m_acquired.fill(0);
+        m_freezeMask.fill(0);
+        m_baselineQ8.fill(0);
+    }
+
+private:
+    static constexpr int kBaselineFractionBits = 8;
+
+    bool m_initialized = false;
+    std::array<int32_t, kCellCount> m_baselineQ8{};
+    std::array<uint8_t, kCellCount> m_releaseHold{};
+    std::array<uint8_t, kCellCount> m_acquired{};
+    std::array<uint8_t, kCellCount> m_freezeMask{};
+
+    inline bool ProcessFallback(HeatmapFrame& frame) {
+        int16_t* outPtr = &frame.heatmapMatrix[0][0];
+
+        if (!m_enabled) {
+            return true;
+        }
+
+        if (!m_initialized) {
+            Initialize();
+        }
+
+        const int commonDiff = EstimateDiffMedian(outPtr);
+
+        for (int i = 0; i < kCellCount; ++i) {
+            const int raw = static_cast<int>(RawCell(outPtr[i]));
+            const int baseline = m_baselineQ8[static_cast<size_t>(i)] >> kBaselineFractionBits;
+            const int delta = raw - baseline;
+            const int localDiff = delta - commonDiff;
+            const int absLocalDiff = std::abs(localDiff);
+
+            if (!m_acquired[static_cast<size_t>(i)]) {
+                if (absLocalDiff <= m_noiseDeadband) {
                     m_acquired[static_cast<size_t>(i)] = 1;
+                    if (delta != 0) {
+                        UpdateBaseline(i, delta, m_acquisitionAlphaShift, m_acquisitionMaxStep);
+                    }
                 } else {
                     UpdateBaseline(i, delta, m_acquisitionAlphaShift, m_acquisitionMaxStep);
                 }
-            } else if (!broadPositiveShift && delta >= m_touchFreezeThreshold) {
+            } else if (localDiff >= m_touchFreezeThreshold) {
                 m_releaseHold[static_cast<size_t>(i)] = static_cast<uint8_t>(
                     std::clamp(m_releaseHoldFrames, 0, 255));
-                outPtr[i] = SaturateInt16(delta);
+                outPtr[i] = SaturateInt16(localDiff);
                 continue;
             } else if (m_releaseHold[static_cast<size_t>(i)] > 0) {
                 --m_releaseHold[static_cast<size_t>(i)];
-                if (delta < -m_negativeDeadband) {
-                    outPtr[i] = SaturateInt16(delta);
+                if (localDiff < -m_negativeDeadband) {
+                    outPtr[i] = SaturateInt16(localDiff);
                     continue;
                 }
-            } else if (absDelta <= m_noiseDeadband) {
+            } else if (absLocalDiff <= m_noiseDeadband) {
                 if (delta != 0) {
                     UpdateBaseline(i, delta, m_noiseAlphaShift, 1);
                 }
@@ -134,73 +195,35 @@ public:
                 UpdateBaseline(i, delta, m_noiseAlphaShift, 1);
             }
 
-            const int adjustedBaseline = m_baselineQ8[static_cast<size_t>(i)] >> kBaselineFractionBits;
-            const int residual = raw - adjustedBaseline;
-            if (reacquiring && std::abs(residual) <= m_noiseDeadband) {
-                m_acquired[static_cast<size_t>(i)] = 1;
-            }
-            outPtr[i] = (std::abs(residual) <= m_noiseDeadband) ? 0 : SaturateInt16(residual);
-        }
-        if (reacquiring) {
-            int current = m_reacquireFrames.load(std::memory_order_relaxed);
-            while (current > 0 &&
-                   !m_reacquireFrames.compare_exchange_weak(
-                       current, current - 1, std::memory_order_relaxed)) {
-            }
+            outPtr[i] = (absLocalDiff <= m_noiseDeadband) ? 0 : SaturateInt16(localDiff);
         }
         return true;
     }
-
-    inline void Reset() {
-        m_initialized = false;
-        m_reacquireFrames.store(0, std::memory_order_relaxed);
-        m_snapshotBaseline.store(false, std::memory_order_relaxed);
-        m_settleCountdown = 0;
-        m_releaseHold.fill(0);
-        m_acquired.fill(0);
-        m_snapshotHighCells.fill(0);
-        m_baselineQ8.fill(0);
-    }
-
-private:
-    static constexpr int kBaselineFractionBits = 8;
-
-    bool m_initialized = false;
-    std::atomic<int> m_reacquireFrames{0};
-    std::atomic<bool> m_snapshotBaseline{false};
-    int m_settleCountdown = 0;
-    std::array<int32_t, kCellCount> m_baselineQ8{};
-    std::array<uint8_t, kCellCount> m_releaseHold{};
-    std::array<uint8_t, kCellCount> m_acquired{};
-    std::array<uint8_t, kCellCount> m_snapshotHighCells{};
 
     inline void Initialize() {
         const int initialBaseline = std::clamp(m_baseline, 0, 0xFFFF);
         m_baselineQ8.fill(static_cast<int32_t>(initialBaseline) << kBaselineFractionBits);
         m_releaseHold.fill(0);
         m_acquired.fill(0);
-        m_snapshotHighCells.fill(0);
+        m_freezeMask.fill(0);
         m_initialized = true;
     }
 
-    inline void SnapshotBaseline(int16_t* cells) {
-        for (int i = 0; i < kCellCount; ++i) {
-            const int raw = static_cast<int>(RawCell(cells[i]));
-            const int previousBaseline = m_baselineQ8[static_cast<size_t>(i)] >> kBaselineFractionBits;
-            m_snapshotHighCells[static_cast<size_t>(i)] =
-                (raw - previousBaseline >= m_touchFreezeThreshold) ? 1 : 0;
-            SetBaselineToRaw(i, raw);
-            m_acquired[static_cast<size_t>(i)] = 1;
-            m_releaseHold[static_cast<size_t>(i)] = 0;
+    inline int BuildFreezeMask(int16_t* cells, FingerState fingerState) {
+        m_freezeMask.fill(0);
+        if (fingerState != FingerState::Finger) {
+            return 0;
         }
-        m_settleCountdown = std::clamp(m_settleFrames, 0, 255);
-        m_reacquireFrames.store(0, std::memory_order_relaxed);
-    }
 
-    inline void SetBaselineToRaw(int index, int raw) {
-        const int clampedRaw = std::clamp(raw, 0, 0xFFFF);
-        m_baselineQ8[static_cast<size_t>(index)] =
-            static_cast<int32_t>(clampedRaw) << kBaselineFractionBits;
+        const int commonDiff = EstimateDiffMedian(cells);
+        for (int i = 0; i < kCellCount; ++i) {
+            const int baseline = m_baselineQ8[static_cast<size_t>(i)] >> kBaselineFractionBits;
+            const int delta = static_cast<int>(RawCell(cells[i])) - baseline;
+            m_freezeMask[static_cast<size_t>(i)] =
+                (delta >= FreezeCandidateThreshold() &&
+                 delta - commonDiff >= FreezeCandidateThreshold()) ? 1 : 0;
+        }
+        return commonDiff;
     }
 
     static inline void ZeroOutput(int16_t* cells) {
@@ -218,6 +241,44 @@ private:
         }
         auto& baseline = m_baselineQ8[static_cast<size_t>(index)];
         baseline = std::clamp(baseline + updateQ8, 0, 0xFFFF << kBaselineFractionBits);
+    }
+
+    inline void UpdateNoFingerBaseline(int index, int delta) {
+        const int absDelta = std::abs(delta);
+        if (absDelta <= m_noiseDeadband) {
+            if (delta != 0) {
+                UpdateBaseline(index, delta, m_noiseAlphaShift, 1);
+            }
+            return;
+        }
+        UpdateBaseline(index, delta, m_noFingerAlphaShift, m_noFingerMaxStep);
+    }
+
+    inline void UpdateFingerBackgroundBaseline(int index, int delta) {
+        const int absDelta = std::abs(delta);
+        if (absDelta <= m_noiseDeadband) {
+            if (delta != 0) {
+                UpdateBaseline(index, delta, m_noiseAlphaShift, 1);
+            }
+            return;
+        }
+        UpdateBaseline(index, delta, m_fingerBackgroundAlphaShift, m_fingerBackgroundMaxStep);
+    }
+
+    inline int FreezeCandidateThreshold() const {
+        return std::max(1, m_freezeCandidateThreshold);
+    }
+
+    inline int EstimateDiffMedian(int16_t* cells) const {
+        std::array<int, kCellCount> diffs{};
+        for (int i = 0; i < kCellCount; ++i) {
+            const int baseline = m_baselineQ8[static_cast<size_t>(i)] >> kBaselineFractionBits;
+            diffs[static_cast<size_t>(i)] = static_cast<int>(RawCell(cells[i])) - baseline;
+        }
+
+        auto mid = diffs.begin() + (kCellCount / 2);
+        std::nth_element(diffs.begin(), mid, diffs.end());
+        return *mid;
     }
 
     static inline uint16_t RawCell(int16_t value) {

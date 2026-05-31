@@ -97,7 +97,7 @@ void TestPipelineFieldsAndTypes() {
     Solvers::StylusPipeline stylusPipeline;
     touchPipeline.m_baseline.m_enabled = false;
     touchPipeline.m_baseline.m_baseline = 123;
-    touchPipeline.m_baseline.m_settleFrames = 7;
+    touchPipeline.m_baseline.m_noFingerMaxStep = 777;
     touchPipeline.m_tracker.m_maxTrackDistance = 7.5f;
     touchPipeline.m_tracker.m_stylusSuppressPenPeakThreshold = 2468;
     touchPipeline.m_gesture.m_bypassStateMachine = true;
@@ -110,7 +110,7 @@ void TestPipelineFieldsAndTypes() {
     RequireMissingField(snapshot, "TouchPipeline", "MaxTrackDistance");
     RequireMissingField(snapshot, "TouchPipeline", "StylusSuppressPenPeakThreshold");
     RequireMissingField(snapshot, "TouchPipeline", "BypassStateMachine");
-    RequireRawValue(snapshot, "TouchPipeline", "BaselineSettleFrames", Dvr::Format::Dvr2ConfigValueType::Int32, 7);
+    RequireRawValue(snapshot, "TouchPipeline", "BaselineNoFingerMaxStep", Dvr::Format::Dvr2ConfigValueType::Int32, 777);
     RequireRawValue(snapshot, "StylusPipeline", "sp.btFreqShiftDebounceFrames", Dvr::Format::Dvr2ConfigValueType::Int32, 2);
 }
 

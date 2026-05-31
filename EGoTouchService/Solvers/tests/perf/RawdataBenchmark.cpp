@@ -22,7 +22,6 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -37,13 +36,15 @@ namespace {
 
 constexpr int kRows = 40;
 constexpr int kCols = 60;
-constexpr int kDefaultBenchmarkFrames = 5000000;
+constexpr int kDefaultBenchmarkFrames = 50000;
 constexpr int kDefaultStylusPressure = 512;
 constexpr double kTouchSampleRateHz = 120.0;
 constexpr int kDvrMaxContacts = 10;
 constexpr int kDvrMaxPeaks = 30;
 
 const std::filesystem::path kDefaultDatasetPath = std::filesystem::path("../Tools/tests/dataset.dvrbin");
+const std::filesystem::path kDefaultTouchDatasetPath = std::filesystem::path("EGoTouchService/Solvers/tests/perf/touch.dvrbin");
+const std::filesystem::path kDefaultStylusDatasetPath = std::filesystem::path("EGoTouchService/Solvers/tests/perf/stylus.dvrbin");
 
 enum class BenchmarkMode {
     Linked,
@@ -62,7 +63,8 @@ using Dvr2FieldDef = DvrFmt::Dvr2FieldDef;
 using Dvr2IndexEntry = DvrFmt::Dvr2IndexEntry;
 
 struct Options {
-    std::filesystem::path datasetPath = kDefaultDatasetPath;
+    std::filesystem::path touchDatasetPath = kDefaultTouchDatasetPath;
+    std::filesystem::path stylusDatasetPath = kDefaultStylusDatasetPath;
     std::filesystem::path configPath;
     int frames = kDefaultBenchmarkFrames;
     int stylusPressure = kDefaultStylusPressure;
@@ -86,6 +88,12 @@ struct DvrDataset {
     std::filesystem::path filePath;
     int formatVersion = 0;
     uint32_t flags = 0;
+    int rawStylusSignalFrames = 0;
+    int suffixStylusSignalFrames = 0;
+    int recordedStylusSlaveValidFrames = 0;
+    int recordedStylusTx1ValidFrames = 0;
+    int recordedStylusOutputValidFrames = 0;
+    int recordedStylusPointValidFrames = 0;
 };
 
 struct RunStats {
@@ -93,14 +101,27 @@ struct RunStats {
     std::string runStart;
     std::string runEnd;
     int benchmarkFrames = 0;
-    size_t sourceFrames = 0;
+    size_t touchSourceFrames = 0;
+    size_t stylusSourceFrames = 0;
     int dvrFormatVersion = 0;
     uint32_t dvrFlags = 0;
     int stylusPressure = 0;
+    int stylusDatasetRawSignalFrames = 0;
+    int stylusDatasetSuffixSignalFrames = 0;
+    int stylusDatasetRecordedSlaveValidFrames = 0;
+    int stylusDatasetRecordedTx1ValidFrames = 0;
+    int stylusDatasetRecordedOutputValidFrames = 0;
+    int stylusDatasetRecordedPointValidFrames = 0;
     int masterProcessedFrames = 0;
     int slaveProcessedFrames = 0;
     int masterFailedFrames = 0;
     int slaveFailedFrames = 0;
+    int stylusValidFrames = 0;
+    int stylusSignalFrames = 0;
+    int stylusNoSignalFrames = 0;
+    int stylusShortFrames = 0;
+    int stylusParseFailFrames = 0;
+    int stylusTx1MissingFrames = 0;
     double wallTotalMs = 0.0;
     double masterTotalMs = 0.0;
     double slaveTotalMs = 0.0;
@@ -226,6 +247,31 @@ void WriteLe16(std::vector<uint8_t>& raw, size_t offset, uint16_t value) {
     raw[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
 }
 
+uint16_t ReadLe16(const uint8_t* data) {
+    return static_cast<uint16_t>(
+        static_cast<uint16_t>(data[0]) |
+        (static_cast<uint16_t>(data[1]) << 8));
+}
+
+bool HasStylusSignal(uint16_t anchorRow, uint16_t anchorCol) {
+    return !(((anchorRow & 0xFFu) == Frame::kAnchorInvalid) &&
+             ((anchorCol & 0xFFu) == Frame::kAnchorInvalid));
+}
+
+bool HasStylusSignal(const Frame::SlaveSuffixView& suffix) {
+    return HasStylusSignal(suffix.tx1AnchorRow(), suffix.tx1AnchorCol());
+}
+
+bool RawFrameHasStylusSignal(const std::vector<uint8_t>& raw) {
+    if (raw.size() < static_cast<size_t>(Frame::kSlaveFrameSize)) {
+        return false;
+    }
+
+    const size_t slaveOffset = raw.size() - static_cast<size_t>(Frame::kSlaveFrameSize);
+    const uint8_t* slaveWords = raw.data() + slaveOffset + Frame::kHeaderBytes;
+    return HasStylusSignal(ReadLe16(slaveWords), ReadLe16(slaveWords + sizeof(uint16_t)));
+}
+
 std::vector<uint8_t> BuildRawFrameBytes(const Solvers::HeatmapFrame& frame) {
     std::vector<uint8_t> raw(static_cast<size_t>(Frame::kTotalFrameSize), 0);
 
@@ -320,7 +366,12 @@ std::vector<uint8_t> RawFrameBytesFromRecordBytes(const std::vector<uint8_t>& re
     if (rawField.offset + rawLen > record.size()) {
         throw std::runtime_error("DVR2 rawData field exceeds record");
     }
-    return std::vector<uint8_t>(record.data() + rawField.offset, record.data() + rawField.offset + rawLen);
+
+    std::vector<uint8_t> raw(record.data() + rawField.offset, record.data() + rawField.offset + rawLen);
+    if (frame.slaveSuffixValid && HasStylusSignal(frame.slaveSuffix) && !RawFrameHasStylusSignal(raw)) {
+        raw = BuildRawFrameBytes(frame);
+    }
+    return raw;
 }
 
 DvrDataset LoadDvrDataset(const std::filesystem::path& filePath) {
@@ -467,6 +518,24 @@ DvrDataset LoadDvrDataset(const std::filesystem::path& filePath) {
         DvrDatasetFrame sample;
         sample.touchFrame = PopulateHeatmapFrameFromRecordBytes(record, frameFields);
         sample.rawFrame = RawFrameBytesFromRecordBytes(record, frameFields, sample.touchFrame);
+        if (RawFrameHasStylusSignal(sample.rawFrame)) {
+            dataset.rawStylusSignalFrames++;
+        }
+        if (sample.touchFrame.slaveSuffixValid && HasStylusSignal(sample.touchFrame.slaveSuffix)) {
+            dataset.suffixStylusSignalFrames++;
+        }
+        if (ReadFrameFieldScalar<uint8_t>(record, frameFields, "stylus.slaveValid") != 0) {
+            dataset.recordedStylusSlaveValidFrames++;
+        }
+        if (ReadFrameFieldScalar<uint8_t>(record, frameFields, "stylus.tx1BlockValid") != 0) {
+            dataset.recordedStylusTx1ValidFrames++;
+        }
+        if (ReadFrameFieldScalar<uint8_t>(record, frameFields, "stylus.output.valid") != 0) {
+            dataset.recordedStylusOutputValidFrames++;
+        }
+        if (ReadFrameFieldScalar<uint8_t>(record, frameFields, "stylus.point.valid") != 0) {
+            dataset.recordedStylusPointValidFrames++;
+        }
         dataset.frames.push_back(std::move(sample));
     }
 
@@ -558,13 +627,15 @@ std::filesystem::path ResolveDatasetPath(const std::filesystem::path& configured
 
     const std::filesystem::path cwd = std::filesystem::current_path();
     const std::filesystem::path exeDir = std::filesystem::absolute(argv0Path).parent_path();
-    const std::array<std::filesystem::path, 8> candidates = {
+    const std::filesystem::path sourceRoot = std::filesystem::path("D:/source/repos/EGoTouchRev-rebuild");
+    const std::array<std::filesystem::path, 9> candidates = {
         cwd / configuredPath,
         cwd / ".." / configuredPath,
         cwd / ".." / ".." / configuredPath,
         exeDir / configuredPath,
         exeDir / ".." / configuredPath,
         exeDir / ".." / ".." / configuredPath,
+        sourceRoot / configuredPath,
         kDefaultDatasetPath,
         configuredPath
     };
@@ -611,7 +682,9 @@ void PrintUsage() {
         << "  --frames <N>             Total replay steps (default 5000)\n"
         << "  --mode <linked|independent|both>\n"
         << "                           Benchmark mode (default linked)\n"
-        << "  --dataset <path>         DVR2 .dvrbin input (default Tools/tests/dataset.dvrbin)\n"
+        << "  --touch-dataset <path>   Touch DVR2 .dvrbin input (default EGoTouchService/Solvers/tests/perf/touch.dvrbin)\n"
+        << "  --stylus-dataset <path>  Stylus DVR2 .dvrbin input (default EGoTouchService/Solvers/tests/perf/stylus.dvrbin)\n"
+        << "  --dataset <path>         Use the same DVR2 .dvrbin input for touch and stylus\n"
         << "  --config <path>          Explicit config.ini path\n"
         << "  --stylus-pressure <N>    Fixed stylus pressure (default 512)\n"
         << "  --help                   Show this help\n";
@@ -640,8 +713,14 @@ Options ParseOptions(int argc, char** argv) {
             options.frames = value;
         } else if (arg == "--mode") {
             options.mode = ParseBenchmarkMode(requireValue("--mode"));
+        } else if (arg == "--touch-dataset") {
+            options.touchDatasetPath = requireValue("--touch-dataset");
+        } else if (arg == "--stylus-dataset") {
+            options.stylusDatasetPath = requireValue("--stylus-dataset");
         } else if (arg == "--dataset") {
-            options.datasetPath = requireValue("--dataset");
+            const std::filesystem::path datasetPath = requireValue("--dataset");
+            options.touchDatasetPath = datasetPath;
+            options.stylusDatasetPath = datasetPath;
         } else if (arg == "--config") {
             options.configPath = requireValue("--config");
         } else if (arg == "--stylus-pressure") {
@@ -743,7 +822,8 @@ void PrintPriorityStatus(const PriorityStatus& status) {
 RunStats RunBenchmark(BenchmarkMode mode,
                       const Options& options,
                       const std::filesystem::path& configPath,
-                      const DvrDataset& dataset) {
+                      const DvrDataset& touchDataset,
+                      const DvrDataset& stylusDataset) {
     if (mode == BenchmarkMode::Both) {
         throw std::runtime_error("RunBenchmark does not accept mode=both");
     }
@@ -754,27 +834,37 @@ RunStats RunBenchmark(BenchmarkMode mode,
         LoadConfigFromFile(touchPipeline, stylusPipeline, configPath);
     }
 
-    const std::vector<size_t> sequence = BuildReplaySequence(dataset.frames.size());
+    const std::vector<size_t> touchSequence = BuildReplaySequence(touchDataset.frames.size());
+    const std::vector<size_t> stylusSequence = BuildReplaySequence(stylusDataset.frames.size());
 
     RunStats stats;
     stats.modeName = BenchmarkModeName(mode);
     stats.benchmarkFrames = options.frames;
-    stats.sourceFrames = dataset.frames.size();
-    stats.dvrFormatVersion = dataset.formatVersion;
-    stats.dvrFlags = dataset.flags;
+    stats.touchSourceFrames = touchDataset.frames.size();
+    stats.stylusSourceFrames = stylusDataset.frames.size();
+    stats.dvrFormatVersion = touchDataset.formatVersion;
+    stats.dvrFlags = touchDataset.flags;
     stats.stylusPressure = options.stylusPressure;
+    stats.stylusDatasetRawSignalFrames = stylusDataset.rawStylusSignalFrames;
+    stats.stylusDatasetSuffixSignalFrames = stylusDataset.suffixStylusSignalFrames;
+    stats.stylusDatasetRecordedSlaveValidFrames = stylusDataset.recordedStylusSlaveValidFrames;
+    stats.stylusDatasetRecordedTx1ValidFrames = stylusDataset.recordedStylusTx1ValidFrames;
+    stats.stylusDatasetRecordedOutputValidFrames = stylusDataset.recordedStylusOutputValidFrames;
+    stats.stylusDatasetRecordedPointValidFrames = stylusDataset.recordedStylusPointValidFrames;
 
     const auto wallStart = std::chrono::steady_clock::now();
     const auto runStart = std::chrono::system_clock::now();
     stats.runStart = FormatWallClock(runStart);
 
     for (int step = 0; step < options.frames; ++step) {
-        const size_t replayIndex = sequence[static_cast<size_t>(step) % sequence.size()];
-        const auto& sample = dataset.frames[replayIndex];
+        const size_t touchReplayIndex = touchSequence[static_cast<size_t>(step) % touchSequence.size()];
+        const size_t stylusReplayIndex = stylusSequence[static_cast<size_t>(step) % stylusSequence.size()];
+        const auto& touchSample = touchDataset.frames[touchReplayIndex];
+        const auto& stylusSample = stylusDataset.frames[stylusReplayIndex];
 
         Solvers::HeatmapFrame stylusFrame;
-        stylusFrame.rawPtr = sample.rawFrame.data();
-        stylusFrame.rawLen = sample.rawFrame.size();
+        stylusFrame.rawPtr = stylusSample.rawFrame.data();
+        stylusFrame.rawLen = stylusSample.rawFrame.size();
 
         const auto slaveBegin = std::chrono::steady_clock::now();
         stylusPipeline.SetBtMcuPressure(static_cast<uint16_t>(options.stylusPressure));
@@ -785,10 +875,32 @@ RunStats RunBenchmark(BenchmarkMode mode,
         if (!slaveOk) {
             stats.slaveFailedFrames++;
         }
+        if (stylusFrame.stylus.runtime.parse.valid) {
+            stats.stylusValidFrames++;
+        }
+        if (stylusFrame.stylus.runtime.parse.hasCurrentStylusSignal) {
+            stats.stylusSignalFrames++;
+        }
+        switch (stylusFrame.stylus.runtime.flow.frameClass) {
+        case Asa::StylusFrameClass::Valid:
+            break;
+        case Asa::StylusFrameClass::ShortFrame:
+            stats.stylusShortFrames++;
+            break;
+        case Asa::StylusFrameClass::NoSignal:
+            stats.stylusNoSignalFrames++;
+            break;
+        case Asa::StylusFrameClass::ParseFail:
+            stats.stylusParseFailFrames++;
+            break;
+        case Asa::StylusFrameClass::Tx1Missing:
+            stats.stylusTx1MissingFrames++;
+            break;
+        }
         stats.slaveTotalMs +=
             std::chrono::duration<double, std::milli>(slaveEnd - slaveBegin).count();
 
-        Solvers::HeatmapFrame touchFrame = PrepareTouchFrame(sample.touchFrame, step);
+        Solvers::HeatmapFrame touchFrame = PrepareTouchFrame(touchSample.touchFrame, step);
         if (mode == BenchmarkMode::Linked) {
             touchFrame.stylus = stylusFrame.stylus;
         }
@@ -827,7 +939,8 @@ void PrintStats(const RunStats& stats,
 
     std::cout << std::fixed << std::setprecision(3);
     std::cout << "[RawdataBenchmark] mode=" << stats.modeName << "\n";
-    std::cout << "[RawdataBenchmark] dataset=" << options.datasetPath.string() << "\n";
+    std::cout << "[RawdataBenchmark] touch_dataset=" << options.touchDatasetPath.string() << "\n";
+    std::cout << "[RawdataBenchmark] stylus_dataset=" << options.stylusDatasetPath.string() << "\n";
     std::cout << "[RawdataBenchmark] config_ini=" << configPath.string() << "\n";
     std::cout << "[RawdataBenchmark] dvr_format_version=" << stats.dvrFormatVersion << "\n";
     std::cout << "[RawdataBenchmark] dvr_flags=" << stats.dvrFlags << "\n";
@@ -835,7 +948,14 @@ void PrintStats(const RunStats& stats,
     std::cout << "[RawdataBenchmark] run_start=" << stats.runStart << "\n";
     std::cout << "[RawdataBenchmark] run_end=" << stats.runEnd << "\n";
     std::cout << "[RawdataBenchmark] benchmark_frames=" << stats.benchmarkFrames << "\n";
-    std::cout << "[RawdataBenchmark] source_frames=" << stats.sourceFrames << "\n";
+    std::cout << "[RawdataBenchmark] touch_source_frames=" << stats.touchSourceFrames << "\n";
+    std::cout << "[RawdataBenchmark] stylus_source_frames=" << stats.stylusSourceFrames << "\n";
+    std::cout << "[RawdataBenchmark] stylus_dataset_raw_signal_frames=" << stats.stylusDatasetRawSignalFrames << "\n";
+    std::cout << "[RawdataBenchmark] stylus_dataset_suffix_signal_frames=" << stats.stylusDatasetSuffixSignalFrames << "\n";
+    std::cout << "[RawdataBenchmark] stylus_dataset_recorded_slave_valid_frames=" << stats.stylusDatasetRecordedSlaveValidFrames << "\n";
+    std::cout << "[RawdataBenchmark] stylus_dataset_recorded_tx1_valid_frames=" << stats.stylusDatasetRecordedTx1ValidFrames << "\n";
+    std::cout << "[RawdataBenchmark] stylus_dataset_recorded_output_valid_frames=" << stats.stylusDatasetRecordedOutputValidFrames << "\n";
+    std::cout << "[RawdataBenchmark] stylus_dataset_recorded_point_valid_frames=" << stats.stylusDatasetRecordedPointValidFrames << "\n";
     std::cout << "[RawdataBenchmark] wall_total_ms=" << stats.wallTotalMs << "\n";
     std::cout << "[RawdataBenchmark] master_total_ms=" << stats.masterTotalMs << "\n";
     std::cout << "[RawdataBenchmark] master_avg_ms_per_frame=" << masterAvgMs << "\n";
@@ -843,6 +963,53 @@ void PrintStats(const RunStats& stats,
     std::cout << "[RawdataBenchmark] slave_total_ms=" << stats.slaveTotalMs << "\n";
     std::cout << "[RawdataBenchmark] slave_avg_ms_per_frame=" << slaveAvgMs << "\n";
     std::cout << "[RawdataBenchmark] slave_failed_frames=" << stats.slaveFailedFrames << "\n";
+    std::cout << "[RawdataBenchmark] stylus_valid_frames=" << stats.stylusValidFrames << "\n";
+    std::cout << "[RawdataBenchmark] stylus_signal_frames=" << stats.stylusSignalFrames << "\n";
+    std::cout << "[RawdataBenchmark] stylus_short_frames=" << stats.stylusShortFrames << "\n";
+    std::cout << "[RawdataBenchmark] stylus_no_signal_frames=" << stats.stylusNoSignalFrames << "\n";
+    std::cout << "[RawdataBenchmark] stylus_parse_fail_frames=" << stats.stylusParseFailFrames << "\n";
+    std::cout << "[RawdataBenchmark] stylus_tx1_missing_frames=" << stats.stylusTx1MissingFrames << "\n";
+}
+
+void RequireStylusReadback(const RunStats& stats) {
+    if (stats.stylusValidFrames == 0 || stats.stylusSignalFrames == 0) {
+        throw std::runtime_error(
+            "Stylus dataset produced no valid stylus frames; check stylus rawData/slave payload");
+    }
+}
+
+void PrintCtestMeasurement(std::string_view name, double value) {
+    std::cout << "<DartMeasurement name=\"" << name << "\" type=\"numeric/double\">"
+              << value << "</DartMeasurement>\n";
+}
+
+void PrintCtestMeasurement(std::string_view name, int value) {
+    std::cout << "<DartMeasurement name=\"" << name << "\" type=\"numeric/integer\">"
+              << value << "</DartMeasurement>\n";
+}
+
+void PrintCtestMeasurements(const RunStats& stats) {
+    const std::string prefix = "RawdataBenchmark." + stats.modeName + ".";
+    const double masterAvgMs =
+        stats.masterProcessedFrames > 0
+            ? stats.masterTotalMs / static_cast<double>(stats.masterProcessedFrames)
+            : 0.0;
+    const double slaveAvgMs =
+        stats.slaveProcessedFrames > 0
+            ? stats.slaveTotalMs / static_cast<double>(stats.slaveProcessedFrames)
+            : 0.0;
+
+    PrintCtestMeasurement(prefix + "wall_total_ms", stats.wallTotalMs);
+    PrintCtestMeasurement(prefix + "master_total_ms", stats.masterTotalMs);
+    PrintCtestMeasurement(prefix + "master_avg_ms_per_frame", masterAvgMs);
+    PrintCtestMeasurement(prefix + "slave_total_ms", stats.slaveTotalMs);
+    PrintCtestMeasurement(prefix + "slave_avg_ms_per_frame", slaveAvgMs);
+    PrintCtestMeasurement(prefix + "stylus_valid_frames", stats.stylusValidFrames);
+    PrintCtestMeasurement(prefix + "stylus_signal_frames", stats.stylusSignalFrames);
+    PrintCtestMeasurement(prefix + "stylus_dataset_raw_signal_frames", stats.stylusDatasetRawSignalFrames);
+    PrintCtestMeasurement(prefix + "stylus_dataset_suffix_signal_frames", stats.stylusDatasetSuffixSignalFrames);
+    PrintCtestMeasurement(prefix + "stylus_dataset_recorded_tx1_valid_frames", stats.stylusDatasetRecordedTx1ValidFrames);
+    PrintCtestMeasurement(prefix + "stylus_dataset_recorded_output_valid_frames", stats.stylusDatasetRecordedOutputValidFrames);
 }
 
 } // namespace
@@ -854,17 +1021,20 @@ int main(int argc, char** argv) {
 
         const Options options = ParseOptions(argc, argv);
         const std::filesystem::path configPath = ResolveConfigPath(options.configPath);
-        const std::filesystem::path datasetPath = ResolveDatasetPath(options.datasetPath, argv[0]);
         if (configPath.empty()) {
             std::cout << "[RawdataBenchmark] config_ini=<defaults>\n";
         }
 
         Options resolvedOptions = options;
-        resolvedOptions.datasetPath = datasetPath;
+        const std::filesystem::path touchDatasetPath = ResolveDatasetPath(options.touchDatasetPath, argv[0]);
+        const std::filesystem::path stylusDatasetPath = ResolveDatasetPath(options.stylusDatasetPath, argv[0]);
+        resolvedOptions.touchDatasetPath = touchDatasetPath;
+        resolvedOptions.stylusDatasetPath = stylusDatasetPath;
 
-        const DvrDataset dataset = LoadDvrDataset(datasetPath);
+        const DvrDataset touchDataset = LoadDvrDataset(touchDatasetPath);
+        const DvrDataset stylusDataset = LoadDvrDataset(stylusDatasetPath);
 
-        if (dataset.frames.size() == 480) {
+        if (touchDataset.frames.size() == 480) {
             const auto replay480 = BuildReplaySequence(480);
             if (replay480.size() != 960 || replay480[479] != 479 || replay480[480] != 479 ||
                 replay480[481] != 478) {
@@ -875,17 +1045,23 @@ int main(int argc, char** argv) {
 
         if (options.mode == BenchmarkMode::Both) {
             const RunStats linkedStats = RunBenchmark(
-                BenchmarkMode::Linked, resolvedOptions, configPath, dataset);
+                BenchmarkMode::Linked, resolvedOptions, configPath, touchDataset, stylusDataset);
             PrintStats(linkedStats, resolvedOptions, configPath);
+            PrintCtestMeasurements(linkedStats);
+            RequireStylusReadback(linkedStats);
             std::cout << "\n";
 
             const RunStats independentStats = RunBenchmark(
-                BenchmarkMode::Independent, resolvedOptions, configPath, dataset);
+                BenchmarkMode::Independent, resolvedOptions, configPath, touchDataset, stylusDataset);
             PrintStats(independentStats, resolvedOptions, configPath);
+            PrintCtestMeasurements(independentStats);
+            RequireStylusReadback(independentStats);
         } else {
             const RunStats stats = RunBenchmark(
-                options.mode, resolvedOptions, configPath, dataset);
+                options.mode, resolvedOptions, configPath, touchDataset, stylusDataset);
             PrintStats(stats, resolvedOptions, configPath);
+            PrintCtestMeasurements(stats);
+            RequireStylusReadback(stats);
         }
 
         return 0;

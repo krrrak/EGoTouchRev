@@ -8,7 +8,7 @@ namespace {
 
 void TestFormatConstants() {
     namespace F = Dvr::Format;
-    DvrCoreTest::Require(F::kCurrentDvrFormatVersion == 6, "DVR2 current version should remain 6");
+    DvrCoreTest::Require(F::kCurrentDvrFormatVersion == 7, "DVR2 current version should be 7");
     DvrCoreTest::Require(F::kDvr2Magic[0] == 'E' && F::kDvr2Magic[6] == '2' && F::kDvr2Magic[7] == '\0', "DVR2 magic mismatch");
     DvrCoreTest::Require(F::kLegacyDvrMagic[6] == 'B' && F::kLegacyDvrMagic[7] == '1', "legacy magic mismatch");
     DvrCoreTest::Require(F::kDvrFlagHasStylusDiagnostics == 0x01, "stylus diagnostics flag bit changed");
@@ -35,20 +35,22 @@ void TestWireLayout() {
     DvrCoreTest::Require(sizeof(F::Dvr2ContactRecord) == 80, "Dvr2ContactRecord size changed");
     DvrCoreTest::Require(sizeof(F::Dvr2PeakRecord) == 12, "Dvr2PeakRecord size changed");
     DvrCoreTest::Require(sizeof(F::Dvr2TouchPacketRecord) == 36, "Dvr2TouchPacketRecord size changed");
-    DvrCoreTest::Require(sizeof(F::Dvr2StylusDataRecord) == 152, "Dvr2StylusDataRecord size changed");
+    DvrCoreTest::Require(sizeof(F::Dvr2StylusRawGridBlockRecord) == 168, "Dvr2StylusRawGridBlockRecord size changed");
+    DvrCoreTest::Require(sizeof(F::Dvr2StylusRawGridRecord) == 336, "Dvr2StylusRawGridRecord size changed");
+    DvrCoreTest::Require(sizeof(F::Dvr2StylusDataRecord) == 488, "Dvr2StylusDataRecord size changed");
     DvrCoreTest::Require(sizeof(F::Dvr2RuntimeConfigSchemaHeader) == 16, "Dvr2RuntimeConfigSchemaHeader size changed");
     DvrCoreTest::Require(sizeof(F::Dvr2RuntimeConfigFieldDef) == 224, "Dvr2RuntimeConfigFieldDef size changed");
     DvrCoreTest::Require(sizeof(F::Dvr2RuntimeConfigValuesHeader) == 16, "Dvr2RuntimeConfigValuesHeader size changed");
     DvrCoreTest::Require(sizeof(F::Dvr2RuntimeConfigValueRecord) == 144, "Dvr2RuntimeConfigValueRecord size changed");
-    DvrCoreTest::Require(sizeof(F::Dvr2FramePayload) == 17016, "Dvr2FramePayload size changed");
+    DvrCoreTest::Require(sizeof(F::Dvr2FramePayload) == 17352, "Dvr2FramePayload size changed");
     DvrCoreTest::Require(offsetof(F::Dvr2FrameCore, heatmapMatrix) == 28, "heatmapMatrix offset changed");
     DvrCoreTest::Require(offsetof(F::Dvr2FrameCore, masterSuffix) == 4828, "masterSuffix offset changed");
     DvrCoreTest::Require(offsetof(F::Dvr2FrameCore, touchPackets) == 5416, "touchPackets offset changed");
     DvrCoreTest::Require(offsetof(F::Dvr2FrameCore, stylus) == 10288, "stylus offset changed");
-    DvrCoreTest::Require(offsetof(F::Dvr2FrameCore, contacts) == 10440, "contacts offset changed");
-    DvrCoreTest::Require(offsetof(F::Dvr2FrameCore, peaks) == 11244, "peaks offset changed");
-    DvrCoreTest::Require(offsetof(F::Dvr2FramePayload, rawDataLength) == 11608, "rawDataLength offset changed");
-    DvrCoreTest::Require(offsetof(F::Dvr2FramePayload, rawData) == 11610, "rawData offset changed");
+    DvrCoreTest::Require(offsetof(F::Dvr2FrameCore, contacts) == 10776, "contacts offset changed");
+    DvrCoreTest::Require(offsetof(F::Dvr2FrameCore, peaks) == 11580, "peaks offset changed");
+    DvrCoreTest::Require(offsetof(F::Dvr2FramePayload, rawDataLength) == 11944, "rawDataLength offset changed");
+    DvrCoreTest::Require(offsetof(F::Dvr2FramePayload, rawData) == 11946, "rawData offset changed");
     DvrCoreTest::Require(std::is_trivially_copyable_v<F::Dvr2FramePayload>, "Dvr2FramePayload should be trivially copyable");
     DvrCoreTest::Require(std::is_standard_layout_v<F::Dvr2FramePayload>, "Dvr2FramePayload should be standard layout");
 }

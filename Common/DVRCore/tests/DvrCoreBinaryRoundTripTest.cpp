@@ -37,6 +37,16 @@ void TestBinaryRoundTrip() {
     DvrCoreTest::Require(first.masterSuffix.words[0] == 0x1111 && first.slaveSuffix.words[0] == 0x3333, "suffix words should round-trip");
     DvrCoreTest::Require(first.touchPackets[0].valid && first.touchPackets[0].bytes[0] == 0xAA && first.touchPackets[0].bytes[31] == 0x55, "touch packet should round-trip");
     DvrCoreTest::Require(first.stylus.input.slaveValid && first.stylus.input.checksum16 == 0xBEEF, "stylus input should round-trip");
+    DvrCoreTest::Require(first.stylus.runtime.rawGrid.asaGrid.tx1.valid &&
+                         first.stylus.runtime.rawGrid.asaGrid.tx1.anchorRow == 2 &&
+                         first.stylus.runtime.rawGrid.asaGrid.tx1.anchorCol == 3 &&
+                         first.stylus.runtime.rawGrid.asaGrid.tx1.grid[2][3] == 1234,
+                         "stylus TX1 raw grid should round-trip");
+    DvrCoreTest::Require(first.stylus.runtime.rawGrid.asaGrid.tx2.valid &&
+                         first.stylus.runtime.rawGrid.asaGrid.tx2.anchorRow == 5 &&
+                         first.stylus.runtime.rawGrid.asaGrid.tx2.anchorCol == 6 &&
+                         first.stylus.runtime.rawGrid.asaGrid.tx2.grid[4][5] == 2345,
+                         "stylus TX2 raw grid should round-trip");
     DvrCoreTest::Require(first.stylus.output.valid && first.stylus.output.packet.bytes[16] == 0x34, "stylus output packet should round-trip");
     DvrCoreTest::Require(first.stylus.output.point.valid && first.stylus.output.point.reportX == 125, "stylus point should round-trip");
     DvrCoreTest::Require(first.contacts.size() == 1 && first.contacts[0].id == 7 && first.contacts[0].signalSum == 1000, "contacts should round-trip");

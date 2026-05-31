@@ -63,6 +63,7 @@ jobs:
 
       - name: Build Installer (Release & Test)
         run: |
+          wix eula accept wix7
           wix extension add -g WixToolset.UI.wixext
           wix build -ext WixToolset.UI.wixext -arch arm64 -d BuildVersion=$env:APP_VERSION scripts\EGoTouchSetup.wxs -loc scripts\zh-CN.wxl -out build\EGoTouchSetup_arm64.msi
           wix build -ext WixToolset.UI.wixext -arch arm64 -d BuildVersion=$env:APP_VERSION scripts\EGoTouchTestSetup.wxs -loc scripts\zh-CN.wxl -out build\EGoTouchTestSetup_arm64.msi

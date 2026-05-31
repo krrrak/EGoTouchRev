@@ -73,6 +73,7 @@ endif()
 
 include(CTest)
 enable_testing()
+set(CMAKE_CTEST_ARGUMENTS "--verbose" CACHE STRING "Arguments passed to ctest by generated test targets")
 # Use static MSVC runtime to avoid missing VCRUNTIME140.dll on target machines
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 

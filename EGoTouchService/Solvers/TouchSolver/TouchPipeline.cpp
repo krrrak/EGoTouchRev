@@ -146,7 +146,6 @@ namespace Solvers {
 // ══════════════════════════════════════════════════════════════════════
 bool TouchPipeline::ProcessMasterParserOnly(HeatmapFrame& frame) {
     m_frameParser.Process(frame);
-    m_baseline.Process(frame);
     ResetIdleOutputs(frame);
     return true;
 }
@@ -165,10 +164,16 @@ bool TouchPipeline::Process(HeatmapFrame& frame) {
     // ── Phase 1: Frame Parsing ──────────────────────────────────────
     m_frameParser.Process(frame);
 
-    const bool hasCurrentFinger = frame.masterWasRead && frame.masterSuffixValid && frame.masterSuffix.hasFinger();
+    const bool masterValid = frame.masterWasRead && frame.masterSuffixValid;
+    const bool hasCurrentFinger = masterValid && frame.masterSuffix.hasFinger();
+    const Touch::BaselineInputState baselineInput{
+        masterValid,
+        masterValid ? (hasCurrentFinger ? Touch::FingerState::Finger : Touch::FingerState::NoFinger)
+                    : Touch::FingerState::Unknown,
+    };
     const bool hasLiveTouchState = m_tracker.HasLiveTracks() || m_gesture.HasLiveState();
     // ── Phase 2: Signal Conditioning ────────────────────────────────
-    m_baseline.Process(frame);
+    m_baseline.Process(frame, baselineInput);
 
     if (!hasCurrentFinger && !hasLiveTouchState) {
         ResetIdleOutputs(frame);
@@ -343,6 +348,8 @@ std::vector<ConfigParam> TouchPipeline::GetConfigSchema() const {
                    ConfigParam::Int, const_cast<int*>(&m_baseline.m_negativeDeadband), 0, 200).Module("Signal Conditioning");
     s.emplace_back("BaselineTouchFreezeThreshold", "Baseline Touch Freeze Threshold",
                    ConfigParam::Int, const_cast<int*>(&m_baseline.m_touchFreezeThreshold), 1, 1000).Module("Signal Conditioning");
+    s.emplace_back("BaselineFreezeCandidateThreshold", "Baseline Freeze Candidate Threshold",
+                   ConfigParam::Int, const_cast<int*>(&m_baseline.m_freezeCandidateThreshold), 1, 2000).Module("Signal Conditioning");
     s.emplace_back("BaselineReleaseHoldFrames", "Baseline Release Hold Frames",
                    ConfigParam::Int, const_cast<int*>(&m_baseline.m_releaseHoldFrames), 0, 60).Module("Signal Conditioning");
     s.emplace_back("BaselinePositiveAlphaShift", "Baseline Positive Alpha Shift",
@@ -359,10 +366,16 @@ std::vector<ConfigParam> TouchPipeline::GetConfigSchema() const {
                    ConfigParam::Int, const_cast<int*>(&m_baseline.m_acquisitionAlphaShift), 0, 15).Module("Signal Conditioning");
     s.emplace_back("BaselineAcquisitionMaxStep", "Baseline Acquisition Max Step",
                    ConfigParam::Int, const_cast<int*>(&m_baseline.m_acquisitionMaxStep), 1, 1024).Module("Signal Conditioning");
+    s.emplace_back("BaselineNoFingerAlphaShift", "Baseline No-Finger Alpha Shift",
+                   ConfigParam::Int, const_cast<int*>(&m_baseline.m_noFingerAlphaShift), 0, 15).Module("Signal Conditioning");
+    s.emplace_back("BaselineNoFingerMaxStep", "Baseline No-Finger Max Step",
+                   ConfigParam::Int, const_cast<int*>(&m_baseline.m_noFingerMaxStep), 1, 2048).Module("Signal Conditioning");
+    s.emplace_back("BaselineFingerBackgroundAlphaShift", "Baseline Finger Background Alpha Shift",
+                   ConfigParam::Int, const_cast<int*>(&m_baseline.m_fingerBackgroundAlphaShift), 0, 15).Module("Signal Conditioning");
+    s.emplace_back("BaselineFingerBackgroundMaxStep", "Baseline Finger Background Max Step",
+                   ConfigParam::Int, const_cast<int*>(&m_baseline.m_fingerBackgroundMaxStep), 1, 1024).Module("Signal Conditioning");
     s.emplace_back("BaselineNoiseTrackingEnabled", "Baseline Noise Tracking Enabled",
                    ConfigParam::Bool, const_cast<bool*>(&m_baseline.m_noiseTrackingEnabled)).Module("Signal Conditioning");
-    s.emplace_back("BaselineSettleFrames", "Baseline Settle Frames After Reacquire",
-                   ConfigParam::Int, const_cast<int*>(&m_baseline.m_settleFrames), 0, 30).Module("Signal Conditioning");
 
     // ── Signal Conditioning: CMF ──
     s.emplace_back("CMFEnabled", "CMF Enabled",
@@ -600,6 +613,7 @@ void TouchPipeline::SaveConfig(std::ostream& out) const {
     configOut << "BaselinePositiveDriftDeadband=" << m_baseline.m_positiveDriftDeadband << "\n";
     configOut << "BaselineNegativeDeadband=" << m_baseline.m_negativeDeadband << "\n";
     configOut << "BaselineTouchFreezeThreshold=" << m_baseline.m_touchFreezeThreshold << "\n";
+    configOut << "BaselineFreezeCandidateThreshold=" << m_baseline.m_freezeCandidateThreshold << "\n";
     configOut << "BaselineReleaseHoldFrames=" << m_baseline.m_releaseHoldFrames << "\n";
     configOut << "BaselinePositiveAlphaShift=" << m_baseline.m_positiveAlphaShift << "\n";
     configOut << "BaselineNegativeAlphaShift=" << m_baseline.m_negativeAlphaShift << "\n";
@@ -608,8 +622,11 @@ void TouchPipeline::SaveConfig(std::ostream& out) const {
     configOut << "BaselineNegativeMaxStep=" << m_baseline.m_negativeMaxStep << "\n";
     configOut << "BaselineAcquisitionAlphaShift=" << m_baseline.m_acquisitionAlphaShift << "\n";
     configOut << "BaselineAcquisitionMaxStep=" << m_baseline.m_acquisitionMaxStep << "\n";
+    configOut << "BaselineNoFingerAlphaShift=" << m_baseline.m_noFingerAlphaShift << "\n";
+    configOut << "BaselineNoFingerMaxStep=" << m_baseline.m_noFingerMaxStep << "\n";
+    configOut << "BaselineFingerBackgroundAlphaShift=" << m_baseline.m_fingerBackgroundAlphaShift << "\n";
+    configOut << "BaselineFingerBackgroundMaxStep=" << m_baseline.m_fingerBackgroundMaxStep << "\n";
     configOut << "BaselineNoiseTrackingEnabled=" << (m_baseline.m_noiseTrackingEnabled?"1":"0") << "\n";
-    configOut << "BaselineSettleFrames=" << m_baseline.m_settleFrames << "\n";
     // Phase 2: CMF
     configOut << "CMFEnabled=" << (m_cmf.m_enabled?"1":"0") << "\n";
     configOut << "CMFDimensionMode=" << static_cast<int>(m_cmf.m_mode) << "\n";
@@ -751,6 +768,7 @@ void TouchPipeline::LoadConfig(const std::string& key,
     else if (key=="BaselinePositiveDriftDeadband") m_baseline.m_positiveDriftDeadband = ParseConfigInt(key, value);
     else if (key=="BaselineNegativeDeadband") m_baseline.m_negativeDeadband = ParseConfigInt(key, value);
     else if (key=="BaselineTouchFreezeThreshold") m_baseline.m_touchFreezeThreshold = ParseConfigInt(key, value);
+    else if (key=="BaselineFreezeCandidateThreshold") m_baseline.m_freezeCandidateThreshold = std::clamp(ParseConfigInt(key, value), 1, 2000);
     else if (key=="BaselineReleaseHoldFrames") m_baseline.m_releaseHoldFrames = ParseConfigInt(key, value);
     else if (key=="BaselinePositiveAlphaShift") m_baseline.m_positiveAlphaShift = ParseConfigInt(key, value);
     else if (key=="BaselineNegativeAlphaShift") m_baseline.m_negativeAlphaShift = ParseConfigInt(key, value);
@@ -759,8 +777,11 @@ void TouchPipeline::LoadConfig(const std::string& key,
     else if (key=="BaselineNegativeMaxStep") m_baseline.m_negativeMaxStep = ParseConfigInt(key, value);
     else if (key=="BaselineAcquisitionAlphaShift") m_baseline.m_acquisitionAlphaShift = ParseConfigInt(key, value);
     else if (key=="BaselineAcquisitionMaxStep") m_baseline.m_acquisitionMaxStep = ParseConfigInt(key, value);
+    else if (key=="BaselineNoFingerAlphaShift") m_baseline.m_noFingerAlphaShift = std::clamp(ParseConfigInt(key, value), 0, 15);
+    else if (key=="BaselineNoFingerMaxStep") m_baseline.m_noFingerMaxStep = std::clamp(ParseConfigInt(key, value), 1, 2048);
+    else if (key=="BaselineFingerBackgroundAlphaShift") m_baseline.m_fingerBackgroundAlphaShift = std::clamp(ParseConfigInt(key, value), 0, 15);
+    else if (key=="BaselineFingerBackgroundMaxStep") m_baseline.m_fingerBackgroundMaxStep = std::clamp(ParseConfigInt(key, value), 1, 1024);
     else if (key=="BaselineNoiseTrackingEnabled") m_baseline.m_noiseTrackingEnabled = toBool(value);
-    else if (key=="BaselineSettleFrames") m_baseline.m_settleFrames = std::clamp(ParseConfigInt(key, value), 0, 30);
     // Phase 2: CMF
     else if (key=="CMFEnabled")              m_cmf.m_enabled = toBool(value);
     else if (key=="CMFDimensionMode")        m_cmf.m_mode = static_cast<Touch::CMFProcessor::DimensionMode>(ParseConfigInt(key, value));

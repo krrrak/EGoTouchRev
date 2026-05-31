@@ -68,7 +68,6 @@ void TestCurrentTouchConfigKeysAreHardcoded() {
     pipeline.m_tracker.m_stylusSuppressPenPeakThreshold = 2468;
     pipeline.m_gesture.m_pressCandidateMinSignal = 999;
     pipeline.m_gesture.m_bypassStateMachine = true;
-    pipeline.m_baseline.m_settleFrames = 7;
 
     std::ostringstream out;
     pipeline.SaveConfig(out);
@@ -87,7 +86,7 @@ void TestCurrentTouchConfigKeysAreHardcoded() {
     for (const char* key : frozenSerializedKeys) {
         RequireMissingSubstring(saved, key);
     }
-    RequirePresentSubstring(saved, "BaselineSettleFrames=7");
+    RequireMissingSubstring(saved, "BaselineSettleFrames=");
 
     const auto schema = pipeline.GetConfigSchema();
     const char* frozenSchemaKeys[] = {
@@ -104,7 +103,7 @@ void TestCurrentTouchConfigKeysAreHardcoded() {
     for (const char* key : frozenSchemaKeys) {
         RequireSchemaMissing(schema, key);
     }
-    RequireSchemaPresent(schema, "BaselineSettleFrames");
+    RequireSchemaMissing(schema, "BaselineSettleFrames");
 
     Solvers::TouchPipeline loaded;
     const bool baselineEnabled = loaded.m_baseline.m_enabled;
@@ -146,22 +145,45 @@ void TestCurrentTouchConfigKeysAreHardcoded() {
             "frozen gesture bypass config should not load");
 }
 
-void TestBaselineSettleFramesRoundTrip() {
-    Solvers::TouchPipeline pipeline;
-    pipeline.m_baseline.m_settleFrames = 7;
+    void TestBaselineFingerStateConfigRoundTrip() {
+        Solvers::TouchPipeline pipeline;
+        pipeline.m_baseline.m_freezeCandidateThreshold = 420;
+        pipeline.m_baseline.m_noFingerAlphaShift = 2;
+        pipeline.m_baseline.m_noFingerMaxStep = 768;
+        pipeline.m_baseline.m_fingerBackgroundAlphaShift = 4;
+        pipeline.m_baseline.m_fingerBackgroundMaxStep = 384;
 
-    std::ostringstream out;
-    pipeline.SaveConfig(out);
-    const std::string saved = out.str();
+        std::ostringstream out;
+        pipeline.SaveConfig(out);
+        const std::string saved = out.str();
 
-    RequirePresentSubstring(saved, "BaselineSettleFrames=7");
+        RequirePresentSubstring(saved, "BaselineFreezeCandidateThreshold=420");
+        RequirePresentSubstring(saved, "BaselineNoFingerAlphaShift=2");
+        RequirePresentSubstring(saved, "BaselineNoFingerMaxStep=768");
+        RequirePresentSubstring(saved, "BaselineFingerBackgroundAlphaShift=4");
+        RequirePresentSubstring(saved, "BaselineFingerBackgroundMaxStep=384");
 
-    Solvers::TouchPipeline loaded;
-    LoadFromSavedText(loaded, saved);
+        const auto schema = pipeline.GetConfigSchema();
+        RequireSchemaPresent(schema, "BaselineFreezeCandidateThreshold");
+        RequireSchemaPresent(schema, "BaselineNoFingerAlphaShift");
+        RequireSchemaPresent(schema, "BaselineNoFingerMaxStep");
+        RequireSchemaPresent(schema, "BaselineFingerBackgroundAlphaShift");
+        RequireSchemaPresent(schema, "BaselineFingerBackgroundMaxStep");
 
-    Require(loaded.m_baseline.m_settleFrames == 7,
-            "baseline settle frames should round-trip");
-}
+        Solvers::TouchPipeline loaded;
+        LoadFromSavedText(loaded, saved);
+
+        Require(loaded.m_baseline.m_freezeCandidateThreshold == 420,
+            "baseline freeze candidate threshold should round-trip");
+        Require(loaded.m_baseline.m_noFingerAlphaShift == 2,
+            "baseline no-finger alpha shift should round-trip");
+        Require(loaded.m_baseline.m_noFingerMaxStep == 768,
+            "baseline no-finger max step should round-trip");
+        Require(loaded.m_baseline.m_fingerBackgroundAlphaShift == 4,
+            "baseline finger background alpha shift should round-trip");
+        Require(loaded.m_baseline.m_fingerBackgroundMaxStep == 384,
+            "baseline finger background max step should round-trip");
+    }
 
 void TestEdgeCompensationIsHardcoded() {
     Solvers::TouchPipeline pipeline;
@@ -203,10 +225,10 @@ void TestEdgeCompensationIsHardcoded() {
 
 void TestInvalidConfigValuesAreIgnored() {
     Solvers::TouchPipeline touch;
-    touch.m_baseline.m_settleFrames = 12;
+    touch.m_baseline.m_noFingerMaxStep = 12;
 
-    touch.LoadConfig("BaselineSettleFrames", "abc");
-    Require(touch.m_baseline.m_settleFrames == 12,
+    touch.LoadConfig("BaselineNoFingerMaxStep", "abc");
+    Require(touch.m_baseline.m_noFingerMaxStep == 12,
             "invalid touch integer config should preserve current value");
 
     Solvers::StylusPipeline stylus;
@@ -231,7 +253,7 @@ void TestInvalidConfigValuesAreIgnored() {
 int main() {
     try {
         TestCurrentTouchConfigKeysAreHardcoded();
-        TestBaselineSettleFramesRoundTrip();
+        TestBaselineFingerStateConfigRoundTrip();
         TestEdgeCompensationIsHardcoded();
         TestInvalidConfigValuesAreIgnored();
         std::cout << "[TEST] TouchPipeline config round-trip tests passed.\n";

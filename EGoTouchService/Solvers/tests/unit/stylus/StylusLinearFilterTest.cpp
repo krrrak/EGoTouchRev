@@ -6,6 +6,7 @@
 #include "StylusSolver/Hpp3PostPressureProcess.hpp"
 #include "StylusSolver/LinearFilterProcess.hpp"
 #include "StylusSolver/TiltProcess.hpp"
+#include "StylusSolver/StylusFrameParser.hpp"
 #include "StylusSolver/StylusPipeline.h"
 
 #include <array>
@@ -74,6 +75,16 @@ void WriteLe16(std::array<uint8_t, N>& bytes, std::size_t wordIndex, uint16_t va
     bytes[wordIndex * sizeof(uint16_t) + 1] = static_cast<uint8_t>(value >> 8);
 }
 
+void FillSlaveSuffixBlock(uint16_t* block, uint16_t anchorRow, uint16_t anchorCol, int16_t baseValue) {
+    block[0] = anchorRow;
+    block[1] = anchorCol;
+    for (int r = 0; r < Asa::kGridDim; ++r) {
+        for (int c = 0; c < Asa::kGridDim; ++c) {
+            block[2 + r * Asa::kGridDim + c] = static_cast<uint16_t>(baseValue + r * Asa::kGridDim + c);
+        }
+    }
+}
+
 void TestExtractGridFromSlavePayloadBytesMatchesWords() {
     static constexpr std::size_t wordCount = static_cast<std::size_t>(Asa::kBlockWords * 2);
     std::array<uint16_t, wordCount> words{};
@@ -121,6 +132,57 @@ void TestExtractGridFromSlavePayloadBytesMatchesWords() {
                     "byte and word grid extractors should agree on grid values");
         }
     }
+}
+
+void TestFrameParserUsesSlaveSuffixWhenRawBytesMissing() {
+    Solvers::HeatmapFrame frame{};
+    frame.slaveSuffixValid = true;
+    frame.stylus.input.checksumOk = true;
+    frame.stylus.input.slaveWordOffset = 12;
+    frame.stylus.input.checksum16 = 0xBEEF;
+    frame.stylus.input.status = 0x1234;
+    FillSlaveSuffixBlock(frame.slaveSuffix.words, 3, 4, 100);
+    FillSlaveSuffixBlock(frame.slaveSuffix.words + Asa::kBlockWords, 7, 8, 1000);
+
+    Solvers::Stylus::StylusFrameParser parser;
+    parser.Process(frame);
+
+    const auto& stylus = frame.stylus;
+    Require(stylus.runtime.parse.valid,
+            "parser should accept slaveSuffix when raw bytes are missing");
+    Require(stylus.runtime.flow.frameClass == Asa::StylusFrameClass::Valid,
+            "slaveSuffix fallback should classify valid TX1 data as a valid frame");
+    Require(stylus.runtime.rawGrid.asaGrid.tx1.anchorRow == 3 &&
+            stylus.runtime.rawGrid.asaGrid.tx1.anchorCol == 4 &&
+            stylus.runtime.rawGrid.asaGrid.tx1.grid[4][5] == 141,
+            "slaveSuffix fallback should populate TX1 raw grid");
+    Require(stylus.runtime.rawGrid.asaGrid.tx2.anchorRow == 7 &&
+            stylus.runtime.rawGrid.asaGrid.tx2.anchorCol == 8 &&
+            stylus.runtime.rawGrid.asaGrid.tx2.grid[1][2] == 1011,
+            "slaveSuffix fallback should populate TX2 raw grid");
+    Require(stylus.input.slaveValid && stylus.input.tx1BlockValid && stylus.input.tx2BlockValid,
+            "slaveSuffix fallback should publish stylus input validity flags");
+    Require(stylus.input.checksumOk && stylus.input.checksum16 == 0xBEEF && stylus.input.status == 0x1234,
+            "slaveSuffix fallback should preserve existing stylus header metadata");
+}
+
+void TestFrameParserReportsNoSignalForInvalidSlaveSuffixAnchors() {
+    Solvers::HeatmapFrame frame{};
+    frame.slaveSuffixValid = true;
+    frame.slaveSuffix.words[0] = Asa::kAnchorInvalid;
+    frame.slaveSuffix.words[1] = Asa::kAnchorInvalid;
+    frame.slaveSuffix.words[Asa::kBlockWords] = Asa::kAnchorInvalid;
+    frame.slaveSuffix.words[Asa::kBlockWords + 1] = Asa::kAnchorInvalid;
+
+    Solvers::Stylus::StylusFrameParser parser;
+    parser.Process(frame);
+
+    Require(frame.stylus.runtime.flow.terminal,
+            "invalid slaveSuffix anchors should terminate the parser stage");
+    Require(frame.stylus.runtime.flow.frameClass == Asa::StylusFrameClass::NoSignal,
+            "invalid slaveSuffix anchors should classify as NoSignal");
+    Require(!frame.stylus.runtime.parse.valid && !frame.stylus.runtime.parse.hasCurrentStylusSignal,
+            "invalid slaveSuffix anchors should not publish a valid parse");
 }
 
 void SetProjectionPeak(Asa::AsaProjection& projection,
@@ -1171,6 +1233,8 @@ int main() {
         TestBypassModeResetsPostFilter();
         TestConfigRoundTrip();
         TestExtractGridFromSlavePayloadBytesMatchesWords();
+        TestFrameParserUsesSlaveSuffixWhenRawBytesMissing();
+        TestFrameParserReportsNoSignalForInvalidSlaveSuffixAnchors();
         TestGridFeatureExtractorAlignsTx2WithFactoryFlow();
         TestTx2SeedThresholdIsGreaterThanNinetyNine();
         TestTx1LinePeakFirstFrameUsesStrongestCurrentPeak();

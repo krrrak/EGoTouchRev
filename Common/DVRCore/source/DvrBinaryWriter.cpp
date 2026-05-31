@@ -141,6 +141,14 @@ bool CanPersistRuntimeConfig(const RuntimeConfigSnapshot* snapshot) {
     return RuntimeConfigValuesMatchSchema(*snapshot);
 }
 
+void CopyRawGridBlockToWire(const Asa::FreqBlock& src,
+                            DvrFmt::Dvr2StylusRawGridBlockRecord& dst) {
+    dst.anchorRow = src.anchorRow;
+    dst.anchorCol = src.anchorCol;
+    std::memcpy(dst.grid, src.grid, sizeof(dst.grid));
+    dst.valid = src.valid ? 1 : 0;
+}
+
 Dvr2FramePayload MakeFramePayload(const DvrFrameSlot& src) {
     Dvr2FramePayload dst{};
     auto& frame = dst.frame;
@@ -196,6 +204,8 @@ Dvr2FramePayload MakeFramePayload(const DvrFrameSlot& src) {
     frame.stylus.pressureIsReal = src.stylus.pressureIsReal ? 1 : 0;
     frame.stylus.predictedAgeFrames = src.stylus.predictedAgeFrames;
     frame.stylus.outputConfidence = src.stylus.outputConfidence;
+    CopyRawGridBlockToWire(src.stylus.rawGrid.tx1, frame.stylus.rawGrid.tx1);
+    CopyRawGridBlockToWire(src.stylus.rawGrid.tx2, frame.stylus.rawGrid.tx2);
     frame.stylus.packet.valid = src.stylus.packet.valid ? 1 : 0;
     frame.stylus.packet.reportId = src.stylus.packet.reportId;
     frame.stylus.packet.length = src.stylus.packet.length;

@@ -390,6 +390,25 @@ bool TryReadBoolStridedField(const std::vector<uint8_t>& record,
     return true;
 }
 
+bool TryReadRawGridBlock(const std::vector<uint8_t>& record,
+                         const std::vector<Dvr2FieldDef>& fields,
+                         std::string_view validPath,
+                         std::string_view anchorRowPath,
+                         std::string_view anchorColPath,
+                         std::string_view gridPath,
+                         Asa::FreqBlock& out,
+                         std::string* outError) {
+    uint8_t valid = out.valid ? 1 : 0;
+    bool present = false;
+    if (!TryReadScalarField(record, fields, validPath, DvrFmt::Dvr2ValueType::Bool, valid, outError, &present)) return false;
+    if (!present) return true;
+    out.valid = valid != 0;
+    if (!ReadScalarField(record, fields, anchorRowPath, DvrFmt::Dvr2ValueType::UInt16, out.anchorRow, outError)) return false;
+    if (!ReadScalarField(record, fields, anchorColPath, DvrFmt::Dvr2ValueType::UInt16, out.anchorCol, outError)) return false;
+    if (!CopyContiguousField(record, fields, gridPath, DvrFmt::Dvr2ValueType::Int16, DvrFmt::Dvr2FieldRank::Matrix, sizeof(out.grid), out.grid, outError)) return false;
+    return true;
+}
+
 bool PopulateHeatmapFrameFromRecordBytes(const std::vector<uint8_t>& record,
                                          const std::vector<Dvr2FieldDef>& fields,
                                          Solvers::HeatmapFrame& dst,
@@ -424,6 +443,7 @@ bool PopulateHeatmapFrameFromRecordBytes(const std::vector<uint8_t>& record,
     auto& stylusInterop = dst.stylus.interop;
     auto& stylusPoint = stylusOutput.point;
     auto& stylusPressure = dst.stylus.runtime.pressure;
+    auto& stylusRawGrid = dst.stylus.runtime.rawGrid.asaGrid;
 
     if (!TryReadBoolScalarField(record, fields, "stylus.slaveValid", stylusInput.slaveValid, outError)) return false;
     if (!TryReadBoolScalarField(record, fields, "stylus.checksumOk", stylusInput.checksumOk, outError)) return false;
@@ -494,6 +514,22 @@ bool PopulateHeatmapFrameFromRecordBytes(const std::vector<uint8_t>& record,
     stylusPressure.btSeq = stylusInput.btSample.seq;
     if (!TryReadBoolScalarField(record, fields, "stylus.pressureIsReal", stylusPressure.pressureIsReal, outError)) return false;
     if (!TryReadScalarField(record, fields, "stylus.predictedAgeFrames", DvrFmt::Dvr2ValueType::UInt8, stylusPressure.predictedAgeFrames, outError)) return false;
+    if (!TryReadRawGridBlock(record,
+                             fields,
+                             "stylus.runtime.rawGrid.asaGrid.tx1.valid",
+                             "stylus.runtime.rawGrid.asaGrid.tx1.anchorRow",
+                             "stylus.runtime.rawGrid.asaGrid.tx1.anchorCol",
+                             "stylus.runtime.rawGrid.asaGrid.tx1.grid",
+                             stylusRawGrid.tx1,
+                             outError)) return false;
+    if (!TryReadRawGridBlock(record,
+                             fields,
+                             "stylus.runtime.rawGrid.asaGrid.tx2.valid",
+                             "stylus.runtime.rawGrid.asaGrid.tx2.anchorRow",
+                             "stylus.runtime.rawGrid.asaGrid.tx2.anchorCol",
+                             "stylus.runtime.rawGrid.asaGrid.tx2.grid",
+                             stylusRawGrid.tx2,
+                             outError)) return false;
 #if EGOTOUCH_DIAG
     dst.stylus.debug.coord.rawPressure = stylusPoint.rawPressure;
     dst.stylus.debug.coord.mappedPressure = stylusPoint.mappedPressure;

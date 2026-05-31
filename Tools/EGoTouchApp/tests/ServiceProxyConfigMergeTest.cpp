@@ -140,7 +140,7 @@ void TestPersistedTouchConfigSkipsFrozenKeysWhileOverlayActive() {
     pipeline.m_coordFilter.m_enabled = true;
     pipeline.m_gesture.m_enabled = false;
     pipeline.m_baseline.m_baseline = 123;
-    pipeline.m_baseline.m_settleFrames = 9;
+    pipeline.m_baseline.m_noFingerMaxStep = 900;
     pipeline.m_tracker.m_maxTrackDistance = 7.5f;
     pipeline.m_tracker.m_stylusSuppressPenPeakThreshold = 2468;
     pipeline.m_gesture.m_bypassStateMachine = true;
@@ -158,7 +158,7 @@ void TestPersistedTouchConfigSkipsFrozenKeysWhileOverlayActive() {
 
     const std::string persistedText = App::BuildTouchPipelineConfigSection(pipeline, &snapshot);
     RequirePresentSubstring(persistedText, "[TouchPipeline]\n");
-    RequirePresentSubstring(persistedText, "BaselineSettleFrames=9");
+    RequirePresentSubstring(persistedText, "BaselineNoFingerMaxStep=900");
     RequireMissingSubstring(persistedText, "BaselineEnabled=");
     RequireMissingSubstring(persistedText, "BaselineValue=");
     RequireMissingSubstring(persistedText, "CMFEnabled=");
@@ -170,8 +170,8 @@ void TestPersistedTouchConfigSkipsFrozenKeysWhileOverlayActive() {
 
     Solvers::TouchPipeline loaded;
     LoadTouchPipelineFromSectionText(persistedText, loaded);
-    Require(loaded.m_baseline.m_settleFrames == 9,
-            "non-frozen baseline settle frames should still persist");
+    Require(loaded.m_baseline.m_noFingerMaxStep == 900,
+            "non-frozen baseline no-finger max step should still persist");
 }
 
 void TestPersistedGridIIRStateIsNotInjectedWhenPipelineOmitsGridIIR() {
@@ -237,7 +237,7 @@ void TestMergeDeduplicatesOwnedSections() {
 void TestMergePreservesUnrelatedSectionsAndReplacesTouchSections() {
     Solvers::TouchPipeline touchPipeline;
     touchPipeline.m_baseline.m_enabled = false;
-    touchPipeline.m_baseline.m_settleFrames = 6;
+    touchPipeline.m_baseline.m_noFingerMaxStep = 600;
     touchPipeline.m_tracker.m_enabled = true;
     Solvers::StylusPipeline stylusPipeline;
     stylusPipeline.m_postPressure.m_btFreqShiftDebounceFrames = 2;
@@ -291,7 +291,7 @@ void TestMergePreservesUnrelatedSectionsAndReplacesTouchSections() {
     RequireMissingSubstring(merged, "BaselineEnabled=");
     RequireMissingSubstring(merged, "BaselineValue=");
     RequireMissingSubstring(merged, "MaxTrackDistance=");
-    RequirePresentSubstring(merged, "BaselineSettleFrames=6");
+    RequirePresentSubstring(merged, "BaselineNoFingerMaxStep=600");
     RequirePresentSubstring(merged, "sp.btFreqShiftDebounceFrames=2");
 }
 
