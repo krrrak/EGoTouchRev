@@ -23,8 +23,9 @@ void BtHidChannel::Start() {
 
 void BtHidChannel::Stop() {
     if (!m_running.exchange(false)) return;
-    if (m_transport) m_transport->Close();
+    if (m_transport) m_transport->CancelIo();
     if (m_thread.joinable()) m_thread.join();
+    if (m_transport) m_transport->Close();
     LOG_INFO(ChannelName(), "Stop", "MCU",
              "Channel stopped.");
 }

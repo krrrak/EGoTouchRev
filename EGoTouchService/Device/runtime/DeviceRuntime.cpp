@@ -133,6 +133,7 @@ bool DeviceRuntime::Start() {
 
 void DeviceRuntime::Stop() {
   m_stopReason.store(StopReason::Shutdown);
+  m_chip.CancelPendingFrameRead();
   if (m_thread.joinable())
     m_thread.join();
   m_running.store(false);
@@ -182,11 +183,13 @@ void DeviceRuntime::SetFramePushCallback(DeviceRuntime::FramePushCallback cb) {
 
 void DeviceRuntime::LoadPipelineConfig(const std::string &key,
                                        const std::string &value) {
+  std::lock_guard<std::mutex> lk(m_pipelineMu);
   m_touchPipeline.LoadConfig(key, value);
 }
 
 void DeviceRuntime::LoadStylusPipelineConfig(const std::string &key,
                                              const std::string &value) {
+  std::lock_guard<std::mutex> lk(m_pipelineMu);
   m_stylusPipeline.LoadConfig(key, value);
   m_vhfReporter.SetStylusPacketSensorRows(
       m_stylusPipeline.GetPacketSensorRows());
@@ -197,10 +200,12 @@ void DeviceRuntime::LoadStylusPipelineConfig(const std::string &key,
 }
 
 void DeviceRuntime::SavePipelineConfig(std::ostream &out) const {
+  std::lock_guard<std::mutex> lk(m_pipelineMu);
   m_touchPipeline.SaveConfig(out);
 }
 
 void DeviceRuntime::SaveStylusPipelineConfig(std::ostream &out) const {
+  std::lock_guard<std::mutex> lk(m_pipelineMu);
   m_stylusPipeline.SaveConfig(out);
 }
 
@@ -217,12 +222,14 @@ void DeviceRuntime::SetMasterParserOnlyMode(bool enabled) {
 }
 
 void DeviceRuntime::IngestBtMcuPressure(uint16_t p) {
+  std::lock_guard<std::mutex> lk(m_pipelineMu);
   m_stylusPipeline.SetBtMcuPressure(p);
 }
 
 void DeviceRuntime::IngestBtMcuPressurePacket(
     const std::array<uint16_t, 4> &pressure,
     const std::array<uint16_t, 4> &rawPressure, uint8_t freq1, uint8_t freq2) {
+  std::lock_guard<std::mutex> lk(m_pipelineMu);
   m_stylusPipeline.SetBtMcuPressurePacket(pressure, rawPressure, freq1, freq2);
 }
 
@@ -337,6 +344,7 @@ void DeviceRuntime::IngestPolicyEvent(const RuntimePolicyEvent &ev) {
     if (IsRunning() &&
         (cancelledDisplayOff || clearedScreenOff || resumedAfterSystemSuspend ||
          state == workerState::suspend)) {
+      std::lock_guard<std::mutex> lk(m_pipelineMu);
       m_touchPipeline.RequestBaselineReacquire();
     }
     if (state == workerState::suspend ||
@@ -520,7 +528,10 @@ void DeviceRuntime::OnReady() {
       SetState(workerState::recover);
       return;
     }
-    m_touchPipeline.RequestBaselineReacquire();
+    {
+      std::lock_guard<std::mutex> lk(m_pipelineMu);
+      m_touchPipeline.RequestBaselineReacquire();
+    }
     SetState(workerState::streaming);
   } else {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -574,16 +585,29 @@ void DeviceRuntime::OnStreaming() {
   touchFrame.masterWasRead = m_chip.GetLastMasterWasRead();
   touchFrame.timestamp = m_chip.GetLastFrameTimestamp();
 
-  // 3. Stylus pipeline — reads rawPtr, writes frame.stylus
-  m_stylusPipeline.Process(touchFrame);
-  m_vhfReporter.DispatchStylus(
-      touchFrame, m_stylusVhfEnabled.load(std::memory_order_relaxed));
+  const bool stylusVhfEnabled =
+      m_stylusVhfEnabled.load(std::memory_order_relaxed);
+  bool dispatchTouch = false;
+  {
+    std::lock_guard<std::mutex> lk(m_pipelineMu);
 
-  // 4. Touch pipeline — reads frame, writes contacts/packets
-  if (m_masterParserOnly.load(std::memory_order_relaxed)) {
-    m_touchPipeline.ProcessMasterParserOnly(touchFrame);
-  } else {
-    m_touchPipeline.Process(touchFrame);
+    // 3. Stylus pipeline — reads rawPtr, writes frame.stylus
+    m_stylusPipeline.Process(touchFrame);
+
+    // 4. Touch pipeline — reads frame, writes contacts/packets
+    if (m_masterParserOnly.load(std::memory_order_relaxed)) {
+      m_touchPipeline.ProcessMasterParserOnly(touchFrame);
+    } else {
+      m_touchPipeline.Process(touchFrame);
+      dispatchTouch = true;
+    }
+  }
+
+  // VHF dispatch can block on device I/O; keep it outside m_pipelineMu.
+  // touchFrame owns processed stylus/contact vectors, and rawPtr references the
+  // current chip frame buffer until the next GetFrame() on this worker thread.
+  m_vhfReporter.DispatchStylus(touchFrame, stylusVhfEnabled);
+  if (dispatchTouch) {
     m_vhfReporter.DispatchTouch(touchFrame);
   }
 
@@ -603,7 +627,8 @@ void DeviceRuntime::OnStreaming() {
 void DeviceRuntime::HandlePenButtonStatusCode(uint8_t statusCode,
                                               uint8_t rawEventPayload,
                                               const char *source) {
-  switch (m_penButtonMode) {
+  const auto penButtonMode = GetPenButtonMode();
+  switch (penButtonMode) {
   case PenButtonMode::OemCustom:
     m_vhfReporter.SetBarrelButtonState(true);
     LOG_INFO("Runtime", __func__, "MCU",
@@ -774,12 +799,13 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
       eraserState = m_penState.eraserToggle;
     }
 
-    if (m_penButtonMode == PenButtonMode::OemCustom) {
+    const auto penButtonMode = GetPenButtonMode();
+    if (penButtonMode == PenButtonMode::OemCustom) {
       m_vhfReporter.SetEraserState(eraserState);
     }
     // 在 NativeBarrel/NativeEraser 模式下，0x7F 仅记录日志不动作
     LOG_INFO("Runtime", __func__, "MCU", "EraserToggle: state={} mode={}",
-             eraserState, static_cast<int>(m_penButtonMode));
+             eraserState, static_cast<int>(penButtonMode));
     break;
   }
 
@@ -839,7 +865,10 @@ void DeviceRuntime::OnRecover() {
 
   LOG_INFO("Runtime", __func__, "Recover",
            "Recovery succeeded after {} attempts.", m_recoverCount);
-  m_touchPipeline.RequestBaselineReacquire();
+  {
+    std::lock_guard<std::mutex> lk(m_pipelineMu);
+    m_touchPipeline.RequestBaselineReacquire();
+  }
   SetState(workerState::streaming);
   m_recoverCount = 0;
 }

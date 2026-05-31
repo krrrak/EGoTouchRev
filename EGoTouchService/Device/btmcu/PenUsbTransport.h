@@ -15,6 +15,7 @@ public:
 
     virtual ChipResult<> Open(const std::wstring& devicePath) = 0;
     virtual void Close() = 0;
+    virtual void CancelIo() = 0;
     virtual bool IsOpen() const = 0;
 
     virtual ChipResult<> ReadPacket(std::vector<uint8_t>& outBytes, uint32_t timeoutMs) = 0;

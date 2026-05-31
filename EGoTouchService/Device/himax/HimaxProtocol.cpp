@@ -137,11 +137,15 @@ namespace Himax {
      * @brief 析构函数，关闭句柄
      */
     HalDevice::~HalDevice() {
+        if (IsValid()) {
+            CancelIoEx(m_handle, nullptr);
+            (void)DrainInterruptOverlapped(INFINITE);
+        }
         if (m_ov.hEvent) {
             CloseHandle(m_ov.hEvent);
             m_ov.hEvent = nullptr;
         }
-        
+
         if (IsValid()) {
             CloseHandle(m_handle);
             m_handle = INVALID_HANDLE_VALUE;
@@ -195,13 +199,18 @@ namespace Himax {
      * @return bool 是否成功触发
      */
     ChipResult<> HalDevice::WaitInterrupt() {
-        if (!IsValid() || !m_ov.hEvent) { 
+        if (!IsValid() || !m_ov.hEvent) {
             m_lastError = ERROR_INVALID_HANDLE;
-            return std::unexpected(ChipError::CommunicationError); 
+            return std::unexpected(ChipError::CommunicationError);
+        }
+
+        if (m_ovPending && !DrainInterruptOverlapped(0)) {
+            m_lastError = ERROR_IO_INCOMPLETE;
+            return std::unexpected(ChipError::CommunicationError);
         }
 
         ResetEvent(m_ov.hEvent);
-        
+
         DWORD bytesReturned = 0;
         BOOL res = DeviceIoControl(
             m_handle,
@@ -211,21 +220,43 @@ namespace Himax {
             &bytesReturned, &m_ov
         );
 
-        if (!res && GetLastError() != ERROR_IO_PENDING) {
+        if (res) {
+            ResetEvent(m_ov.hEvent);
+            m_lastError = 0;
+            return {};
+        }
+        if (GetLastError() != ERROR_IO_PENDING) {
             m_lastError = GetLastError();
             return std::unexpected(ChipError::CommunicationError);
         }
+        m_ovPending = true;
 
         DWORD waitResult = WaitForSingleObject(m_ov.hEvent, 200);
 
         if (waitResult != WAIT_OBJECT_0) {
-            m_lastError = (waitResult == WAIT_FAILED) ? GetLastError() : ERROR_GEN_FAILURE;
+            const DWORD waitError = (waitResult == WAIT_FAILED) ? GetLastError() : ERROR_TIMEOUT;
+            CancelIoEx(m_handle, &m_ov);
+            if (!DrainInterruptOverlapped(1000)) {
+                // Keep m_ovPending set so the next wait/close path cannot reuse
+                // or release the OVERLAPPED storage before the cancelled I/O completes.
+                m_lastError = ERROR_IO_INCOMPLETE;
+                return std::unexpected(ChipError::Timeout);
+            }
+            m_lastError = waitError;
             return std::unexpected(ChipError::Timeout);
         }
 
         BOOL ok = GetOverlappedResult(m_handle, &m_ov, &bytesReturned, FALSE);
         if (!ok) {
-            m_lastError = GetLastError();
+            const DWORD err = GetLastError();
+            if (err == ERROR_IO_INCOMPLETE) {
+                m_lastError = err;
+                return std::unexpected(ChipError::CommunicationError);
+            }
+            m_lastError = err;
+        }
+        m_ovPending = false;
+        if (!ok) {
             return std::unexpected(ChipError::CommunicationError);
         }
 
@@ -389,6 +420,32 @@ namespace Himax {
         return m_lastError;
     }
 
+    bool HalDevice::DrainInterruptOverlapped(DWORD waitMs) {
+        if (!m_ovPending) {
+            return true;
+        }
+        if (!IsValid() || !m_ov.hEvent) {
+            return false;
+        }
+
+        const DWORD waitResult = WaitForSingleObject(m_ov.hEvent, waitMs);
+        if (waitResult != WAIT_OBJECT_0) {
+            return false;
+        }
+
+        DWORD bytesReturned = 0;
+        if (!GetOverlappedResult(m_handle, &m_ov, &bytesReturned, FALSE)) {
+            const DWORD err = GetLastError();
+            if (err == ERROR_IO_INCOMPLETE) {
+                return false;
+            }
+        }
+
+        m_ovPending = false;
+        ResetEvent(m_ov.hEvent);
+        return true;
+    }
+
     bool HalDevice::IsTimeoutError() const {
         return m_lastError == WAIT_TIMEOUT ||
                m_lastError == ERROR_TIMEOUT ||
@@ -398,6 +455,7 @@ namespace Himax {
     void HalDevice::CancelPendingIo() {
         if (m_handle != INVALID_HANDLE_VALUE) {
             CancelIoEx(m_handle, NULL);
+            (void)DrainInterruptOverlapped(INFINITE);
         }
     }
 

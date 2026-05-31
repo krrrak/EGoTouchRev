@@ -41,6 +41,8 @@ namespace Himax {
         void CancelPendingIo();
 
     private:
+        bool DrainInterruptOverlapped(DWORD waitMs);
+
         HANDLE m_handle;
         DWORD m_lastError;
         DeviceType m_type;
@@ -52,6 +54,7 @@ namespace Himax {
         const size_t data_offset = header_size + dummy_size;
         
         OVERLAPPED m_ov = {};
+        bool m_ovPending = false;
         std::vector<uint8_t> m_xfer_buffer;
     };
 
