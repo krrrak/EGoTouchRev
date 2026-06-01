@@ -96,9 +96,9 @@ void DiagnosticsWorkbench::DrawTouchInspectorPanel() {
 
         ImGui::TableSetColumnIndex(3);
         ImGui::TextDisabled("Current Frame");
-        ImGui::Text("Contacts: %zu", m_currentFrame.contacts.size());
+        ImGui::Text("Contacts: %zu", m_currentFrame.touch.output.contacts.size());
 #if EGOTOUCH_DIAG
-        ImGui::Text("Peaks: %zu", m_currentFrame.peaks.size());
+        ImGui::Text("Peaks: %zu", m_currentFrame.touch.debug.peaks.size());
 #else
         ImGui::TextDisabled("Peaks: N/A");
 #endif
@@ -307,22 +307,22 @@ void DiagnosticsWorkbench::DrawTouchPacketDetails() {
         ImGui::TableSetupColumn("Length", ImGuiTableColumnFlags_WidthFixed, 70.0f);
         ImGui::TableSetupColumn("Bytes", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableHeadersRow();
-        drawPacketRow("TouchPacket[0]", m_currentFrame.touchPackets[0]);
-        drawPacketRow("TouchPacket[1]", m_currentFrame.touchPackets[1]);
+        drawPacketRow("TouchPacket[0]", m_currentFrame.touch.output.touchPackets[0]);
+        drawPacketRow("TouchPacket[1]", m_currentFrame.touch.output.touchPackets[1]);
         ImGui::EndTable();
     }
     ImGui::EndChild();
 }
 
 void DiagnosticsWorkbench::DrawTouchContactSummaryTable() {
-    if (m_currentFrame.contacts.empty()) {
+    if (m_currentFrame.touch.output.contacts.empty()) {
         ImGui::TextDisabled("No contacts in current frame.");
         return;
     }
 
     std::vector<const Solvers::TouchContact*> orderedContacts;
-    orderedContacts.reserve(m_currentFrame.contacts.size());
-    for (const auto& contact : m_currentFrame.contacts) {
+    orderedContacts.reserve(m_currentFrame.touch.output.contacts.size());
+    for (const auto& contact : m_currentFrame.touch.output.contacts) {
         orderedContacts.push_back(&contact);
     }
     std::stable_sort(orderedContacts.begin(), orderedContacts.end(), [](const Solvers::TouchContact* a, const Solvers::TouchContact* b) {

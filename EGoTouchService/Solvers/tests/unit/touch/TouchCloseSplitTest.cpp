@@ -136,10 +136,10 @@ void TestZoneExpanderPartitionsMergedTwoPeakZone() {
     expander.m_dilateErode = false;
     expander.Process(frame, peaks, 130, {});
 
-    Require(frame.contacts.size() == 2, "merged two-peak zone should emit two contacts");
+    Require(frame.touch.output.contacts.size() == 2, "merged two-peak zone should emit two contacts");
 
-    const auto* leftContact = FindContactById(frame.contacts, 20);
-    const auto* rightContact = FindContactById(frame.contacts, 22);
+    const auto* leftContact = FindContactById(frame.touch.output.contacts, 20);
+    const auto* rightContact = FindContactById(frame.touch.output.contacts, 22);
     Require(leftContact != nullptr, "left peak id should be preserved in output contact");
     Require(rightContact != nullptr, "right peak id should be preserved in output contact");
     Require(std::fabs(leftContact->x - rightContact->x) >= 1.0f,

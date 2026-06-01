@@ -18,7 +18,7 @@ namespace DvrFmt = Dvr::Format;
 
 size_t FramePeakCount(const Solvers::HeatmapFrame& frame) {
 #if EGOTOUCH_DIAG
-    return frame.peaks.size();
+    return frame.touch.debug.peaks.size();
 #else
     (void)frame;
     return 0;
@@ -30,7 +30,7 @@ void WritePeaksCsvSection(std::ostream& out, const Solvers::HeatmapFrame& frame)
     out << "Count," << FramePeakCount(frame) << "\n";
     out << "R,C,Z,ID\n";
 #if EGOTOUCH_DIAG
-    for (const auto& pk : frame.peaks) {
+    for (const auto& pk : frame.touch.debug.peaks) {
         out << pk.r << ',' << pk.c << ',' << pk.z << ',' << static_cast<unsigned int>(pk.id) << "\n";
     }
 #endif
@@ -289,9 +289,9 @@ bool WriteFrameCsvFile(const std::filesystem::path& filePath,
     WritePeaksCsvSection(out, frame);
 
     out << "--- Contacts ---\n";
-    out << "Count," << frame.contacts.size() << "\n";
+    out << "Count," << frame.touch.output.contacts.size() << "\n";
     out << "ID,X,Y,State,Area,SignalSum,SizeMm,Reported,ReportEvent,LifeFlags,ReportFlags,DebugFlags\n";
-    for (const auto& c : frame.contacts) {
+    for (const auto& c : frame.touch.output.contacts) {
         out << c.id << ','
             << c.x << ','
             << c.y << ','
@@ -308,13 +308,13 @@ bool WriteFrameCsvFile(const std::filesystem::path& filePath,
     out << "\n";
 
     out << "--- Touch Packets (VHF 0x20) ---\n";
-    out << "Packet0Valid," << (frame.touchPackets[0].valid ? 1 : 0) << "\n";
+    out << "Packet0Valid," << (frame.touch.output.touchPackets[0].valid ? 1 : 0) << "\n";
     out << "Packet0Hex,";
-    WriteCsvPacketLine(out, frame.touchPackets[0].bytes);
+    WriteCsvPacketLine(out, frame.touch.output.touchPackets[0].bytes);
     out << "\n";
-    out << "Packet1Valid," << (frame.touchPackets[1].valid ? 1 : 0) << "\n";
+    out << "Packet1Valid," << (frame.touch.output.touchPackets[1].valid ? 1 : 0) << "\n";
     out << "Packet1Hex,";
-    WriteCsvPacketLine(out, frame.touchPackets[1].bytes);
+    WriteCsvPacketLine(out, frame.touch.output.touchPackets[1].bytes);
     out << "\n\n";
 
 
@@ -332,7 +332,7 @@ bool WriteFrameCsvFile(const std::filesystem::path& filePath,
     if (includeMasterStatus) {
         std::vector<CsvKeyValueRow> masterRows;
         masterRows.push_back({"MasterSuffixValid", frame.masterSuffixValid ? "1" : "0"});
-        masterRows.push_back({"ContactCount", std::to_string(frame.contacts.size())});
+        masterRows.push_back({"ContactCount", std::to_string(frame.touch.output.contacts.size())});
         masterRows.push_back({"PeakCount", std::to_string(FramePeakCount(frame))});
         masterRows.push_back({"MasterWasRead", frame.masterWasRead ? "1" : "0"});
         if (frame.masterSuffixValid) {

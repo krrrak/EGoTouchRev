@@ -802,10 +802,10 @@ uint64_t ServiceHost::EncodeDebugValue(const Solvers::HeatmapFrame& frame,
         case DebugDerivedSourceIndex::MasterWasRead:
             return EncodeBool(frame.masterWasRead);
         case DebugDerivedSourceIndex::ContactCount:
-            return EncodeU32(static_cast<uint32_t>(frame.contacts.size()));
+            return EncodeU32(static_cast<uint32_t>(frame.touch.output.contacts.size()));
         case DebugDerivedSourceIndex::PeakCount:
 #if EGOTOUCH_DIAG
-            return EncodeU32(static_cast<uint32_t>(frame.peaks.size()));
+            return EncodeU32(static_cast<uint32_t>(frame.touch.debug.peaks.size()));
 #else
             return EncodeU32(0);
 #endif

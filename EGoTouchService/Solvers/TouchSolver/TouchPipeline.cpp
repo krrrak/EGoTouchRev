@@ -157,8 +157,8 @@ void TouchPipeline::RequestBaselineReacquire(int frames) {
 bool TouchPipeline::Process(HeatmapFrame& frame) {
     const size_t desiredContactCapacity = static_cast<size_t>(
         std::max(m_contactExtractor.m_zoneExp.m_maxTouches, m_tracker.m_maxTouchCount));
-    if (frame.contacts.capacity() < desiredContactCapacity) {
-        frame.contacts.reserve(desiredContactCapacity);
+    if (frame.touch.output.contacts.capacity() < desiredContactCapacity) {
+        frame.touch.output.contacts.reserve(desiredContactCapacity);
     }
 
     // ── Phase 1: Frame Parsing ──────────────────────────────────────
@@ -185,7 +185,7 @@ bool TouchPipeline::Process(HeatmapFrame& frame) {
     m_cmf.Process(frame);
 
     // ── Phase 3: Candidate Generation ───────────────────────────────
-    frame.contacts.clear();
+    frame.touch.output.contacts.clear();
     m_macroZoneDet.Process(frame, m_peakDet.m_threshold);
     m_peakDet.Detect(frame, m_macroZoneDet.GetMacroZones());
 
@@ -207,36 +207,36 @@ bool TouchPipeline::Process(HeatmapFrame& frame) {
     // ── Phase 6: Contact Post-Processing ─────────────────────────────
     const auto& edgeInfos = m_contactExtractor.GetEdgeInfos();
     const auto& edgeBounds = m_contactExtractor.GetEdgeBounds();
-    m_edgeComp.Process(frame.contacts, edgeInfos, edgeBounds);
-    m_edgeReject.Process(frame.contacts, edgeInfos, edgeBounds);
+    m_edgeComp.Process(frame.touch.output.contacts, edgeInfos, edgeBounds);
+    m_edgeReject.Process(frame.touch.output.contacts, edgeInfos, edgeBounds);
     m_stylusSuppress.Process(frame);
 
     m_cachedPeakCount.store(static_cast<int>(peaks.size()), std::memory_order_relaxed);
     m_cachedZoneCount.store(m_contactExtractor.GetZoneCount(), std::memory_order_relaxed);
-    m_cachedContactCount.store(static_cast<int>(frame.contacts.size()), std::memory_order_relaxed);
+    m_cachedContactCount.store(static_cast<int>(frame.touch.output.contacts.size()), std::memory_order_relaxed);
 
     // ── Update diagnostic caches ────────────────────────────────
 #if EGOTOUCH_DIAG
     // MacroZone → touchZones colormap for IPC visualization
-    frame.touchZones.fill(0);
+    frame.touch.debug.touchZones.fill(0);
     const auto& mZones = m_macroZoneDet.GetMacroZones();
     for (size_t i = 0; i < mZones.size(); ++i) {
         const uint8_t colorId = static_cast<uint8_t>((i % 10) + 1);
         for (int idx : mZones[i].pixels) {
             if (idx >= 0 && idx < 2400) {
-                frame.touchZones[idx] = colorId;
+                frame.touch.debug.touchZones[idx] = colorId;
             }
         }
     }
 
-    frame.peakZones = m_contactExtractor.GetPeakZones();
+    frame.touch.debug.peakZones = m_contactExtractor.GetPeakZones();
 
-    if (frame.peaks.capacity() < peaks.size()) {
-        frame.peaks.reserve(peaks.size());
+    if (frame.touch.debug.peaks.capacity() < peaks.size()) {
+        frame.touch.debug.peaks.reserve(peaks.size());
     }
-    frame.peaks.clear();
+    frame.touch.debug.peaks.clear();
     for (const auto& pk : peaks) {
-        frame.peaks.push_back({pk.r, pk.c, pk.z, pk.id});
+        frame.touch.debug.peaks.push_back({pk.r, pk.c, pk.z, pk.id});
     }
 
     {
@@ -245,7 +245,7 @@ bool TouchPipeline::Process(HeatmapFrame& frame) {
             m_diagPeaks.reserve(peaks.size());
         }
         m_diagPeaks.assign(peaks.begin(), peaks.end());
-        m_diagTouchZones = frame.touchZones;
+        m_diagTouchZones = frame.touch.debug.touchZones;
         m_diagZoneEdge = m_contactExtractor.GetZoneEdge();
     }
 #endif
@@ -259,17 +259,17 @@ bool TouchPipeline::Process(HeatmapFrame& frame) {
 }
 
 void TouchPipeline::ResetIdleOutputs(HeatmapFrame& frame) {
-    frame.contacts.clear();
-    frame.touchPackets = {};
+    frame.touch.output.contacts.clear();
+    frame.touch.output.touchPackets = {};
 
     m_cachedPeakCount.store(0, std::memory_order_relaxed);
     m_cachedZoneCount.store(0, std::memory_order_relaxed);
     m_cachedContactCount.store(0, std::memory_order_relaxed);
 
 #if EGOTOUCH_DIAG
-    frame.touchZones.fill(0);
-    frame.peakZones.fill(0);
-    frame.peaks.clear();
+    frame.touch.debug.touchZones.fill(0);
+    frame.touch.debug.peakZones.fill(0);
+    frame.touch.debug.peaks.clear();
 
     {
         std::lock_guard<std::mutex> lk(m_diagMtx);

@@ -372,22 +372,22 @@ inline void PopulateSharedFrameDataFromSolverFrame(SharedFrameData& dst,
     dst.masterWasRead = src.masterWasRead;
 
 #if EGOTOUCH_DIAG
-    std::memcpy(dst.touchZones, src.touchZones.data(), sizeof(dst.touchZones));
-    std::memcpy(dst.peakZones, src.peakZones.data(), sizeof(dst.peakZones));
-    const int numPeaks = std::min(static_cast<int>(src.peaks.size()), 30);
+    std::memcpy(dst.touchZones, src.touch.debug.touchZones.data(), sizeof(dst.touchZones));
+    std::memcpy(dst.peakZones, src.touch.debug.peakZones.data(), sizeof(dst.peakZones));
+    const int numPeaks = std::min(static_cast<int>(src.touch.debug.peaks.size()), 30);
     dst.peakCount = static_cast<uint8_t>(numPeaks);
     for (int i = 0; i < numPeaks; ++i) {
-        dst.peaks[i].r = src.peaks[i].r;
-        dst.peaks[i].c = src.peaks[i].c;
-        dst.peaks[i].z = src.peaks[i].z;
-        dst.peaks[i].id = src.peaks[i].id;
+        dst.peaks[i].r = src.touch.debug.peaks[i].r;
+        dst.peaks[i].c = src.touch.debug.peaks[i].c;
+        dst.peaks[i].z = src.touch.debug.peaks[i].z;
+        dst.peaks[i].id = src.touch.debug.peaks[i].id;
     }
 #endif
 
-    const int contactCount = std::min(static_cast<int>(src.contacts.size()), kMaxSharedContacts);
+    const int contactCount = std::min(static_cast<int>(src.touch.output.contacts.size()), kMaxSharedContacts);
     dst.contactCount = static_cast<uint8_t>(contactCount);
     for (int i = 0; i < contactCount; ++i) {
-        const auto& srcContact = src.contacts[static_cast<size_t>(i)];
+        const auto& srcContact = src.touch.output.contacts[static_cast<size_t>(i)];
         auto& dstContact = dst.contacts[i];
         dstContact.id = srcContact.id;
         dstContact.x = srcContact.x;
@@ -406,10 +406,10 @@ inline void PopulateSharedFrameDataFromSolverFrame(SharedFrameData& dst,
     }
 
     for (int i = 0; i < 2; ++i) {
-        dst.touchPackets[i].valid = src.touchPackets[i].valid;
-        dst.touchPackets[i].reportId = src.touchPackets[i].reportId;
-        dst.touchPackets[i].length = src.touchPackets[i].length;
-        std::memcpy(dst.touchPackets[i].bytes, src.touchPackets[i].bytes.data(), sizeof(dst.touchPackets[i].bytes));
+        dst.touchPackets[i].valid = src.touch.output.touchPackets[i].valid;
+        dst.touchPackets[i].reportId = src.touch.output.touchPackets[i].reportId;
+        dst.touchPackets[i].length = src.touch.output.touchPackets[i].length;
+        std::memcpy(dst.touchPackets[i].bytes, src.touch.output.touchPackets[i].bytes.data(), sizeof(dst.touchPackets[i].bytes));
     }
 
     const auto& srcPoint = src.stylus.output.point;
@@ -564,24 +564,24 @@ inline void PopulateSolverFrameFromSharedFrameData(HeatmapFrame& out,
     out.masterWasRead = src.masterWasRead;
 
 #if EGOTOUCH_DIAG
-    std::memcpy(out.touchZones.data(), src.touchZones, sizeof(src.touchZones));
-    std::memcpy(out.peakZones.data(), src.peakZones, sizeof(src.peakZones));
-    if (out.peaks.capacity() < 30) {
-        out.peaks.reserve(30);
+    std::memcpy(out.touch.debug.touchZones.data(), src.touchZones, sizeof(src.touchZones));
+    std::memcpy(out.touch.debug.peakZones.data(), src.peakZones, sizeof(src.peakZones));
+    if (out.touch.debug.peaks.capacity() < 30) {
+        out.touch.debug.peaks.reserve(30);
     }
-    out.peaks.resize(src.peakCount);
+    out.touch.debug.peaks.resize(src.peakCount);
     for (int i = 0; i < src.peakCount; ++i) {
-        out.peaks[static_cast<size_t>(i)] = {src.peaks[i].r, src.peaks[i].c, src.peaks[i].z, src.peaks[i].id};
+        out.touch.debug.peaks[static_cast<size_t>(i)] = {src.peaks[i].r, src.peaks[i].c, src.peaks[i].z, src.peaks[i].id};
     }
 #endif
 
-    if (out.contacts.capacity() < kMaxSharedContacts) {
-        out.contacts.reserve(kMaxSharedContacts);
+    if (out.touch.output.contacts.capacity() < kMaxSharedContacts) {
+        out.touch.output.contacts.reserve(kMaxSharedContacts);
     }
-    out.contacts.resize(src.contactCount);
+    out.touch.output.contacts.resize(src.contactCount);
     for (int i = 0; i < src.contactCount; ++i) {
         const auto& srcContact = src.contacts[i];
-        auto& dstContact = out.contacts[static_cast<size_t>(i)];
+        auto& dstContact = out.touch.output.contacts[static_cast<size_t>(i)];
         dstContact.id = srcContact.id;
         dstContact.x = srcContact.x;
         dstContact.y = srcContact.y;
@@ -599,10 +599,10 @@ inline void PopulateSolverFrameFromSharedFrameData(HeatmapFrame& out,
     }
 
     for (int i = 0; i < 2; ++i) {
-        out.touchPackets[i].valid = src.touchPackets[i].valid;
-        out.touchPackets[i].reportId = src.touchPackets[i].reportId;
-        out.touchPackets[i].length = src.touchPackets[i].length;
-        std::memcpy(out.touchPackets[i].bytes.data(), src.touchPackets[i].bytes, sizeof(src.touchPackets[i].bytes));
+        out.touch.output.touchPackets[i].valid = src.touchPackets[i].valid;
+        out.touch.output.touchPackets[i].reportId = src.touchPackets[i].reportId;
+        out.touch.output.touchPackets[i].length = src.touchPackets[i].length;
+        std::memcpy(out.touch.output.touchPackets[i].bytes.data(), src.touchPackets[i].bytes, sizeof(src.touchPackets[i].bytes));
     }
 
     const auto& srcPoint = src.stylusPoint;

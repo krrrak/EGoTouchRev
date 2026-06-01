@@ -125,7 +125,7 @@ inline bool StylusTouchSuppressor::Process(HeatmapFrame& frame) {
             ? static_cast<int>(interop.recheckThresholdMulti)
             : std::max(baseThreshold, 1200);
     const int finalThreshold =
-        (frame.contacts.size() > 2) ? multiThreshold : baseThreshold;
+        (frame.touch.output.contacts.size() > 2) ? multiThreshold : baseThreshold;
     interop.recheckThreshold =
         static_cast<uint16_t>(std::clamp(finalThreshold, 0, 0xFFFF));
     interop.touchNullLike = false;
@@ -143,7 +143,7 @@ inline bool StylusTouchSuppressor::Process(HeatmapFrame& frame) {
     int suppressedCount = 0;
     int holdFrames = 0;
 
-    frame.contacts.erase(std::remove_if(frame.contacts.begin(), frame.contacts.end(),
+    frame.touch.output.contacts.erase(std::remove_if(frame.touch.output.contacts.begin(), frame.touch.output.contacts.end(),
         [&](const TouchContact& c) {
             const float distSq = DistanceSq(c.x, c.y, evidence.x, evidence.y);
             if (distSq > radiusSq) return false;
@@ -171,7 +171,7 @@ inline bool StylusTouchSuppressor::Process(HeatmapFrame& frame) {
                                   overlap ? m_stylusAftSuppressFrames
                                           : std::max(1, m_stylusAftDebounceFrames));
             return true;
-        }), frame.contacts.end());
+        }), frame.touch.output.contacts.end());
 
     interop.touchNullLike =
         evidence.active && interop.recheckOverlap;

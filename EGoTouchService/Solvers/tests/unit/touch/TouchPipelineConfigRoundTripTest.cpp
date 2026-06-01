@@ -236,7 +236,7 @@ void TestMasterParserOnlyKeepsRawHeatmapSemantics() {
     Solvers::HeatmapFrame frame;
     frame.rawPtr = raw.data();
     frame.rawLen = raw.size();
-    frame.contacts.push_back({});
+    frame.touch.output.contacts.push_back({});
 
     Solvers::TouchPipeline pipeline;
     pipeline.m_baseline.m_baseline = kRawParserOnlyValue;
@@ -244,7 +244,7 @@ void TestMasterParserOnlyKeepsRawHeatmapSemantics() {
 
     Require(frame.heatmapMatrix[0][0] == static_cast<int16_t>(kRawParserOnlyValue),
             "master parser only should expose raw heatmap values without baseline subtraction");
-    Require(frame.contacts.empty(),
+    Require(frame.touch.output.contacts.empty(),
             "master parser only should still clear touch outputs");
 }
 

@@ -199,15 +199,15 @@ struct DvrFrameSlot {
         slaveSuffixValid  = src.slaveSuffixValid;
 
         for (size_t i = 0; i < 2; ++i) {
-            touchPackets[i].valid = src.touchPackets[i].valid ? 1 : 0;
-            touchPackets[i].reportId = src.touchPackets[i].reportId;
-            touchPackets[i].length = src.touchPackets[i].length;
-            std::memcpy(touchPackets[i].bytes, src.touchPackets[i].bytes.data(), sizeof(touchPackets[i].bytes));
+            touchPackets[i].valid = src.touch.output.touchPackets[i].valid ? 1 : 0;
+            touchPackets[i].reportId = src.touch.output.touchPackets[i].reportId;
+            touchPackets[i].length = src.touch.output.touchPackets[i].length;
+            std::memcpy(touchPackets[i].bytes, src.touch.output.touchPackets[i].bytes.data(), sizeof(touchPackets[i].bytes));
         }
 
 #if EGOTOUCH_DIAG
-        std::memcpy(touchZones, src.touchZones.data(), sizeof(touchZones));
-        std::memcpy(peakZones, src.peakZones.data(), sizeof(peakZones));
+        std::memcpy(touchZones, src.touch.debug.touchZones.data(), sizeof(touchZones));
+        std::memcpy(peakZones, src.touch.debug.peakZones.data(), sizeof(peakZones));
 #endif
 
         stylus.slaveValid = src.stylus.input.slaveValid;
@@ -273,9 +273,9 @@ struct DvrFrameSlot {
         stylus.point.tx2Y = src.stylus.output.point.tx2Y;
         stylus.point.confidence = src.stylus.output.point.confidence;
 
-        contactCount = static_cast<uint8_t>(std::min(static_cast<int>(src.contacts.size()), kMaxContacts));
+        contactCount = static_cast<uint8_t>(std::min(static_cast<int>(src.touch.output.contacts.size()), kMaxContacts));
         for (int i = 0; i < contactCount; ++i) {
-            const auto& sc = src.contacts[i];
+            const auto& sc = src.touch.output.contacts[i];
             contacts[i].id = sc.id;
             contacts[i].x = sc.x;
             contacts[i].y = sc.y;
@@ -305,9 +305,9 @@ struct DvrFrameSlot {
         }
 
 #if EGOTOUCH_DIAG
-        peakCount = static_cast<uint8_t>(std::min(static_cast<int>(src.peaks.size()), kMaxPeaks));
+        peakCount = static_cast<uint8_t>(std::min(static_cast<int>(src.touch.debug.peaks.size()), kMaxPeaks));
         for (int i = 0; i < peakCount; ++i) {
-            const auto& sp = src.peaks[i];
+            const auto& sp = src.touch.debug.peaks[i];
             peaks[i] = { sp.r, sp.c, sp.z, sp.id, 0 };
         }
 #else

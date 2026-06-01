@@ -35,7 +35,7 @@ void TestBinaryRoundTrip() {
     DvrCoreTest::Require(first.slaveSuffixValid, "slave suffix valid should round-trip");
     DvrCoreTest::Require(first.heatmapMatrix[0][0] == 101 && first.heatmapMatrix[7][9] == -202, "heatmap payload should round-trip");
     DvrCoreTest::Require(first.masterSuffix.words[0] == 0x1111 && first.slaveSuffix.words[0] == 0x3333, "suffix words should round-trip");
-    DvrCoreTest::Require(first.touchPackets[0].valid && first.touchPackets[0].bytes[0] == 0xAA && first.touchPackets[0].bytes[31] == 0x55, "touch packet should round-trip");
+    DvrCoreTest::Require(first.touch.output.touchPackets[0].valid && first.touch.output.touchPackets[0].bytes[0] == 0xAA && first.touch.output.touchPackets[0].bytes[31] == 0x55, "touch packet should round-trip");
     DvrCoreTest::Require(first.stylus.input.slaveValid && first.stylus.input.checksum16 == 0xBEEF, "stylus input should round-trip");
     DvrCoreTest::Require(first.stylus.runtime.rawGrid.asaGrid.tx1.valid &&
                          first.stylus.runtime.rawGrid.asaGrid.tx1.anchorRow == 2 &&
@@ -49,11 +49,11 @@ void TestBinaryRoundTrip() {
                          "stylus TX2 raw grid should round-trip");
     DvrCoreTest::Require(first.stylus.output.valid && first.stylus.output.packet.bytes[16] == 0x34, "stylus output packet should round-trip");
     DvrCoreTest::Require(first.stylus.output.point.valid && first.stylus.output.point.reportX == 125, "stylus point should round-trip");
-    DvrCoreTest::Require(first.contacts.size() == 1 && first.contacts[0].id == 7 && first.contacts[0].signalSum == 1000, "contacts should round-trip");
+    DvrCoreTest::Require(first.touch.output.contacts.size() == 1 && first.touch.output.contacts[0].id == 7 && first.touch.output.contacts[0].signalSum == 1000, "contacts should round-trip");
 #if EGOTOUCH_DIAG
     DvrCoreTest::Require(first.rawLen == 4 && first.rawPtr != nullptr && first.rawPtr[3] == 0x40, "raw data should round-trip in diagnostic builds");
-    DvrCoreTest::Require(first.touchZones[0] == 3 && first.peakZones[1] == 4, "zone arrays should round-trip in diagnostic builds");
-    DvrCoreTest::Require(first.peaks.size() == 1 && first.peaks[0].z == 500, "peaks should round-trip in diagnostic builds");
+    DvrCoreTest::Require(first.touch.debug.touchZones[0] == 3 && first.touch.debug.peakZones[1] == 4, "zone arrays should round-trip in diagnostic builds");
+    DvrCoreTest::Require(first.touch.debug.peaks.size() == 1 && first.touch.debug.peaks[0].z == 500, "peaks should round-trip in diagnostic builds");
 #endif
 
     std::filesystem::remove(path);

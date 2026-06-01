@@ -202,11 +202,11 @@ void VhfReporter::Dispatch(Solvers::HeatmapFrame& frame) {
         return;
     }
 
-    frame.touchPackets = VhfTouchPacket::Build(
-        frame.contacts,
+    frame.touch.output.touchPackets = VhfTouchPacket::Build(
+        frame.touch.output.contacts,
         m_transpose.load(std::memory_order_relaxed));
 
-    const bool hasTouch = HasTouchReports(frame.touchPackets);
+    const bool hasTouch = HasTouchReports(frame.touch.output.touchPackets);
     const bool sendTouchAllUp = UpdateTouchState(hasTouch);
     const bool hasStylus = stylusPacket.packet.valid;
 
@@ -231,7 +231,7 @@ void VhfReporter::Dispatch(Solvers::HeatmapFrame& frame) {
         WriteTouchAllUpLocked();
     }
     if (hasTouch) {
-        WriteTouchPacketsLocked(frame.touchPackets);
+        WriteTouchPacketsLocked(frame.touch.output.touchPackets);
     }
     if (hasStylus) {
         WriteStylusPacketLocked(stylusBytes.data(),
@@ -271,11 +271,11 @@ void VhfReporter::DispatchTouch(Solvers::HeatmapFrame& frame) {
         return;
     }
 
-    frame.touchPackets = VhfTouchPacket::Build(
-        frame.contacts,
+    frame.touch.output.touchPackets = VhfTouchPacket::Build(
+        frame.touch.output.contacts,
         m_transpose.load(std::memory_order_relaxed));
 
-    const bool hasTouch = HasTouchReports(frame.touchPackets);
+    const bool hasTouch = HasTouchReports(frame.touch.output.touchPackets);
     const bool sendTouchAllUp = UpdateTouchState(hasTouch);
     if (!hasTouch && !sendTouchAllUp) {
         return;
@@ -289,7 +289,7 @@ void VhfReporter::DispatchTouch(Solvers::HeatmapFrame& frame) {
         WriteTouchAllUpLocked();
     }
     if (hasTouch) {
-        WriteTouchPacketsLocked(frame.touchPackets);
+        WriteTouchPacketsLocked(frame.touch.output.touchPackets);
     }
 }
 

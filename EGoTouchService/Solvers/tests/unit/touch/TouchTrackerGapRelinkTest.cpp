@@ -41,7 +41,7 @@ struct PipelineHarness {
             c.y = y;
             c.area = 12;
             c.signalSum = 1200;
-            frame.contacts.push_back(c);
+            frame.touch.output.contacts.push_back(c);
         }
         tracker.Process(frame);
         filter.Process(frame);
@@ -52,21 +52,21 @@ struct PipelineHarness {
 
 std::vector<const TouchContact*> VisibleContacts(const HeatmapFrame& frame) {
     std::vector<const TouchContact*> out;
-    for (const auto& c : frame.contacts) {
+    for (const auto& c : frame.touch.output.contacts) {
         if (c.isReported) out.push_back(&c);
     }
     return out;
 }
 
 const TouchContact* FindContactById(const HeatmapFrame& frame, int id) {
-    for (const auto& c : frame.contacts) {
+    for (const auto& c : frame.touch.output.contacts) {
         if (c.id == id) return &c;
     }
     return nullptr;
 }
 
 const TouchContact* FindVisibleById(const HeatmapFrame& frame, int id) {
-    for (const auto& c : frame.contacts) {
+    for (const auto& c : frame.touch.output.contacts) {
         if (c.id == id && c.isReported) return &c;
     }
     return nullptr;
@@ -209,21 +209,21 @@ void TestHiddenNonSilentContactDoesNotBecomeVisibleInGesture() {
     TouchGestureStateMachine gesture;
 
     HeatmapFrame down;
-    down.contacts.push_back(MakeGestureContact(1, 10.0f, 10.0f, TouchStateDown, true));
+    down.touch.output.contacts.push_back(MakeGestureContact(1, 10.0f, 10.0f, TouchStateDown, true));
     gesture.Process(down);
-    Require(VisibleContacts(down).size() == 1 && down.contacts[0].reportEvent == TouchReportDown,
+    Require(VisibleContacts(down).size() == 1 && down.touch.output.contacts[0].reportEvent == TouchReportDown,
             "visible contact should enter gesture as Down");
 
     HeatmapFrame move;
-    move.contacts.push_back(MakeGestureContact(1, 12.0f, 10.0f, TouchStateMove, true));
+    move.touch.output.contacts.push_back(MakeGestureContact(1, 12.0f, 10.0f, TouchStateMove, true));
     gesture.Process(move);
-    Require(VisibleContacts(move).size() == 1 && move.contacts[0].reportEvent == TouchReportMove,
+    Require(VisibleContacts(move).size() == 1 && move.touch.output.contacts[0].reportEvent == TouchReportMove,
             "visible moved contact should enter dragging as Move");
 
     HeatmapFrame hidden;
-    hidden.contacts.push_back(MakeGestureContact(1, 13.0f, 10.0f, TouchStateMove, false));
+    hidden.touch.output.contacts.push_back(MakeGestureContact(1, 13.0f, 10.0f, TouchStateMove, false));
     gesture.Process(hidden);
-    Require(!hidden.contacts[0].isReported && hidden.contacts[0].reportEvent == TouchReportIdle,
+    Require(!hidden.touch.output.contacts[0].isReported && hidden.touch.output.contacts[0].reportEvent == TouchReportIdle,
             "non-silent hidden contact should not be resurrected by gesture output rewrite");
     const auto* up = FindVisibleById(hidden, 1);
     Require(up != nullptr && up->reportEvent == TouchReportUp,
@@ -234,15 +234,15 @@ void TestHiddenNewContactReportsDownWhenSuppressionEnds() {
     TouchGestureStateMachine gesture;
 
     HeatmapFrame hidden;
-    hidden.contacts.push_back(MakeGestureContact(1, 10.0f, 10.0f, TouchStateMove, false));
+    hidden.touch.output.contacts.push_back(MakeGestureContact(1, 10.0f, 10.0f, TouchStateMove, false));
     gesture.Process(hidden);
     Require(VisibleContacts(hidden).empty(),
             "hidden new contact should not create a visible gesture slot");
-    Require(hidden.contacts[0].reportEvent == TouchReportIdle,
+    Require(hidden.touch.output.contacts[0].reportEvent == TouchReportIdle,
             "hidden new contact should remain idle");
 
     HeatmapFrame visible;
-    visible.contacts.push_back(MakeGestureContact(1, 10.1f, 10.0f, TouchStateMove, true));
+    visible.touch.output.contacts.push_back(MakeGestureContact(1, 10.1f, 10.0f, TouchStateMove, true));
     gesture.Process(visible);
     const auto visibleContacts = VisibleContacts(visible);
     Require(visibleContacts.size() == 1 && visibleContacts[0]->reportEvent == TouchReportDown,

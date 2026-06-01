@@ -72,31 +72,31 @@ public:
 
         // TSACore SigSumFilter_ReserveTouch: keep top-N by signalSum
         if (m_maxTouches > 0 &&
-            static_cast<int>(frame.contacts.size()) > m_maxTouches) {
-            const int contactCount = std::min(static_cast<int>(frame.contacts.size()), kGridSize);
+            static_cast<int>(frame.touch.output.contacts.size()) > m_maxTouches) {
+            const int contactCount = std::min(static_cast<int>(frame.touch.output.contacts.size()), kGridSize);
             const int keepCount = std::min({m_maxTouches, contactCount, kMaxTouchScratch});
             std::array<int, kGridSize> order;
             for (int i = 0; i < contactCount; ++i) order[static_cast<size_t>(i)] = i;
             std::sort(order.begin(), order.begin() + contactCount, [&](int a, int b) {
-                return frame.contacts[static_cast<size_t>(a)].signalSum >
-                       frame.contacts[static_cast<size_t>(b)].signalSum;
+                return frame.touch.output.contacts[static_cast<size_t>(a)].signalSum >
+                       frame.touch.output.contacts[static_cast<size_t>(b)].signalSum;
             });
 
             std::array<TouchContact, kMaxTouchScratch> keptContacts;
             std::array<ZoneEdgeInfo, kMaxTouchScratch> keptEdgeInfos;
             for (int i = 0; i < keepCount; ++i) {
                 const int src = order[static_cast<size_t>(i)];
-                keptContacts[static_cast<size_t>(i)] = frame.contacts[static_cast<size_t>(src)];
+                keptContacts[static_cast<size_t>(i)] = frame.touch.output.contacts[static_cast<size_t>(src)];
                 keptContacts[static_cast<size_t>(i)].id = i;
                 keptEdgeInfos[static_cast<size_t>(i)] = src < static_cast<int>(m_contactEdgeInfos.size())
                     ? m_contactEdgeInfos[static_cast<size_t>(src)]
                     : ZoneEdgeInfo{};
             }
 
-            frame.contacts.resize(static_cast<size_t>(keepCount));
+            frame.touch.output.contacts.resize(static_cast<size_t>(keepCount));
             m_contactEdgeInfos.resize(static_cast<size_t>(keepCount));
             for (int i = 0; i < keepCount; ++i) {
-                frame.contacts[static_cast<size_t>(i)] = keptContacts[static_cast<size_t>(i)];
+                frame.touch.output.contacts[static_cast<size_t>(i)] = keptContacts[static_cast<size_t>(i)];
                 m_contactEdgeInfos[static_cast<size_t>(i)] = keptEdgeInfos[static_cast<size_t>(i)];
             }
         }
@@ -600,7 +600,7 @@ private:
     }
 
     // ────────────────────────────────────────────────────────
-    // Compute centroids and populate frame.contacts.
+    // Compute centroids and populate frame.touch.output.contacts.
     // Single-peak zones: standard weighted centroid.
     // Multi-peak zones: per-peak pixel partition inside merged zone.
     // ────────────────────────────────────────────────────────
@@ -608,12 +608,12 @@ private:
             HeatmapFrame& frame,
             std::span<const Peak> peaks,
             std::span<const PeakEvaluation> evaluations) {
-        frame.contacts.clear();
+        frame.touch.output.contacts.clear();
         m_contactEdgeInfos.clear();
         const size_t desiredCapacity = static_cast<size_t>(
             std::max(m_maxTouches, static_cast<int>(peaks.size())));
-        if (frame.contacts.capacity() < desiredCapacity) {
-            frame.contacts.reserve(desiredCapacity);
+        if (frame.touch.output.contacts.capacity() < desiredCapacity) {
+            frame.touch.output.contacts.reserve(desiredCapacity);
         }
         if (m_contactEdgeInfos.capacity() < desiredCapacity) {
             m_contactEdgeInfos.reserve(desiredCapacity);
@@ -648,7 +648,7 @@ private:
                 tc.signalSum = u.signalSum;
                 tc.state = 0;
                 ApplyEdgeInfo(tc, m_edgeInfos[static_cast<size_t>(pi)]);
-                frame.contacts.push_back(tc);
+                frame.touch.output.contacts.push_back(tc);
                 m_contactEdgeInfos.push_back(m_edgeInfos[static_cast<size_t>(pi)]);
             } else {
                 std::array<MfAccum, ZoneUnit::kMaxPeaksPerZone> mfAccums{};
@@ -678,7 +678,7 @@ private:
                     tc.signalSum = accum.signalSum;
                     tc.state = 0;
                     ApplyEdgeInfo(tc, m_edgeInfos[static_cast<size_t>(pi)]);
-                    frame.contacts.push_back(tc);
+                    frame.touch.output.contacts.push_back(tc);
                     m_contactEdgeInfos.push_back(m_edgeInfos[static_cast<size_t>(pi)]);
                 }
             }

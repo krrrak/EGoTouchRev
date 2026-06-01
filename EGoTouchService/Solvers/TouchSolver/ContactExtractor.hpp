@@ -154,7 +154,7 @@ public:
                         int16_t sigThold,
                         std::span<const PeakEvaluation> evaluations = {}) {
         m_zoneExp.Process(frame, peaks, sigThold, evaluations);
-        m_touchSize.Process(frame.contacts);
+        m_touchSize.Process(frame.touch.output.contacts);
     }
 
     const std::array<uint8_t, MicroZoneSegmenter::kGridSize>& GetPeakZones() const { return m_microZoneSeg.GetPeakZones(); }

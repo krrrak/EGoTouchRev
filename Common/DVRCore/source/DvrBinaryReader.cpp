@@ -458,15 +458,15 @@ bool PopulateHeatmapFrameFromRecordBytes(const std::vector<uint8_t>& record,
     if (!TryCopyContiguousField(record, fields, "slaveSuffix.words", DvrFmt::Dvr2ValueType::UInt16, DvrFmt::Dvr2FieldRank::Array, sizeof(dst.slaveSuffix.words), dst.slaveSuffix.words, outError)) return false;
 
     for (uint32_t i = 0; i < DvrFmt::kTouchPacketCount; ++i) {
-        if (!TryReadBoolStridedField(record, fields, "touchPackets[].valid", i, dst.touchPackets[i].valid, outError)) return false;
-        if (!TryReadStridedField(record, fields, "touchPackets[].reportId", DvrFmt::Dvr2ValueType::UInt8, i, dst.touchPackets[i].reportId, outError)) return false;
-        if (!TryReadStridedField(record, fields, "touchPackets[].length", DvrFmt::Dvr2ValueType::UInt8, i, dst.touchPackets[i].length, outError)) return false;
-        if (!TryReadStridedField(record, fields, "touchPackets[].bytes", DvrFmt::Dvr2ValueType::UInt8, i, dst.touchPackets[i].bytes, outError)) return false;
+        if (!TryReadBoolStridedField(record, fields, "touchPackets[].valid", i, dst.touch.output.touchPackets[i].valid, outError)) return false;
+        if (!TryReadStridedField(record, fields, "touchPackets[].reportId", DvrFmt::Dvr2ValueType::UInt8, i, dst.touch.output.touchPackets[i].reportId, outError)) return false;
+        if (!TryReadStridedField(record, fields, "touchPackets[].length", DvrFmt::Dvr2ValueType::UInt8, i, dst.touch.output.touchPackets[i].length, outError)) return false;
+        if (!TryReadStridedField(record, fields, "touchPackets[].bytes", DvrFmt::Dvr2ValueType::UInt8, i, dst.touch.output.touchPackets[i].bytes, outError)) return false;
     }
 
 #if EGOTOUCH_DIAG
-    if (!TryCopyContiguousField(record, fields, "touchZones", DvrFmt::Dvr2ValueType::UInt8, DvrFmt::Dvr2FieldRank::Array, sizeof(dst.touchZones), dst.touchZones.data(), outError)) return false;
-    if (!TryCopyContiguousField(record, fields, "peakZones", DvrFmt::Dvr2ValueType::UInt8, DvrFmt::Dvr2FieldRank::Array, sizeof(dst.peakZones), dst.peakZones.data(), outError)) return false;
+    if (!TryCopyContiguousField(record, fields, "touchZones", DvrFmt::Dvr2ValueType::UInt8, DvrFmt::Dvr2FieldRank::Array, sizeof(dst.touch.debug.touchZones), dst.touch.debug.touchZones.data(), outError)) return false;
+    if (!TryCopyContiguousField(record, fields, "peakZones", DvrFmt::Dvr2ValueType::UInt8, DvrFmt::Dvr2FieldRank::Array, sizeof(dst.touch.debug.peakZones), dst.touch.debug.peakZones.data(), outError)) return false;
 #endif
 
     auto& stylusInput = dst.stylus.input;
@@ -575,8 +575,8 @@ bool PopulateHeatmapFrameFromRecordBytes(const std::vector<uint8_t>& record,
         contactCapacity = std::min<uint32_t>(contactCapacity, contactsField->elementCount);
     }
     const uint32_t contactCount = std::min<uint32_t>(u32, contactCapacity);
-    dst.contacts.clear();
-    dst.contacts.reserve(contactCount);
+    dst.touch.output.contacts.clear();
+    dst.touch.output.contacts.reserve(contactCount);
     for (uint32_t i = 0; i < contactCount; ++i) {
         Solvers::TouchContact tc{};
         if (!TryReadStridedField(record, fields, "contacts[].id", DvrFmt::Dvr2ValueType::Int32, i, tc.id, outError)) return false;
@@ -602,7 +602,7 @@ bool PopulateHeatmapFrameFromRecordBytes(const std::vector<uint8_t>& record,
         if (!TryReadStridedField(record, fields, "contacts[].lifeFlags", DvrFmt::Dvr2ValueType::UInt32, i, tc.lifeFlags, outError)) return false;
         if (!TryReadStridedField(record, fields, "contacts[].reportFlags", DvrFmt::Dvr2ValueType::UInt32, i, tc.reportFlags, outError)) return false;
         if (!TryReadStridedField(record, fields, "contacts[].reportEvent", DvrFmt::Dvr2ValueType::Int32, i, tc.reportEvent, outError)) return false;
-        dst.contacts.push_back(tc);
+        dst.touch.output.contacts.push_back(tc);
     }
 
 #if EGOTOUCH_DIAG
@@ -613,15 +613,15 @@ bool PopulateHeatmapFrameFromRecordBytes(const std::vector<uint8_t>& record,
         peakCapacity = std::min<uint32_t>(peakCapacity, peaksField->elementCount);
     }
     const uint32_t peakCount = std::min<uint32_t>(u32, peakCapacity);
-    dst.peaks.clear();
-    dst.peaks.reserve(peakCount);
+    dst.touch.debug.peaks.clear();
+    dst.touch.debug.peaks.reserve(peakCount);
     for (uint32_t i = 0; i < peakCount; ++i) {
         Solvers::TouchPeak tp{};
         if (!TryReadStridedField(record, fields, "peaks[].r", DvrFmt::Dvr2ValueType::Int32, i, tp.r, outError)) return false;
         if (!TryReadStridedField(record, fields, "peaks[].c", DvrFmt::Dvr2ValueType::Int32, i, tp.c, outError)) return false;
         if (!TryReadStridedField(record, fields, "peaks[].z", DvrFmt::Dvr2ValueType::Int16, i, tp.z, outError)) return false;
         if (!TryReadStridedField(record, fields, "peaks[].id", DvrFmt::Dvr2ValueType::UInt8, i, tp.id, outError)) return false;
-        dst.peaks.push_back(tp);
+        dst.touch.debug.peaks.push_back(tp);
     }
 #endif
 

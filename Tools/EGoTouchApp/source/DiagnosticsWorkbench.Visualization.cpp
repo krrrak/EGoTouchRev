@@ -88,11 +88,11 @@ void DiagnosticsWorkbench::DrawHeatmap() {
             }
 
             {
-                const auto& peaks = m_currentFrame.peaks;
-                const auto& zones = m_currentFrame.touchZones;
+                const auto& peaks = m_currentFrame.touch.debug.peaks;
+                const auto& zones = m_currentFrame.touch.debug.touchZones;
 
                 int currentPeakCount = peaks.size();
-                int currentContactCount = static_cast<int>(m_currentFrame.contacts.size());
+                int currentContactCount = static_cast<int>(m_currentFrame.touch.output.contacts.size());
                 if (m_autoCaptureMode == 1) {
                     if (m_autoExportTargetPeaks > 0 &&
                         currentPeakCount == m_autoExportTargetPeaks &&
@@ -143,7 +143,7 @@ void DiagnosticsWorkbench::DrawHeatmap() {
                     }
                 }
 
-                const auto& pzones = m_currentFrame.peakZones;
+                const auto& pzones = m_currentFrame.touch.debug.peakZones;
                 for (int r = 0; r < rows; ++r) {
                     for (int c = 0; c < cols; ++c) {
                         int idx = r * cols + c;
@@ -194,7 +194,7 @@ void DiagnosticsWorkbench::DrawHeatmap() {
                     draw_list->AddText(textPos, textColor, label);
                 }
 
-                for (const auto& contact : m_currentFrame.contacts) {
+                for (const auto& contact : m_currentFrame.touch.output.contacts) {
                     float mirrored_r = (rows - 1.0f) - contact.y;
                     float mirrored_c = (cols - 1.0f) - contact.x;
                     float cx = canvas_p.x + mirrored_c * cell_w + cell_w * 0.5f;
@@ -411,11 +411,11 @@ void DiagnosticsWorkbench::DrawSlaveHeatmap() {
 
 void DiagnosticsWorkbench::DrawCoordinateTable() {
 
-    if (!m_currentFrame.contacts.empty()) {
+    if (!m_currentFrame.touch.output.contacts.empty()) {
         // Keep a stable UI order by touch ID, so rows do not jump when X/Y changes.
         std::vector<const Solvers::TouchContact*> orderedContacts;
-        orderedContacts.reserve(m_currentFrame.contacts.size());
-        for (const auto& c : m_currentFrame.contacts) {
+        orderedContacts.reserve(m_currentFrame.touch.output.contacts.size());
+        for (const auto& c : m_currentFrame.touch.output.contacts) {
             orderedContacts.push_back(&c);
         }
         std::stable_sort(orderedContacts.begin(), orderedContacts.end(),

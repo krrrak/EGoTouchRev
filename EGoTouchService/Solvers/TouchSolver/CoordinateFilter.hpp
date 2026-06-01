@@ -21,7 +21,7 @@ public:
         const uint64_t currentTimestamp = frame.timestamp;
         m_activeMask.fill(0);
 
-        for (auto& contact : frame.contacts) {
+        for (auto& contact : frame.touch.output.contacts) {
             if (contact.id <= 0 || contact.id > kMaxTouchIds) continue;
             m_activeMask[static_cast<size_t>(contact.id)] = 1;
             auto& state = m_states[static_cast<size_t>(contact.id)];

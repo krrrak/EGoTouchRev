@@ -59,7 +59,7 @@ public:
 
         // Bypass mode
         if (m_bypassStateMachine) {
-            for (auto& c : frame.contacts) {
+            for (auto& c : frame.touch.output.contacts) {
                 if (c.id <= 0 || !c.isReported) continue;
                 switch (c.state) {
                 case TouchStateDown: c.reportEvent = TouchReportDown; break;
@@ -74,7 +74,7 @@ public:
         // Build slot→contact mapping
         std::array<TouchContact*, kMaxSlots> contactForSlot{};
         contactForSlot.fill(nullptr);
-        for (auto& c : frame.contacts) {
+        for (auto& c : frame.touch.output.contacts) {
             const bool hiddenContinuation = (c.lifeFlags & TouchLifeSilentGap) != 0;
             if (!c.isReported && !hiddenContinuation) continue;
             const int idx = c.id - 1;
@@ -102,7 +102,7 @@ public:
         }
 
         // Phase 2: Rewrite output fields
-        for (auto& c : frame.contacts) {
+        for (auto& c : frame.touch.output.contacts) {
             const int idx = c.id - 1;
             if (idx < 0 || idx >= kMaxSlots) continue;
             if (c.state == TouchStateUp) { c.isReported = false; continue; }
@@ -145,7 +145,7 @@ public:
             upEvent.isEdge = slot.isEdge; upEvent.isReported = true;
             upEvent.reportEvent = TouchReportUp;
             upEvent.lifeFlags = TouchLifeLiftOff; upEvent.reportFlags = 0;
-            frame.contacts.push_back(upEvent);
+            frame.touch.output.contacts.push_back(upEvent);
             slot.Reset(); slot.upEmitted = true;
         }
         return true;

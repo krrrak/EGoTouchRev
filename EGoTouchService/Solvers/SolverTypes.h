@@ -25,15 +25,7 @@ struct HeatmapFrame {
 
     int16_t heatmapMatrix[40][60];
 
-    std::vector<TouchContact> contacts;
-    std::array<TouchPacket, 2> touchPackets{};
-
-#if EGOTOUCH_DIAG
-    std::vector<TouchPeak> peaks;
-    std::array<uint8_t, 2400> touchZones{};
-    std::array<uint8_t, 2400> peakZones{};
-#endif
-
+    TouchFrameData touch;
     StylusFrameData stylus;
 
     uint64_t timestamp;

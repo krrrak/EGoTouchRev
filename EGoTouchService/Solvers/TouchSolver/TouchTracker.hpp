@@ -442,7 +442,7 @@ inline bool TouchTracker::ResolveStylusAftContext(const HeatmapFrame& frame, flo
             ? static_cast<int>(interop.recheckThresholdMulti)
             : std::max(baseThreshold, 1200);
     const int finalThreshold =
-        (frame.contacts.size() > 2) ? multiThreshold : baseThreshold;
+        (frame.touch.output.contacts.size() > 2) ? multiThreshold : baseThreshold;
     const StylusNoiseEvidence evidence =
         BuildStylusNoiseEvidence(frame, finalThreshold);
     if (evidence.pointValid && evidence.stable) {
@@ -567,7 +567,7 @@ inline void TouchTracker::SolveAssignment(const float* cost, int n, int m, int* 
 inline bool TouchTracker::Process(HeatmapFrame& frame) {
     if (!m_enabled) {
         int nextId = 1;
-        for (auto& c : frame.contacts) {
+        for (auto& c : frame.touch.output.contacts) {
             c.id = nextId++;
             c.state = TouchStateDown;
             c.isEdge = IsEdgeContact(c, 60, 40, 2.0f);
@@ -576,8 +576,8 @@ inline bool TouchTracker::Process(HeatmapFrame& frame) {
         }
         return true;
     }
-    if (frame.contacts.size() > static_cast<size_t>(m_maxTouchCount))
-        frame.contacts.resize(static_cast<size_t>(m_maxTouchCount));
+    if (frame.touch.output.contacts.size() > static_cast<size_t>(m_maxTouchCount))
+        frame.touch.output.contacts.resize(static_cast<size_t>(m_maxTouchCount));
 
     constexpr int kRows = 40, kCols = 60;
     constexpr float kEdgeMargin = 2.0f;
@@ -585,7 +585,7 @@ inline bool TouchTracker::Process(HeatmapFrame& frame) {
     const bool stylusAftActive = ResolveStylusAftContext(frame, stylusAftX, stylusAftY);
     const bool gapRelinkActive = m_gapRelinkEnabled && (m_gapRelinkWindowFrames > 0);
 
-    const int curCount = static_cast<int>(std::min(frame.contacts.size(), static_cast<size_t>(kMaxTracks)));
+    const int curCount = static_cast<int>(std::min(frame.touch.output.contacts.size(), static_cast<size_t>(kMaxTracks)));
     const int preCount = m_trackCount;
     int curToPre[kMaxTracks];
     bool alwaysMatched[kMaxTracks] = {};
@@ -603,14 +603,14 @@ inline bool TouchTracker::Process(HeatmapFrame& frame) {
     }
 
     if (curCount > 0 && activeCount > 0) {
-        MatchAgainstSubset(frame.contacts, curCount, activePrev, activeCount, curToPre);
+        MatchAgainstSubset(frame.touch.output.contacts, curCount, activePrev, activeCount, curToPre);
         for (int c = 0; c < curCount; ++c) {
             const int pre = curToPre[c];
             if (pre < 0) continue;
             float refX = 0.0f, refY = 0.0f;
             GetMatchReference(m_tracks[pre], refX, refY);
-            const float gateSq = ComputeTrackGateSq(m_tracks[pre], frame.contacts[c], kCols, kRows, kEdgeMargin);
-            if (DistanceSq(frame.contacts[c].x, frame.contacts[c].y, refX, refY) > gateSq)
+            const float gateSq = ComputeTrackGateSq(m_tracks[pre], frame.touch.output.contacts[c], kCols, kRows, kEdgeMargin);
+            if (DistanceSq(frame.touch.output.contacts[c].x, frame.touch.output.contacts[c].y, refX, refY) > gateSq)
                 curToPre[c] = -1;
         }
 
@@ -631,11 +631,11 @@ inline bool TouchTracker::Process(HeatmapFrame& frame) {
                 if (pUsed[pre]) continue;
                 float refX = 0.0f, refY = 0.0f;
                 GetMatchReference(m_tracks[pre], refX, refY);
-                const float d = DistanceSq(frame.contacts[c].x, frame.contacts[c].y, refX, refY);
+                const float d = DistanceSq(frame.touch.output.contacts[c].x, frame.touch.output.contacts[c].y, refX, refY);
                 if (d < best) { best = d; bestPre = pre; }
             }
             if (bestPre >= 0 && best <= alwaysMatchSq &&
-                !IsEdgeContact(frame.contacts[c], kCols, kRows, kEdgeMargin)) {
+                !IsEdgeContact(frame.touch.output.contacts[c], kCols, kRows, kEdgeMargin)) {
                 curToPre[c] = bestPre;
                 alwaysMatched[c] = true;
                 cUsed[c] = true;
@@ -661,8 +661,8 @@ inline bool TouchTracker::Process(HeatmapFrame& frame) {
                 const int pre = silentPrev[i];
                 float refX = 0.0f, refY = 0.0f;
                 GetMatchReference(m_tracks[pre], refX, refY);
-                const float d = DistanceSq(frame.contacts[c].x, frame.contacts[c].y, refX, refY);
-                const float gateSq = ComputeTrackGateSq(m_tracks[pre], frame.contacts[c], kCols, kRows, kEdgeMargin);
+                const float d = DistanceSq(frame.touch.output.contacts[c].x, frame.touch.output.contacts[c].y, refX, refY);
+                const float gateSq = ComputeTrackGateSq(m_tracks[pre], frame.touch.output.contacts[c], kCols, kRows, kEdgeMargin);
                 if (d > gateSq) continue;
                 UpdateBestCandidate(d, pre, bestForCur[c], secondForCur[c], bestTrackForCur[c]);
                 UpdateBestCandidate(d, c, bestForTrack[pre], secondForTrack[pre], bestCurForTrack[pre]);
@@ -686,7 +686,7 @@ inline bool TouchTracker::Process(HeatmapFrame& frame) {
     int outCount = 0;
 
     for (int c = 0; c < curCount; ++c) {
-        TouchContact o = frame.contacts[c];
+        TouchContact o = frame.touch.output.contacts[c];
         const int pre = curToPre[c];
         if (pre < 0) continue;
         preMatched[pre] = true;
@@ -746,7 +746,7 @@ inline bool TouchTracker::Process(HeatmapFrame& frame) {
 
     for (int c = 0; c < curCount; ++c) {
         if (curToPre[c] >= 0) continue;
-        TouchContact o = frame.contacts[c];
+        TouchContact o = frame.touch.output.contacts[c];
         TrackState t;
         t.id = AllocateId(nextTracks, nextTrackCount);
         if (t.id == 0) continue;
@@ -823,7 +823,7 @@ inline bool TouchTracker::Process(HeatmapFrame& frame) {
     ghostSuppressor.ProcessTracked(out, outCount, m_maxTouchCount, nextTracks, nextTrackCount,
                                    TouchStateUp, TouchStateDown, TouchLifeSilentGap);
 
-    frame.contacts.assign(out, out + outCount);
+    frame.touch.output.contacts.assign(out, out + outCount);
     std::memcpy(m_tracks, nextTracks, sizeof(TrackState) * nextTrackCount);
     m_trackCount = nextTrackCount;
 

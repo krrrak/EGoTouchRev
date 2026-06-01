@@ -189,7 +189,7 @@ void TestZoneExpanderSkipsPalmLikelyPeak() {
     expander.m_dilateErode = false;
     expander.Process(frame, peaks, 130, evals);
 
-    Require(frame.contacts.empty(), "palm-only peak should not create a touch contact");
+    Require(frame.touch.output.contacts.empty(), "palm-only peak should not create a touch contact");
     Require(expander.GetEdgeInfos().empty(), "suppressed palm-only peak should not create contact edge info");
 }
 

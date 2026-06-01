@@ -49,7 +49,7 @@ struct TrackerHarness {
             contact.area = spec.area;
             contact.signalSum = spec.signalSum;
             contact.sizeMm = spec.sizeMm;
-            frame.contacts.push_back(contact);
+            frame.touch.output.contacts.push_back(contact);
         }
 
         frame.stylus.output.valid = stylus.valid;
@@ -90,7 +90,7 @@ StylusSpec MakeStylusSpec(bool valid,
 
 std::vector<const TouchContact*> VisibleContacts(const HeatmapFrame& frame) {
     std::vector<const TouchContact*> out;
-    for (const auto& contact : frame.contacts) {
+    for (const auto& contact : frame.touch.output.contacts) {
         if (contact.isReported) out.push_back(&contact);
     }
     return out;
@@ -107,7 +107,7 @@ void TestWeakTouchNearStylusIsSuppressedUsingStylusCoordinates() {
         ContactSpec{12.5f, 7.75f, 3, 160, 0.8f}
     }, stylus);
 
-    Require(frame.contacts.empty(), "weak overlap contact should be locally suppressed");
+    Require(frame.touch.output.contacts.empty(), "weak overlap contact should be locally suppressed");
     Require(frame.stylus.interop.touchSuppressActive, "stylus suppress flag should be active");
     Require(frame.stylus.interop.recheckOverlap, "stylus overlap flag should be set");
     Require(frame.stylus.interop.touchSuppressFrames > 0, "suppress hold should be armed");
@@ -120,7 +120,7 @@ void TestZeroPressureInteropSignalStillSuppressesWeakOverlapTouch() {
         ContactSpec{12.55f, 7.80f, 3, 160, 0.8f}
     }, stylus);
 
-    Require(frame.contacts.empty(), "strong interop signal should suppress weak overlap even at zero pressure");
+    Require(frame.touch.output.contacts.empty(), "strong interop signal should suppress weak overlap even at zero pressure");
     Require(frame.stylus.interop.touchSuppressActive, "touch suppress should stay active from interop evidence");
 }
 
@@ -152,21 +152,21 @@ void TestAftKeepsSuppressingRecentWeakTouchAfterStylusLeaves() {
     TrackerHarness harness;
 
     const auto seed = harness.Run({}, MakeStylusSpec(true, 10.0f, 10.0f, 200, 640, 2400, true));
-    Require(seed.contacts.empty(), "seed stylus frame should not create contacts");
+    Require(seed.touch.output.contacts.empty(), "seed stylus frame should not create contacts");
 
     const auto aftFrame = harness.Run({
         ContactSpec{10.2f, 10.1f, 4, 180, 0.9f}
     }, StylusSpec{});
 
-    Require(aftFrame.contacts.size() == 1, "AFT frame should still keep hidden track state");
-    Require(!aftFrame.contacts[0].isReported, "recent weak touch should be hidden by AFT");
-    Require(aftFrame.contacts[0].id > 0, "AFT-hidden touch should still receive a track id");
+    Require(aftFrame.touch.output.contacts.size() == 1, "AFT frame should still keep hidden track state");
+    Require(!aftFrame.touch.output.contacts[0].isReported, "recent weak touch should be hidden by AFT");
+    Require(aftFrame.touch.output.contacts[0].id > 0, "AFT-hidden touch should still receive a track id");
 
     const auto aftHold = harness.Run({
         ContactSpec{10.3f, 10.0f, 4, 180, 0.9f}
     }, StylusSpec{});
-    Require(aftHold.contacts.size() == 1, "AFT hold frame should keep the tracked touch");
-    Require(!aftHold.contacts[0].isReported, "AFT hold should continue suppressing weak touch");
+    Require(aftHold.touch.output.contacts.size() == 1, "AFT hold frame should keep the tracked touch");
+    Require(!aftHold.touch.output.contacts[0].isReported, "AFT hold should continue suppressing weak touch");
 }
 
 } // namespace

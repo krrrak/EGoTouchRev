@@ -88,4 +88,26 @@ struct MacroZone {
     int maxC = 0;
 };
 
+struct TouchOutputState {
+    std::vector<TouchContact> contacts;
+    std::array<TouchPacket, 2> touchPackets{};
+};
+
+#if EGOTOUCH_DIAG
+struct TouchDebugFrame {
+    std::vector<TouchPeak> peaks;
+    std::array<uint8_t, 2400> touchZones{};
+    std::array<uint8_t, 2400> peakZones{};
+};
+#endif
+
+struct TouchFrameData {
+    TouchOutputState output{};
+#if EGOTOUCH_DIAG
+    TouchDebugFrame debug{};
+#endif
+
+    inline void ResetRuntime() {}
+};
+
 } // namespace Solvers

@@ -776,8 +776,8 @@ uint64_t SyntheticTimestampMs(int frameStep) {
 Solvers::HeatmapFrame PrepareTouchFrame(const Solvers::HeatmapFrame& sourceFrame, int frameStep) {
     Solvers::HeatmapFrame frame = sourceFrame;
     frame.timestamp = SyntheticTimestampMs(frameStep);
-    frame.contacts.clear();
-    frame.touchPackets = {};
+    frame.touch.output.contacts.clear();
+    frame.touch.output.touchPackets = {};
     frame.stylus = Solvers::StylusFrameData{};
     frame.rawPtr = nullptr;
     frame.rawLen = 0;
