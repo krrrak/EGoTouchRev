@@ -140,10 +140,11 @@ void IpcPipeServer::Stop() {
     m_running.store(false);
 
     if (m_thread.joinable()) {
-        // Cancel only pipe wait/read states. Command handlers can perform their own
-        // synchronous I/O, so cancelling while Handling could interrupt unrelated work.
+        // Cancel pipe wait/read states, including Idle between the running check
+        // and the next blocking ReadFile. Skip only Handling to avoid interrupting
+        // command handler synchronous I/O.
         const ServerState state = m_state.load(std::memory_order_acquire);
-        if (state == ServerState::Connecting || state == ServerState::Reading) {
+        if (state != ServerState::Handling) {
             CancelSynchronousIo(m_thread.native_handle());
         }
     }
