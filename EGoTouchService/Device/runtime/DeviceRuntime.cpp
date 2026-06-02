@@ -270,6 +270,7 @@ void DeviceRuntime::SetMasterParserOnlyMode(bool enabled) {
   const bool wasEnabled =
       m_masterParserOnly.exchange(enabled, std::memory_order_acq_rel);
   if (!wasEnabled && enabled) {
+    std::lock_guard<std::mutex> lk(m_pipelineMu);
     m_vhfReporter.FlushTouchAllUp();
   }
 }
