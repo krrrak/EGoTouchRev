@@ -18,6 +18,7 @@ namespace Himax::Pen {
 class PenPressureReader : public BtHidChannel {
 public:
     PenPressureReader() = default;
+    ~PenPressureReader() override;
 
     /// 设置压感回调（每收到一个 'U' 报文触发，参数为完整四槽压力包）
     using PressureCallback = std::function<void(const PenPressureStats& stats)>;

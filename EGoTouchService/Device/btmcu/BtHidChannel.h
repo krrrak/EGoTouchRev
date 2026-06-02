@@ -27,6 +27,9 @@ namespace Himax::Pen {
 ///   - ChannelName()     — return a human-readable name for logging
 class BtHidChannel {
 public:
+    /// ⚠️  Derived classes MUST call Stop() in their destructors before
+    /// the base class destructor runs. Failure to do so will cause a
+    /// use-after-destroy crash in the worker thread.
     virtual ~BtHidChannel();
 
     BtHidChannel(const BtHidChannel&) = delete;

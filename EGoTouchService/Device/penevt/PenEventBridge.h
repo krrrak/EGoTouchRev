@@ -23,6 +23,7 @@ namespace Himax::Pen {
 class PenEventBridge : public BtHidChannel {
 public:
     PenEventBridge() = default;
+    ~PenEventBridge() override;
 
     /// 向 BT MCU 发送 SetScanMode 命令，通知笔切换扫描频率。
     /// 对应原厂 THP_Service::BtPen_SendPacket + ApDaemon::SetScanMode 的联合逻辑。

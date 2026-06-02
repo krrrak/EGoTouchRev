@@ -28,6 +28,10 @@ const GUID kEventDeviceGuid =
 
 } // namespace
 
+PenEventBridge::~PenEventBridge() {
+    Stop();
+}
+
 // ── 回调设置 ───────────────────────────────────────────────────────────────
 void PenEventBridge::SetEventCallback(PenEventCallback cb) {
     std::lock_guard<std::mutex> lk(m_cbMutex);

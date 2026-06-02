@@ -140,11 +140,8 @@ void IpcPipeServer::Stop() {
     m_running.store(false);
 
     if (m_thread.joinable()) {
-        // Cancel pipe wait/read states, including Idle between the running check
-        // and the next blocking ReadFile. Skip only Handling to avoid interrupting
-        // command handler synchronous I/O.
         const ServerState state = m_state.load(std::memory_order_acquire);
-        if (state != ServerState::Handling) {
+        if (state == ServerState::Connecting || state == ServerState::Reading) {
             CancelSynchronousIo(m_thread.native_handle());
         }
     }
@@ -197,6 +194,10 @@ void IpcPipeServer::ServerLoop() {
             IpcRequest req{};
             DWORD bytesRead = 0;
             m_state.store(ServerState::Reading, std::memory_order_release);
+            if (!m_running.load(std::memory_order_acquire)) {
+                m_state.store(ServerState::Idle, std::memory_order_release);
+                break;
+            }
             BOOL ok = ReadFile(pipe, &req, sizeof(req),
                                &bytesRead, nullptr);
             m_state.store(ServerState::Idle, std::memory_order_release);

@@ -11,21 +11,9 @@ BtHidChannel::BtHidChannel()
 }
 
 BtHidChannel::~BtHidChannel() {
-    if (!m_running.load()) {
-        return;
-    }
-
-    // Best-effort safety net only: derived members are already destroyed when
-    // this base destructor runs, so joining could continue dispatching worker
-    // callbacks into invalid derived state. Call Stop() before destruction.
-    LOG_ERROR("BtHidChannel", "~BtHidChannel", "MCU",
-              "Channel destroyed while still running; detaching worker thread.");
-    m_running.store(false);
-    if (m_transport) {
-        m_transport->CancelIo();
-    }
-    if (m_thread.joinable()) {
-        m_thread.detach();
+    if (IsRunning()) {
+        LOG_ERROR(ChannelName(), "~BtHidChannel", "FATAL",
+                  "Destroyed while still running! Call Stop() before destruction.");
     }
 }
 

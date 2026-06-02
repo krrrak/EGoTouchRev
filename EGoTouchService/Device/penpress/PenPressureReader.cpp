@@ -12,6 +12,10 @@
 
 namespace Himax::Pen {
 
+PenPressureReader::~PenPressureReader() {
+    Stop();
+}
+
 // ── 回调设置 ───────────────────────────────────────────────────────────────
 void PenPressureReader::SetPressureCallback(PressureCallback cb) {
     std::lock_guard<std::mutex> lk(m_cbMutex);
