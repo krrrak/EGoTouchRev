@@ -20,7 +20,7 @@
 
 #include <array>
 #include <mutex>
-#include <ostream>
+#include <iosfwd>    // std::ostream 前向声明
 #include <string>
 #include <vector>
 
@@ -64,9 +64,13 @@ public:
 
 private:
     void FinalizeTerminalFrame(HeatmapFrame& frame);
-    StylusBtInputSnapshot ReadLatestBtSample() const;
+    void ReadLatestBtSample(StylusBtInputSnapshot& out) const;
 
     bool m_lastFrameWasTerminal = false;
+
+    // NOTE: In the current architecture, all callers are serialized by
+    // DeviceRuntime::m_pipelineMu. This mutex provides defense-in-depth
+    // if the pipeline is ever used outside that lock.
     mutable std::mutex m_btMutex;
     StylusBtInputSnapshot m_btSample{};
 
