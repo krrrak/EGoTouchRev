@@ -283,6 +283,26 @@ struct StylusRuntimeFrame {
     StylusRuntimeDecision decision{};
     StylusRuntimePost post{};
 
+    void ResetFrameFlags() {
+        flow = {};
+        parse = {};
+        decision = {};
+        signal = {};
+    }
+
+    void ResetPostOutputs() {
+        tilt = {};
+        pressure = {};
+        post = {};
+    }
+
+#if EGOTOUCH_DIAG
+    void ResetDiagnosticFields() {
+        tx1 = {};
+        tx2 = {};
+    }
+#endif
+
     void Reset() {
         *this = {};
     }
@@ -429,6 +449,11 @@ struct StylusFrameData {
 
     inline void ResetRuntime() {
         runtime.Reset();
+    }
+
+    inline void ResetPerFrameState() {
+        runtime.ResetFrameFlags();
+        runtime.ResetPostOutputs();
     }
 };
 

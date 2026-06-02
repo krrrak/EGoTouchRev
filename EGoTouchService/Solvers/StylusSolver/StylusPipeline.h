@@ -63,8 +63,10 @@ public:
     Stylus::StylusRuntimeCommit m_commit;
 
 private:
+    void FinalizeTerminalFrame(HeatmapFrame& frame);
     StylusBtInputSnapshot ReadLatestBtSample() const;
 
+    bool m_lastFrameWasTerminal = false;
     mutable std::mutex m_btMutex;
     StylusBtInputSnapshot m_btSample{};
 

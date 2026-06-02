@@ -6,58 +6,29 @@
 namespace Solvers {
 
 bool StylusPipeline::Process(HeatmapFrame& frame) {
-    frame.stylus.ResetRuntime();
+    frame.stylus.ResetPerFrameState();
     const StylusBtInputSnapshot bt = ReadLatestBtSample();
     frame.stylus.input.btSample = bt;
 
     m_frameParser.Process(frame);
     if (frame.stylus.runtime.flow.terminal) {
-        m_tiltProcess.Reset();
-        m_postPressure.Reset();
-        m_edgeCoorProcess.Reset();
-        m_edgeCoorPostProcess.Reset();
-        m_linearFilterProcess.Reset();
-        m_coorReviseProcess.Reset();
-        m_coorSpeedProcess.Reset();
-        m_coorIIRProcess.Reset();
-        m_aftCoorProcess.Reset();
-        m_edgeCoorProcess.CaptureFinal(frame.stylus.runtime);
-        m_commit.Commit(frame);
+        FinalizeTerminalFrame(frame);
         return true;
     }
 
     m_featureExtractor.Process(frame);
     if (frame.stylus.runtime.flow.terminal) {
-        m_tiltProcess.Reset();
-        m_postPressure.Reset();
-        m_edgeCoorProcess.Reset();
-        m_edgeCoorPostProcess.Reset();
-        m_linearFilterProcess.Reset();
-        m_coorReviseProcess.Reset();
-        m_coorSpeedProcess.Reset();
-        m_coorIIRProcess.Reset();
-        m_aftCoorProcess.Reset();
-        m_edgeCoorProcess.CaptureFinal(frame.stylus.runtime);
-        m_commit.Commit(frame);
+        FinalizeTerminalFrame(frame);
         return true;
     }
 
     m_coordinateSolver.Process(frame);
     if (frame.stylus.runtime.flow.terminal) {
-        m_tiltProcess.Reset();
-        m_postPressure.Reset();
-        m_edgeCoorProcess.Reset();
-        m_edgeCoorPostProcess.Reset();
-        m_linearFilterProcess.Reset();
-        m_coorReviseProcess.Reset();
-        m_coorSpeedProcess.Reset();
-        m_coorIIRProcess.Reset();
-        m_aftCoorProcess.Reset();
-        m_edgeCoorProcess.CaptureFinal(frame.stylus.runtime);
-        m_commit.Commit(frame);
+        FinalizeTerminalFrame(frame);
         return true;
     }
 
+    m_lastFrameWasTerminal = false;
     m_noisePostProcess.Process(frame);
     if (frame.stylus.runtime.post.noiseRejected) {
         m_tiltProcess.Reset();
@@ -77,6 +48,26 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
     m_edgeCoorProcess.CaptureFinal(frame.stylus.runtime);
     m_commit.Commit(frame);
     return true;
+}
+
+void StylusPipeline::FinalizeTerminalFrame(HeatmapFrame& frame) {
+    if (!m_lastFrameWasTerminal) {
+        m_tiltProcess.Reset();
+        m_postPressure.Reset();
+        m_edgeCoorProcess.Reset();
+        m_edgeCoorPostProcess.Reset();
+        m_linearFilterProcess.Reset();
+        m_coorReviseProcess.Reset();
+        m_coorSpeedProcess.Reset();
+        m_coorIIRProcess.Reset();
+        m_aftCoorProcess.Reset();
+    }
+    m_lastFrameWasTerminal = true;
+#if EGOTOUCH_DIAG
+    frame.stylus.runtime.ResetDiagnosticFields();
+#endif
+    m_edgeCoorProcess.CaptureFinal(frame.stylus.runtime);
+    m_commit.Commit(frame);
 }
 
 std::vector<ConfigParam> StylusPipeline::GetConfigSchema() const {
