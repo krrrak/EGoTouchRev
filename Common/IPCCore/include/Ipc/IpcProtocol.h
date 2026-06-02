@@ -275,4 +275,10 @@ inline void MarkFailure(IpcResponse& resp, IpcStatusCode status) noexcept {
     resp.status = status;
 }
 
+// ABI layout guards — catch cross-process struct layout changes at compile time
+static_assert(sizeof(IpcRequest) == 260,
+    "IpcRequest size changed");
+static_assert(sizeof(IpcResponse) == 4100,
+    "IpcResponse size changed");
+
 } // namespace Ipc
