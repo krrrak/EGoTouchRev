@@ -703,7 +703,7 @@ private:
         const int64_t v2y = static_cast<int64_t>(b0.y) - b1.y;
         const double len1 = std::sqrt(static_cast<double>(v1x * v1x + v1y * v1y));
         const double len2 = std::sqrt(static_cast<double>(v2x * v2x + v2y * v2y));
-        const int denom = static_cast<int>(len1 * len2);
+        const int64_t denom = static_cast<int64_t>(len1 * len2);
         if (denom == 0) {
             return std::numeric_limits<int32_t>::max();
         }

@@ -6,6 +6,7 @@
 #include <array>
 #include <cstring>
 #include <fstream>
+#include <string_view>
 #include <vector>
 
 namespace Dvr {
@@ -391,6 +392,26 @@ bool TryReadBoolStridedField(const std::vector<uint8_t>& record,
     return true;
 }
 
+bool ValidateCriticalRequiredFieldsPresent(const std::vector<Dvr2FieldDef>& fields,
+                                           std::string* outError) {
+    static const std::vector<Dvr2FieldDef> kCanonicalFields = DvrFmt::BuildFrameSchema();
+
+    for (const auto& canonical : kCanonicalFields) {
+        if ((canonical.flags & DvrFmt::kDvrFieldRequired) == 0) continue;
+
+        const auto* pathEnd = std::find(canonical.path, canonical.path + sizeof(canonical.path), '\0');
+        const std::string_view path(canonical.path, static_cast<size_t>(pathEnd - canonical.path));
+        if (!DvrFmt::FindField(fields, path)) {
+            if (outError) {
+                *outError = "DVR2 frame missing required field: ";
+                outError->append(path);
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
 void SynthesizeRawGridFromLegacyFields(const std::vector<uint8_t>& record,
                                        const std::vector<Dvr2FieldDef>& fields,
                                        Solvers::HeatmapFrame& dst) {
@@ -445,6 +466,7 @@ bool PopulateHeatmapFrameFromRecordBytes(const std::vector<uint8_t>& record,
                                          Solvers::HeatmapFrame& dst,
                                          std::string* outError) {
     dst = {};
+    if (!ValidateCriticalRequiredFieldsPresent(fields, outError)) return false;
 
     uint16_t u16 = 0;
     uint32_t u32 = 0;

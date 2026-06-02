@@ -310,11 +310,15 @@ ChipResult<> Chip::Init(void) {
     }
     if (auto res = m_slave->IntOpen(); !res) {
         LOG_ERROR("HimaxChip", __func__, GetStateStr(), "Slave IntOpen failed!");
+        (void)m_slave->IntClose();
+        (void)m_master->IntClose();
         return res;
     }
 
     if (auto res = SetFrameReadNormalPolicy(); !res) {
         LOG_ERROR("HimaxChip", __func__, GetStateStr(), "Apply normal read policy failed");
+        (void)m_slave->IntClose();
+        (void)m_master->IntClose();
         return res;
     }
 
