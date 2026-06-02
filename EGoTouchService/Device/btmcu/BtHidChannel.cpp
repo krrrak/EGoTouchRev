@@ -12,7 +12,7 @@ BtHidChannel::BtHidChannel()
 
 BtHidChannel::~BtHidChannel() {
     if (IsRunning()) {
-        LOG_ERROR(ChannelName(), "~BtHidChannel", "FATAL",
+        LOG_ERROR("BtHidChannel", "~BtHidChannel", "FATAL",
                   "Destroyed while still running! Call Stop() before destruction.");
     }
 }
