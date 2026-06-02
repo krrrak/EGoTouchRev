@@ -98,6 +98,8 @@ private:
     std::vector<Touch::Peak> m_diagPeaks;
     std::array<uint8_t, 2400> m_diagTouchZones{};
     std::array<uint8_t, 2400> m_diagZoneEdge{};
+    std::array<uint8_t, 2400> m_diagTouchZonesPrev{};
+    std::array<uint8_t, 2400> m_diagZoneEdgePrev{};
 #endif
 
     // UI-thread-safe cache
