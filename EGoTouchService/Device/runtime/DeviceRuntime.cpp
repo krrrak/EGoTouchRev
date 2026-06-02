@@ -652,7 +652,7 @@ void DeviceRuntime::OnStreaming() {
   // Parser-only mode may have been enabled after pipeline processing and may
   // already have flushed all active touch contacts. Do not send a stale touch
   // frame after that all-up flush.
-  if (dispatchTouch && m_masterParserOnly.load(std::memory_order_relaxed)) {
+  if (dispatchTouch && m_masterParserOnly.load(std::memory_order_acquire)) {
     dispatchTouch = false;
   }
 
