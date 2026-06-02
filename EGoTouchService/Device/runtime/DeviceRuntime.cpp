@@ -151,6 +151,7 @@ DeviceRuntime::~DeviceRuntime() { Stop(); }
 bool DeviceRuntime::Start() {
   if (m_running.exchange(true))
     return false;
+  m_stopped.store(false, std::memory_order_release);
   m_stopReason.store(
       StopReason::None); // ← critical: clear stop reason for restart
   SetState(workerState::ready);
@@ -168,6 +169,7 @@ bool DeviceRuntime::Start() {
 }
 
 void DeviceRuntime::Stop() {
+  if (m_stopped.exchange(true)) return;
   m_stopReason.store(StopReason::Shutdown);
   m_chip.CancelPendingFrameRead();
   if (m_thread.joinable())

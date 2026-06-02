@@ -274,5 +274,6 @@ private:
 #endif
 
     std::atomic<bool> m_running{false};
+    std::atomic<bool> m_stopped{false};
     std::thread m_thread;
 };
