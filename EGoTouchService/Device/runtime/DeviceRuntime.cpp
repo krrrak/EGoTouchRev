@@ -647,13 +647,15 @@ void DeviceRuntime::OnStreaming() {
       m_touchPipeline.Process(touchFrame);
       dispatchTouch = true;
     }
-  }
 
-  // Parser-only mode may have been enabled after pipeline processing and may
-  // already have flushed all active touch contacts. Do not send a stale touch
-  // frame after that all-up flush.
-  if (dispatchTouch && m_masterParserOnly.load(std::memory_order_acquire)) {
-    dispatchTouch = false;
+    // Serialized re-check: if parser-only was enabled between pipeline
+    // processing and this check, suppress touch dispatch. The lock
+    // guarantees that SetMasterParserOnlyMode's FlushTouchAllUp()
+    // either hasn't happened yet (touch→all-up = correct HID order)
+    // or already happened (dispatch suppressed = correct).
+    if (dispatchTouch && m_masterParserOnly.load(std::memory_order_relaxed)) {
+      dispatchTouch = false;
+    }
   }
 
   // VHF dispatch can block on device I/O; keep it outside m_pipelineMu.
