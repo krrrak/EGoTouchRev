@@ -1,6 +1,7 @@
 #include "ServiceProxyInternal.h"
 #include "Ipc/IpcProtocol.h"
 #include "Logger.h"
+#include "SolverBuildConfig.h"
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -13,6 +14,9 @@
 namespace App {
 
 void ServiceProxy::SaveConfig() {
+#if !EGOTOUCH_CONFIG_ENABLED
+    return;  // Release: no config file I/O
+#endif
     if (!IsLiveControlAllowed()) return;
 
     const bool serviceConnected = m_client.IsConnected();
@@ -180,6 +184,9 @@ void ServiceProxy::SaveConfig() {
 }
 
 void ServiceProxy::LoadConfig() {
+#if !EGOTOUCH_CONFIG_ENABLED
+    return;  // Release: no config file I/O
+#endif
     bool loadedServiceFromSnapshot = false;
     if (m_client.IsConnected()) {
         const auto resp = m_client.GetConfigSnapshot();
