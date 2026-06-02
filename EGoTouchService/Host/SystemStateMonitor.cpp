@@ -472,7 +472,9 @@ void SystemStateMonitor::Stop() {
 
     if (impl.worker.joinable()) {
         if (impl.worker.get_id() == std::this_thread::get_id()) {
-            LOG_INFO("Host", __func__, "Thread", "Stop() called from worker thread; deferring join to external caller.");
+            LOG_INFO("SystemStateMonitor", __func__, "Monitor",
+                     "Stop() called from callback; detaching worker thread.");
+            impl.worker.detach();
             return;
         }
 
