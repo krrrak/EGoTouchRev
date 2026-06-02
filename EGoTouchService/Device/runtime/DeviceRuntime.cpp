@@ -270,6 +270,7 @@ void DeviceRuntime::SetMasterParserOnlyMode(bool enabled) {
   const bool wasEnabled =
       m_masterParserOnly.exchange(enabled, std::memory_order_acq_rel);
   if (!wasEnabled && enabled) {
+    std::lock_guard<std::mutex> lk(m_pipelineMu);
     m_vhfReporter.FlushTouchAllUp();
   }
 }
@@ -645,6 +646,15 @@ void DeviceRuntime::OnStreaming() {
     } else {
       m_touchPipeline.Process(touchFrame);
       dispatchTouch = true;
+    }
+
+    // Serialized re-check: if parser-only was enabled between pipeline
+    // processing and this check, suppress touch dispatch. The lock
+    // guarantees that SetMasterParserOnlyMode's FlushTouchAllUp()
+    // either hasn't happened yet (touch→all-up = correct HID order)
+    // or already happened (dispatch suppressed = correct).
+    if (dispatchTouch && m_masterParserOnly.load(std::memory_order_relaxed)) {
+      dispatchTouch = false;
     }
   }
 
