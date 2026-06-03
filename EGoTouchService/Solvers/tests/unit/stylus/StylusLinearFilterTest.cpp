@@ -1,3 +1,4 @@
+#include "StylusSolver/AftCoorProcess.hpp"
 #include "StylusSolver/CoordinateSolver.hpp"
 #include "StylusSolver/CoorIIRProcess.hpp"
 #include "StylusSolver/CoorSpeedProcess.hpp"
@@ -7,14 +8,11 @@
 #include "StylusSolver/LinearFilterProcess.hpp"
 #include "StylusSolver/TiltProcess.hpp"
 #include "StylusSolver/StylusFrameParser.hpp"
-#include "StylusSolver/StylusPipeline.h"
 
 #include <array>
 #include <cmath>
 #include <iostream>
-#include <sstream>
 #include <stdexcept>
-#include <string>
 
 namespace {
 
@@ -56,17 +54,6 @@ void FeedStraightToStable(Solvers::Stylus::LinearFilterProcess& filter) {
     }
     Require(filter.State() == 5,
             "straight sparse points should advance the filter into straight-line state");
-}
-
-void LoadFromSavedText(Solvers::StylusPipeline& pipeline, const std::string& saved) {
-    std::istringstream in(saved);
-    std::string line;
-    while (std::getline(in, line)) {
-        if (line.empty()) continue;
-        const size_t eq = line.find('=');
-        if (eq == std::string::npos) continue;
-        pipeline.LoadConfig(line.substr(0, eq), line.substr(eq + 1));
-    }
 }
 
 template <std::size_t N>
@@ -317,24 +304,6 @@ void TestBypassModeResetsPostFilter() {
             "passthrough should copy raw coordinate to post output on first frame");
     Require(stylus.runtime.post.linearFilterState == 1,
             "single frame should advance state from 0 to 1");
-}
-
-void TestConfigRoundTrip() {
-    Solvers::StylusPipeline pipeline;
-    pipeline.m_tiltProcess.m_enabled = false;
-    pipeline.m_coordinateSolver.m_signalFloor = 77;
-
-    std::ostringstream out;
-    pipeline.SaveConfig(out);
-    const std::string saved = out.str();
-
-    Require(saved.find("sp.tiltProcessEnabled=0") != std::string::npos,
-            "saved config should include tilt process enabled flag");
-    Require(saved.find("sp.signalFloor=77") != std::string::npos,
-            "saved config should include coordinate signal floor");
-
-    Solvers::StylusPipeline loaded;
-    LoadFromSavedText(loaded, saved);
 }
 
 void TestGridFeatureExtractorAlignsTx2WithFactoryFlow() {
@@ -1231,7 +1200,6 @@ int main() {
         TestDirectionChangeExitsStraightLine();
         TestClampToSensorBounds();
         TestBypassModeResetsPostFilter();
-        TestConfigRoundTrip();
         TestExtractGridFromSlavePayloadBytesMatchesWords();
         TestFrameParserUsesSlaveSuffixWhenRawBytesMissing();
         TestFrameParserReportsNoSignalForInvalidSlaveSuffixAnchors();

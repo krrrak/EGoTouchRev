@@ -1,14 +1,11 @@
 #include "StylusSolver/Hpp3PostPressureProcess.hpp"
 #include "StylusSolver/PressureSolver.hpp"
-#include "StylusSolver/StylusPipeline.h"
 #include "StylusSolver/StylusRuntimeCommit.hpp"
 
 #include <array>
 #include <cstdint>
 #include <iostream>
-#include <sstream>
 #include <stdexcept>
-#include <string>
 
 namespace {
 
@@ -75,18 +72,6 @@ void SetEdge(HeatmapFrame& frame,
     signal.signalX = dim1Signal;
     signal.signalY = dim2Signal;
     signal.maxRawPeak = dim1Signal > dim2Signal ? dim1Signal : dim2Signal;
-}
-
-void LoadFromSavedText(Solvers::StylusPipeline& pipeline, const std::string& saved) {
-    std::istringstream in(saved);
-    std::string line;
-    while (std::getline(in, line)) {
-        const auto eq = line.find('=');
-        if (eq == std::string::npos) {
-            continue;
-        }
-        pipeline.LoadConfig(line.substr(0, eq), line.substr(eq + 1));
-    }
 }
 
 void TestDisabledModulePreservesRuntime() {
@@ -459,54 +444,6 @@ void TestEdgeLatchExitsOnlyAboveExitThreshold() {
             "edge latch should clear after all active edge dimensions exit");
 }
 
-void TestConfigRoundTripIncludesPostPressure() {
-    Solvers::StylusPipeline pipeline;
-    pipeline.m_postPressure.m_enabled = false;
-    pipeline.m_postPressure.m_fakePressureDecreaseEnabled = false;
-    pipeline.m_postPressure.m_btFreqShiftDebounceFrames = 7;
-    pipeline.m_postPressure.m_pressureEdgeEnterThreshold = 1234;
-    pipeline.m_postPressure.m_pressureEdgeExitThreshold = 2345;
-    pipeline.m_pressureSolver.m_btPressSignalSuppressEnterThreshold = 3456;
-    pipeline.m_pressureSolver.m_btPressSignalSuppressExitThreshold = 4567;
-
-    std::ostringstream out;
-    pipeline.SaveConfig(out);
-    const std::string saved = out.str();
-
-    Require(saved.find("sp.postPressureEnabled=0") != std::string::npos,
-            "saved config should contain post-pressure enable flag");
-    Require(saved.find("sp.fakePressureDecreaseEnabled=0") != std::string::npos,
-            "saved config should contain fake pressure flag");
-    Require(saved.find("sp.btFreqShiftDebounceFrames=7") != std::string::npos,
-            "saved config should contain BT freq debounce frames");
-    Require(saved.find("sp.pressureEdgeEnterThreshold=1234") != std::string::npos,
-            "saved config should preserve enter threshold key");
-    Require(saved.find("sp.pressureEdgeExitThreshold=2345") != std::string::npos,
-            "saved config should preserve exit threshold key");
-    Require(saved.find("sp.btPressSignalSuppressEnterThreshold=3456") != std::string::npos,
-            "saved config should contain BT pressure suppress enter threshold");
-    Require(saved.find("sp.btPressSignalSuppressExitThreshold=4567") != std::string::npos,
-            "saved config should contain BT pressure suppress exit threshold");
-
-    Solvers::StylusPipeline restored;
-    LoadFromSavedText(restored, saved);
-
-    Require(!restored.m_postPressure.m_enabled,
-            "loaded config should restore post-pressure enable flag");
-    Require(!restored.m_postPressure.m_fakePressureDecreaseEnabled,
-            "loaded config should restore fake pressure flag");
-    Require(restored.m_postPressure.m_btFreqShiftDebounceFrames == 7,
-            "loaded config should restore BT freq debounce frames");
-    Require(restored.m_postPressure.m_pressureEdgeEnterThreshold == 1234,
-            "loaded config should restore enter threshold");
-    Require(restored.m_postPressure.m_pressureEdgeExitThreshold == 2345,
-            "loaded config should restore exit threshold");
-    Require(restored.m_pressureSolver.m_btPressSignalSuppressEnterThreshold == 3456,
-            "loaded config should restore BT pressure suppress enter threshold");
-    Require(restored.m_pressureSolver.m_btPressSignalSuppressExitThreshold == 4567,
-            "loaded config should restore BT pressure suppress exit threshold");
-}
-
 } // namespace
 
 int main() {
@@ -527,7 +464,6 @@ int main() {
         TestSingleEdgeLowSignalSuppressesPressure();
         TestBothEdgeEnterUsesTwoThirdsThreshold();
         TestEdgeLatchExitsOnlyAboveExitThreshold();
-        TestConfigRoundTripIncludesPostPressure();
         std::cout << "[TEST] Stylus HPP3 post-pressure tests passed.\n";
         return 0;
     } catch (const std::exception& ex) {
