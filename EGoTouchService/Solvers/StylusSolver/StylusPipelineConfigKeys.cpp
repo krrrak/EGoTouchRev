@@ -18,7 +18,31 @@ namespace StylusConfig {
 // ── GetConfigSchema ──
 std::vector<ConfigParam> GetConfigSchema(StylusPipelineMembers& m) {
     std::vector<ConfigParam> s;
-    s.reserve(41);
+    s.reserve(62);
+
+    // ── HPP2 Pipeline ──
+    s.emplace_back(kHpp2EnabledName, "HPP2 Enabled", ConfigParam::Bool, const_cast<bool*>(&m.hpp2->m_enabled)).Module("HPP2");
+    s.emplace_back(kHpp2SensorTxCountName, "HPP2 Sensor TX Count", ConfigParam::Int, const_cast<int*>(&m.hpp2->m_sensorTxCount), 1, 100).Module("HPP2");
+    s.emplace_back(kHpp2SensorRxCountName, "HPP2 Sensor RX Count", ConfigParam::Int, const_cast<int*>(&m.hpp2->m_sensorRxCount), 1, 100).Module("HPP2");
+    s.emplace_back(kHpp2CmfWindowRadiusName, "HPP2 CMF Window Radius", ConfigParam::Int, const_cast<int*>(&m.hpp2->m_cmfWindowRadius), 0, 32).Module("HPP2");
+    // ConfigParam has no UInt32 type, so HPP2 uint32 thresholds are handled by SaveConfig/LoadConfig only.
+    s.emplace_back(kHpp2RawAbnormalEnergyRatioThresholdName, "HPP2 Raw Abnormal Energy Ratio Threshold", ConfigParam::UInt16, const_cast<uint16_t*>(&m.hpp2->m_rawAbnormalEnergyRatioThreshold), 0, 65535).Module("HPP2");
+    s.emplace_back(kHpp2CmnAbnormalMinThresholdName, "HPP2 CMN Abnormal Min Threshold", ConfigParam::UInt16, const_cast<uint16_t*>(&m.hpp2->m_cmnAbnormalMinThreshold), 0, 65535).Module("HPP2");
+    s.emplace_back(kHpp2ChargerNoiseClearFloorName, "HPP2 Charger Noise Clear Floor", ConfigParam::UInt16, const_cast<uint16_t*>(&m.hpp2->m_chargerNoiseClearFloor), 1, 65535).Module("HPP2");
+    s.emplace_back(kHpp2ChargerNoiseRatioThresholdName, "HPP2 Charger Noise Ratio Threshold", ConfigParam::UInt16, const_cast<uint16_t*>(&m.hpp2->m_chargerNoiseRatioThreshold), 0, 65535).Module("HPP2");
+    s.emplace_back(kHpp2ChargerNoiseMaxSampleThresholdName, "HPP2 Charger Noise Max Sample Threshold", ConfigParam::UInt16, const_cast<uint16_t*>(&m.hpp2->m_chargerNoiseMaxSampleThreshold), 0, 65535).Module("HPP2");
+    s.emplace_back(kHpp2ChargerNoiseAbnormalChannelThresholdName, "HPP2 Charger Noise Abnormal Channel Threshold", ConfigParam::UInt8, const_cast<uint8_t*>(&m.hpp2->m_chargerNoiseAbnormalChannelThreshold), 0, 255).Module("HPP2");
+    s.emplace_back(kHpp2ChargerNoisePeakProtectRadiusName, "HPP2 Charger Noise Peak Protect Radius", ConfigParam::UInt16, const_cast<uint16_t*>(&m.hpp2->m_chargerNoisePeakProtectRadius), 0, 65535).Module("HPP2");
+    s.emplace_back(kHpp2ChargerNoiseMinRawSampleName, "HPP2 Charger Noise Min Raw Sample", ConfigParam::UInt16, const_cast<uint16_t*>(&m.hpp2->m_chargerNoiseMinRawSample), 0, 65535).Module("HPP2");
+    s.emplace_back(kHpp2PeakSignalFloorName, "HPP2 Peak Signal Floor", ConfigParam::UInt16, const_cast<uint16_t*>(&m.hpp2->m_peakSignalFloor), 0, 65535).Module("HPP2");
+    s.emplace_back(kHpp2PeakSearchNeighborDistName, "HPP2 Peak Search Neighbor Dist", ConfigParam::Int, const_cast<int*>(&m.hpp2->m_peakSearchNeighborDist), 1, 16).Module("HPP2");
+    s.emplace_back(kHpp2PeakMinWidthName, "HPP2 Peak Min Width", ConfigParam::Int, const_cast<int*>(&m.hpp2->m_peakMinWidth), 1, 100).Module("HPP2");
+    s.emplace_back(kHpp2PeakMaxWidthName, "HPP2 Peak Max Width", ConfigParam::Int, const_cast<int*>(&m.hpp2->m_peakMaxWidth), 1, 100).Module("HPP2");
+    s.emplace_back(kHpp2PressureEdgeEnterThresholdName, "HPP2 Pressure Edge Enter Threshold", ConfigParam::UInt16, const_cast<uint16_t*>(&m.hpp2->m_pressureEdgeEnterThreshold), 0, 65535).Module("HPP2");
+    s.emplace_back(kHpp2PressureEdgeExitThresholdName, "HPP2 Pressure Edge Exit Threshold", ConfigParam::UInt16, const_cast<uint16_t*>(&m.hpp2->m_pressureEdgeExitThreshold), 0, 65535).Module("HPP2");
+    s.emplace_back(kHpp2PressureDeltaNormalName, "HPP2 Pressure Delta Normal", ConfigParam::UInt16, const_cast<uint16_t*>(&m.hpp2->m_pressureDeltaNormal), 0, 65535).Module("HPP2");
+    s.emplace_back(kHpp2PressureDeltaTightName, "HPP2 Pressure Delta Tight", ConfigParam::UInt16, const_cast<uint16_t*>(&m.hpp2->m_pressureDeltaTight), 0, 65535).Module("HPP2");
+    s.emplace_back(kHpp2UseTightPressureDeltaName, "HPP2 Use Tight Pressure Delta", ConfigParam::Bool, const_cast<bool*>(&m.hpp2->m_useTightPressureDelta)).Module("HPP2");
 
     // ── Frame Parser ──
     s.emplace_back(kSpFrameParserEnabledName, "Frame Parser Enabled", ConfigParam::Bool, const_cast<bool*>(&m.frameParser->m_enabled)).Module("Frame Parser");
@@ -76,6 +100,30 @@ std::vector<ConfigParam> GetConfigSchema(StylusPipelineMembers& m) {
 
 // ── SaveConfig ──
 void SaveConfig(const StylusPipelineMembers& m, std::ostream& out) {
+    out << kHpp2EnabledName << "=" << (m.hpp2->m_enabled ? "1" : "0") << "\n";
+    out << kHpp2SensorTxCountName << "=" << m.hpp2->m_sensorTxCount << "\n";
+    out << kHpp2SensorRxCountName << "=" << m.hpp2->m_sensorRxCount << "\n";
+    out << kHpp2CmfWindowRadiusName << "=" << m.hpp2->m_cmfWindowRadius << "\n";
+    out << kHpp2RawAbnormalLineSumThresholdName << "=" << m.hpp2->m_rawAbnormalLineSumThreshold << "\n";
+    out << kHpp2RawAbnormalEnergyRatioThresholdName << "=" << m.hpp2->m_rawAbnormalEnergyRatioThreshold << "\n";
+    out << kHpp2CmnAbnormalSumThresholdName << "=" << m.hpp2->m_cmnAbnormalSumThreshold << "\n";
+    out << kHpp2CmnAbnormalMinThresholdName << "=" << m.hpp2->m_cmnAbnormalMinThreshold << "\n";
+    out << kHpp2ChargerNoiseClearFloorName << "=" << m.hpp2->m_chargerNoiseClearFloor << "\n";
+    out << kHpp2ChargerNoiseRatioThresholdName << "=" << m.hpp2->m_chargerNoiseRatioThreshold << "\n";
+    out << kHpp2ChargerNoiseSumThresholdName << "=" << m.hpp2->m_chargerNoiseSumThreshold << "\n";
+    out << kHpp2ChargerNoiseMaxSampleThresholdName << "=" << m.hpp2->m_chargerNoiseMaxSampleThreshold << "\n";
+    out << kHpp2ChargerNoiseAbnormalChannelThresholdName << "=" << static_cast<int>(m.hpp2->m_chargerNoiseAbnormalChannelThreshold) << "\n";
+    out << kHpp2ChargerNoisePeakProtectRadiusName << "=" << m.hpp2->m_chargerNoisePeakProtectRadius << "\n";
+    out << kHpp2ChargerNoiseMinRawSampleName << "=" << m.hpp2->m_chargerNoiseMinRawSample << "\n";
+    out << kHpp2PeakSignalFloorName << "=" << m.hpp2->m_peakSignalFloor << "\n";
+    out << kHpp2PeakSearchNeighborDistName << "=" << m.hpp2->m_peakSearchNeighborDist << "\n";
+    out << kHpp2PeakMinWidthName << "=" << m.hpp2->m_peakMinWidth << "\n";
+    out << kHpp2PeakMaxWidthName << "=" << m.hpp2->m_peakMaxWidth << "\n";
+    out << kHpp2PressureEdgeEnterThresholdName << "=" << m.hpp2->m_pressureEdgeEnterThreshold << "\n";
+    out << kHpp2PressureEdgeExitThresholdName << "=" << m.hpp2->m_pressureEdgeExitThreshold << "\n";
+    out << kHpp2PressureDeltaNormalName << "=" << m.hpp2->m_pressureDeltaNormal << "\n";
+    out << kHpp2PressureDeltaTightName << "=" << m.hpp2->m_pressureDeltaTight << "\n";
+    out << kHpp2UseTightPressureDeltaName << "=" << (m.hpp2->m_useTightPressureDelta ? "1" : "0") << "\n";
     out << kSpFrameParserEnabledName << "=" << (m.frameParser->m_enabled ? "1" : "0") << "\n";
     out << kSpPeakDetectorEnabledName << "=" << (m.featureExtractor->m_enabled ? "1" : "0") << "\n";
     out << kSpCoordinateSolverEnabledName << "=" << (m.coordinateSolver->m_enabled ? "1" : "0") << "\n";
@@ -123,7 +171,143 @@ void SaveConfig(const StylusPipelineMembers& m, std::ostream& out) {
 void LoadConfig(StylusPipelineMembers& m, const std::string& key, const std::string& value) {
     auto toBool = [&](const std::string& v) { return ParseConfigBool(key, v); };
     try {
-        if (key == kSpFrameParserEnabledName) {
+        if (key == kHpp2EnabledName) {
+            m.hpp2->m_enabled = toBool(value);
+            if (!m.hpp2->m_enabled) { m.hpp2->ResetOnTerminal(); }
+        }
+        else if (key == kHpp2SensorTxCountName) {
+            int v = ParseConfigInt(key, value);
+            if (v < 1) v = 1;
+            if (v > 100) v = 100;
+            m.hpp2->m_sensorTxCount = v;
+        }
+        else if (key == kHpp2SensorRxCountName) {
+            int v = ParseConfigInt(key, value);
+            if (v < 1) v = 1;
+            if (v > 100) v = 100;
+            m.hpp2->m_sensorRxCount = v;
+        }
+        else if (key == kHpp2CmfWindowRadiusName) {
+            int v = ParseConfigInt(key, value);
+            if (v < 0) v = 0;
+            if (v > 32) v = 32;
+            m.hpp2->m_cmfWindowRadius = v;
+        }
+        else if (key == kHpp2RawAbnormalLineSumThresholdName) {
+            int v = ParseConfigInt(key, value);
+            if (v < 0) v = 0;
+            m.hpp2->m_rawAbnormalLineSumThreshold = static_cast<uint32_t>(v);
+        }
+        else if (key == kHpp2RawAbnormalEnergyRatioThresholdName) {
+            int v = ParseConfigInt(key, value);
+            if (v < 0) v = 0;
+            if (v > 65535) v = 65535;
+            m.hpp2->m_rawAbnormalEnergyRatioThreshold = static_cast<uint16_t>(v);
+        }
+        else if (key == kHpp2CmnAbnormalSumThresholdName) {
+            int v = ParseConfigInt(key, value);
+            if (v < 0) v = 0;
+            m.hpp2->m_cmnAbnormalSumThreshold = static_cast<uint32_t>(v);
+        }
+        else if (key == kHpp2CmnAbnormalMinThresholdName) {
+            int v = ParseConfigInt(key, value);
+            if (v < 0) v = 0;
+            if (v > 65535) v = 65535;
+            m.hpp2->m_cmnAbnormalMinThreshold = static_cast<uint16_t>(v);
+        }
+        else if (key == kHpp2ChargerNoiseClearFloorName) {
+            int v = ParseConfigInt(key, value);
+            if (v < 1) v = 1;
+            if (v > 65535) v = 65535;
+            m.hpp2->m_chargerNoiseClearFloor = static_cast<uint16_t>(v);
+        }
+        else if (key == kHpp2ChargerNoiseRatioThresholdName) {
+            int v = ParseConfigInt(key, value);
+            if (v < 0) v = 0;
+            if (v > 65535) v = 65535;
+            m.hpp2->m_chargerNoiseRatioThreshold = static_cast<uint16_t>(v);
+        }
+        else if (key == kHpp2ChargerNoiseSumThresholdName) {
+            int v = ParseConfigInt(key, value);
+            if (v < 0) v = 0;
+            m.hpp2->m_chargerNoiseSumThreshold = static_cast<uint32_t>(v);
+        }
+        else if (key == kHpp2ChargerNoiseMaxSampleThresholdName) {
+            int v = ParseConfigInt(key, value);
+            if (v < 0) v = 0;
+            if (v > 65535) v = 65535;
+            m.hpp2->m_chargerNoiseMaxSampleThreshold = static_cast<uint16_t>(v);
+        }
+        else if (key == kHpp2ChargerNoiseAbnormalChannelThresholdName) {
+            int v = ParseConfigInt(key, value);
+            if (v < 0) v = 0;
+            if (v > 255) v = 255;
+            m.hpp2->m_chargerNoiseAbnormalChannelThreshold = static_cast<uint8_t>(v);
+        }
+        else if (key == kHpp2ChargerNoisePeakProtectRadiusName) {
+            int v = ParseConfigInt(key, value);
+            if (v < 0) v = 0;
+            if (v > 65535) v = 65535;
+            m.hpp2->m_chargerNoisePeakProtectRadius = static_cast<uint16_t>(v);
+        }
+        else if (key == kHpp2ChargerNoiseMinRawSampleName) {
+            int v = ParseConfigInt(key, value);
+            if (v < 0) v = 0;
+            if (v > 65535) v = 65535;
+            m.hpp2->m_chargerNoiseMinRawSample = static_cast<uint16_t>(v);
+        }
+        else if (key == kHpp2PeakSignalFloorName) {
+            int v = ParseConfigInt(key, value);
+            if (v < 0) v = 0;
+            if (v > 65535) v = 65535;
+            m.hpp2->m_peakSignalFloor = static_cast<uint16_t>(v);
+        }
+        else if (key == kHpp2PeakSearchNeighborDistName) {
+            int v = ParseConfigInt(key, value);
+            if (v < 1) v = 1;
+            if (v > 16) v = 16;
+            m.hpp2->m_peakSearchNeighborDist = v;
+        }
+        else if (key == kHpp2PeakMinWidthName) {
+            int v = ParseConfigInt(key, value);
+            if (v < 1) v = 1;
+            if (v > 100) v = 100;
+            m.hpp2->m_peakMinWidth = v;
+        }
+        else if (key == kHpp2PeakMaxWidthName) {
+            int v = ParseConfigInt(key, value);
+            if (v < 1) v = 1;
+            if (v > 100) v = 100;
+            m.hpp2->m_peakMaxWidth = v;
+        }
+        else if (key == kHpp2PressureEdgeEnterThresholdName) {
+            int v = ParseConfigInt(key, value);
+            if (v < 0) v = 0;
+            if (v > 65535) v = 65535;
+            m.hpp2->m_pressureEdgeEnterThreshold = static_cast<uint16_t>(v);
+        }
+        else if (key == kHpp2PressureEdgeExitThresholdName) {
+            int v = ParseConfigInt(key, value);
+            if (v < 0) v = 0;
+            if (v > 65535) v = 65535;
+            m.hpp2->m_pressureEdgeExitThreshold = static_cast<uint16_t>(v);
+        }
+        else if (key == kHpp2PressureDeltaNormalName) {
+            int v = ParseConfigInt(key, value);
+            if (v < 0) v = 0;
+            if (v > 65535) v = 65535;
+            m.hpp2->m_pressureDeltaNormal = static_cast<uint16_t>(v);
+        }
+        else if (key == kHpp2PressureDeltaTightName) {
+            int v = ParseConfigInt(key, value);
+            if (v < 0) v = 0;
+            if (v > 65535) v = 65535;
+            m.hpp2->m_pressureDeltaTight = static_cast<uint16_t>(v);
+        }
+        else if (key == kHpp2UseTightPressureDeltaName) {
+            m.hpp2->m_useTightPressureDelta = toBool(value);
+        }
+        else if (key == kSpFrameParserEnabledName) {
             m.frameParser->m_enabled = toBool(value);
         }
         else if (key == kSpPeakDetectorEnabledName) {

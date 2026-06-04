@@ -62,12 +62,65 @@ void TestHpp2EdgePressureGuardSuppressesPressure() {
     Require(frame.stylus.output.pressure == 0, "low edge signal should clear pressure");
 }
 
+void TestHpp2AbnormalRawRejects() {
+    Solvers::StylusPipeline pipeline;
+    HeatmapFrame frame = MakeHpp2Frame(12, 7, 2600, 2400, 512);
+    // Fill all 100 samples with 1000 to trigger rawAbnormal:
+    // rawLineSum = 100 * 1000 = 100000 > 30000 threshold
+    frame.stylus.input.hpp2LineData.fill(1000);
+
+    pipeline.Process(frame);
+
+    Require(frame.stylus.runtime.flow.terminal, "abnormal raw line sum should reject the frame");
+    Require(frame.stylus.runtime.hpp2.rawAbnormal, "rawAbnormal flag should be set");
+}
+
+void TestHpp2NoPeakRejects() {
+    Solvers::StylusPipeline pipeline;
+    // Peak values of 10 are well below the 250 signal floor
+    HeatmapFrame frame = MakeHpp2Frame(12, 7, 10, 10, 512);
+
+    pipeline.Process(frame);
+
+    Require(frame.stylus.runtime.flow.terminal, "sub-floor peak signal should reject the frame");
+}
+
+void TestHpp2ButtonReleaseCounterDecrements() {
+    Solvers::StylusPipeline pipeline;
+
+    // Frame 1: button bit set
+    HeatmapFrame f1 = MakeHpp2Frame(12, 7, 2600, 2400, 512, 1u);
+    pipeline.Process(f1);
+    Require(f1.stylus.runtime.hpp2.buttonPressed, "frame 1 button should be pressed");
+    Require(f1.stylus.runtime.hpp2.buttonReleaseFrames == 2, "release counter should start at 2");
+
+    // Frame 2: button bit clear, release counter still active
+    HeatmapFrame f2 = MakeHpp2Frame(12, 7, 2600, 2400, 512, 0u);
+    pipeline.Process(f2);
+    Require(f2.stylus.runtime.hpp2.buttonPressed, "frame 2 button should still be held by release counter");
+    Require(f2.stylus.runtime.hpp2.buttonReleaseFrames == 1, "release counter should decrement to 1");
+
+    // Frame 3: button bit still clear, counter decrements to 0
+    HeatmapFrame f3 = MakeHpp2Frame(12, 7, 2600, 2400, 512, 0u);
+    pipeline.Process(f3);
+    Require(f3.stylus.runtime.hpp2.buttonPressed, "frame 3 button should still be held");
+    Require(f3.stylus.runtime.hpp2.buttonReleaseFrames == 0, "release counter should reach 0");
+
+    // Frame 4: counter exhausted, button released
+    HeatmapFrame f4 = MakeHpp2Frame(12, 7, 2600, 2400, 512, 0u);
+    pipeline.Process(f4);
+    Require(!f4.stylus.runtime.hpp2.buttonPressed, "frame 4 button should be released");
+}
+
 } // namespace
 
 int main() {
     try {
         TestHpp2FrameProducesReport();
         TestHpp2EdgePressureGuardSuppressesPressure();
+        TestHpp2AbnormalRawRejects();
+        TestHpp2NoPeakRejects();
+        TestHpp2ButtonReleaseCounterDecrements();
     } catch (const std::exception& ex) {
         std::cerr << "[FAIL] StylusHpp2PipelineTest: " << ex.what() << "\n";
         return 1;

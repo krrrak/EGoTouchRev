@@ -13,6 +13,9 @@
 namespace Solvers {
 struct ConfigParam;
 namespace Stylus {
+namespace Hpp2 {
+class Pipeline;
+} // namespace Hpp2
 class StylusFrameParser;
 class GridFeatureExtractor;
 class CoordinateSolver;
@@ -116,10 +119,35 @@ constexpr const char* kSpLockFlashEdgeYName = "sp.lockFlashEdgeY";
 constexpr const char* kSpLockSensorTxCountName = "sp.lockSensorTxCount";
 constexpr const char* kSpLockSensorRxCountName = "sp.lockSensorRxCount";
 constexpr const char* kSpLockBypassName = "sp.lockBypass";
+constexpr const char* kHpp2EnabledName = "hpp2.enabled";
+constexpr const char* kHpp2SensorTxCountName = "hpp2.sensorTxCount";
+constexpr const char* kHpp2SensorRxCountName = "hpp2.sensorRxCount";
+constexpr const char* kHpp2CmfWindowRadiusName = "hpp2.cmfWindowRadius";
+constexpr const char* kHpp2RawAbnormalLineSumThresholdName = "hpp2.rawAbnormalLineSumThreshold";
+constexpr const char* kHpp2RawAbnormalEnergyRatioThresholdName = "hpp2.rawAbnormalEnergyRatioThreshold";
+constexpr const char* kHpp2CmnAbnormalSumThresholdName = "hpp2.cmnAbnormalSumThreshold";
+constexpr const char* kHpp2CmnAbnormalMinThresholdName = "hpp2.cmnAbnormalMinThreshold";
+constexpr const char* kHpp2ChargerNoiseClearFloorName = "hpp2.chargerNoiseClearFloor";
+constexpr const char* kHpp2ChargerNoiseRatioThresholdName = "hpp2.chargerNoiseRatioThreshold";
+constexpr const char* kHpp2ChargerNoiseSumThresholdName = "hpp2.chargerNoiseSumThreshold";
+constexpr const char* kHpp2ChargerNoiseMaxSampleThresholdName = "hpp2.chargerNoiseMaxSampleThreshold";
+constexpr const char* kHpp2ChargerNoiseAbnormalChannelThresholdName = "hpp2.chargerNoiseAbnormalChannelThreshold";
+constexpr const char* kHpp2ChargerNoisePeakProtectRadiusName = "hpp2.chargerNoisePeakProtectRadius";
+constexpr const char* kHpp2ChargerNoiseMinRawSampleName = "hpp2.chargerNoiseMinRawSample";
+constexpr const char* kHpp2PeakSignalFloorName = "hpp2.peakSignalFloor";
+constexpr const char* kHpp2PeakSearchNeighborDistName = "hpp2.peakSearchNeighborDist";
+constexpr const char* kHpp2PeakMinWidthName = "hpp2.peakMinWidth";
+constexpr const char* kHpp2PeakMaxWidthName = "hpp2.peakMaxWidth";
+constexpr const char* kHpp2PressureEdgeEnterThresholdName = "hpp2.pressureEdgeEnterThreshold";
+constexpr const char* kHpp2PressureEdgeExitThresholdName = "hpp2.pressureEdgeExitThreshold";
+constexpr const char* kHpp2PressureDeltaNormalName = "hpp2.pressureDeltaNormal";
+constexpr const char* kHpp2PressureDeltaTightName = "hpp2.pressureDeltaTight";
+constexpr const char* kHpp2UseTightPressureDeltaName = "hpp2.useTightPressureDelta";
 
 #if EGOTOUCH_CONFIG_ENABLED
 
 struct StylusPipelineMembers {
+    Stylus::Hpp2::Pipeline* hpp2;
     Stylus::StylusFrameParser* frameParser;
     Stylus::GridFeatureExtractor* featureExtractor;
     Stylus::CoordinateSolver* coordinateSolver;
