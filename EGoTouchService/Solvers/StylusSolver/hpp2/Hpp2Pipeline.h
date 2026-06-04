@@ -58,6 +58,14 @@ public:
         runtime.flow.pipelineStage = 2;
         runtime.flow.frameClass = Asa::StylusFrameClass::Valid;
 
+        // TSACore boundary: txCount + rxCount must not exceed line profile capacity.
+        if (m_sensorTxCount <= 0 || m_sensorRxCount <= 0 ||
+            m_sensorTxCount + m_sensorRxCount > kMaxSamples) {
+            runtime.flow.terminal = true;
+            runtime.flow.frameClass = Asa::StylusFrameClass::ParseFail;
+            return false;
+        }
+
         if (!m_enabled || !frame.stylus.input.hpp2LineValid) {
             runtime.flow.terminal = true;
             runtime.flow.frameClass = Asa::StylusFrameClass::NoSignal;
@@ -359,6 +367,14 @@ private:
         runtime.decision.inRangeCandidate = inRange;
         runtime.post.finalValid = inRange;
         if (!inRange) {
+            // TSACore ASAStaticStatusProcess: distinguish release (was in-range → now out)
+            // from no-signal/bypass (was already out → still out).
+            if (m_wasInRange) {
+                // Previously in-range, now out-of-range: release exit stylus (TSACore return 3).
+                runtime.flow.frameClass = Asa::StylusFrameClass::NoSignal;
+            }
+            // else: already out-of-range → no-report/bypass (TSACore return 5).
+            // Both paths set m_wasInRange=false so the next frame starts fresh.
             m_wasInRange = false;
             return false;
         }

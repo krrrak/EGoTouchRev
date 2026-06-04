@@ -63,9 +63,7 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
 
     // ── Shared / common post-processing tail ───────────────────────
     m_edgeCoorProcess.Process(frame);
-    if (!isHpp2) {
-        m_hpp3.ProcessAfterSharedEdge(frame);
-    }
+    m_hpp3.ProcessAfterSharedEdge(frame);
     m_commonPost.Process(frame);
     m_edgeCoorProcess.CaptureFinal(frame.stylus.runtime);
     m_commit.Commit(frame);

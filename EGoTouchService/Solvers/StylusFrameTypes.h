@@ -76,6 +76,7 @@ struct StylusOutputState {
     bool valid = false;
     bool inRange = false;
     bool tipDown = false;
+    bool buttonActive = false;
     uint16_t pressure = 0;
     float confidence = 0.0f;
     uint8_t pipelineStage = 0;
@@ -331,6 +332,7 @@ struct StylusRuntimeFrame {
         parse = {};
         decision = {};
         signal = {};
+        hpp2 = {};
     }
 
     void ResetPostOutputs() {

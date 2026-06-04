@@ -20,6 +20,8 @@ public:
             stylus.runtime.decision.inRangeCandidate && stylus.runtime.post.finalValid;
         stylus.output.tipDown =
             stylus.runtime.decision.tipDownCandidate && stylus.output.valid;
+        // TODO: Feed buttonActive into the VHF barrel button bit when packet emission is wired.
+        stylus.output.buttonActive = stylus.runtime.hpp2.buttonPressed && stylus.output.inRange;
         stylus.output.pressure = stylus.runtime.post.finalPressure;
         stylus.output.confidence = stylus.runtime.post.confidence;
         stylus.output.pipelineStage = stylus.runtime.flow.pipelineStage;

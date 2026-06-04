@@ -43,19 +43,12 @@ public:
             return true;
         }
 
-        if (TryProcessFromHpp2Input(frame, priorInput)) {
-            return true;
-        }
-
         if (frame.rawPtr == nullptr) {
             if (TryProcessFromSlaveSuffix(frame, priorInput)) {
                 return true;
             }
-            flow.terminal = true;
-            parse.valid = false;
-            parse.slaveValid = false;
-            parse.checksumOk = false;
-            return true;
+            // Final fallback: pre-populated HPP2 line-mode input
+            return ProcessWithHpp2Fallback(frame, priorInput);
         }
 
         const std::size_t available = std::min(frame.rawLen, kSlaveFrameBytes);
@@ -63,11 +56,8 @@ public:
             if (TryProcessFromSlaveSuffix(frame, priorInput)) {
                 return true;
             }
-            flow.terminal = true;
-            parse.valid = false;
-            parse.slaveValid = false;
-            parse.checksumOk = false;
-            return true;
+            // Final fallback: pre-populated HPP2 line-mode input
+            return ProcessWithHpp2Fallback(frame, priorInput);
         }
 
         const std::size_t slaveOffset = frame.rawLen - available;
@@ -142,6 +132,23 @@ public:
         flow.frameClass = Asa::StylusFrameClass::Valid;
         parse.valid = true;
         parse.hasCurrentStylusSignal = true;
+        return true;
+    }
+
+    // When no raw pointer, no slave suffix, and no grid data is available,
+    // fall back to a pre-populated HPP2 line-mode input as a last resort.
+    inline bool ProcessWithHpp2Fallback(HeatmapFrame& frame, const StylusInputSnapshot& priorInput) const {
+        // All real-data paths have been exhausted above; HPP2 input is the final fallback.
+        if (TryProcessFromHpp2Input(frame, priorInput)) {
+            return true;
+        }
+
+        auto& flow = frame.stylus.runtime.flow;
+        auto& parse = frame.stylus.runtime.parse;
+        flow.terminal = true;
+        parse.valid = false;
+        parse.slaveValid = false;
+        parse.checksumOk = false;
         return true;
     }
 
