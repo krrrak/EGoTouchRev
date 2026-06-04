@@ -9,9 +9,7 @@
 #include "Hpp2LinePeakExtractor.hpp"
 #include "Hpp2PeakSelector.hpp"
 #include "Hpp2PressureProcess.hpp"
-#include "Hpp2RangeStatusProcess.hpp"
 #include "Hpp2StageInputProcess.hpp"
-#include "Hpp2StaticStatusProcess.hpp"
 #include "SolverTypes.h"
 #include "StylusSolver/AsaTypes.hpp"
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Hpp2CoordinateMath.hpp"
+#include "Hpp2CoordinateSolver.hpp"
 #include "SolverTypes.h"
 #include "Hpp2Runtime.hpp"
 
