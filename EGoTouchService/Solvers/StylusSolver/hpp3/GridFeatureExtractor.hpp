@@ -24,8 +24,9 @@ public:
             flow.terminal = true;
             return true;
         }
+        const bool linePeakHistoryEnabled = stylus.input.btSample.hasSample && stylus.input.btSample.pressure[3] != 0;
         PeakFlags tx1PeakFlags{};
-        AnalyzeTx1Block(rawGrid.asaGrid.tx1, stylus.runtime.tx1.feature, tx1PeakFlags);
+        AnalyzeTx1Block(rawGrid.asaGrid.tx1, stylus.runtime.tx1.feature, tx1PeakFlags, linePeakHistoryEnabled);
         stylus.runtime.tx1.coordinate = {};
         if (rawGrid.asaGrid.tx2.valid) {
             AnalyzeTx2BlockFromTx1(stylus.runtime.tx1.feature.grid,
@@ -175,7 +176,10 @@ private:
         }
     }
 
-    inline void AnalyzeTx1Block(const Asa::FreqBlock& block, StylusGridFeature& out, PeakFlags& peakFlagsOut) {
+    inline void AnalyzeTx1Block(const Asa::FreqBlock& block,
+                                StylusGridFeature& out,
+                                PeakFlags& peakFlagsOut,
+                                bool linePeakHistoryEnabled) {
         out = {};
         peakFlagsOut.fill(0);
         if (!block.valid) {
@@ -205,7 +209,8 @@ private:
         ExportPrimaryPeak(best, out);
         ProjectTx1To1D(searchGrid, best, out, dim2Edge, dim1Edge,
                        static_cast<int>(block.anchorCol) - kAnchorCenterOffset,
-                       static_cast<int>(block.anchorRow) - kAnchorCenterOffset);
+                       static_cast<int>(block.anchorRow) - kAnchorCenterOffset,
+                       linePeakHistoryEnabled);
     }
 
     inline void AnalyzeTx2BlockFromTx1(const Grid2D& tx1SearchGrid, const PeakFlags& tx1PeakFlags,
@@ -512,7 +517,8 @@ private:
                                const AxisEdgeGeometry& rowEdge,
                                const AxisEdgeGeometry& colEdge,
                                int dim1GlobalOffset,
-                               int dim2GlobalOffset) {
+                               int dim2GlobalOffset,
+                               bool linePeakHistoryEnabled) {
         const ProjectionBounds projectionBounds = BuildProjectionBounds(region, rowEdge, colEdge);
         out.projection.spanDim1 = projectionBounds.maxRow - projectionBounds.minRow + 1;
         out.projection.spanDim2 = projectionBounds.maxCol - projectionBounds.minCol + 1;
@@ -520,7 +526,7 @@ private:
                            [&](int c, int r) { return GridAt(grid, r, c); });
         FillProjectionAxis(out.projection.dim2, projectionBounds.minCol, projectionBounds.maxCol,
                            [&](int r, int c) { return GridAt(grid, r, c); });
-        ProcessTx1LinePeaks(out, colEdge, rowEdge, dim1GlobalOffset, dim2GlobalOffset);
+        ProcessTx1LinePeaks(out, colEdge, rowEdge, dim1GlobalOffset, dim2GlobalOffset, linePeakHistoryEnabled);
     }
 
     static inline ProjectionBounds BuildProjectionBounds(const PeakRegion& region,
@@ -589,15 +595,22 @@ private:
         if (current.selectedByRank < 0) current.selectedByRank = current.strongestByNet;
     }
     
-    inline LinePeakCandidate ProcessTx1LinePeakAxis(const Axis& signal, LinePeakTable& previous, int globalOffset) {
+    inline LinePeakCandidate ProcessTx1LinePeakAxis(const Axis& signal,
+                                                    LinePeakTable& previous,
+                                                    int globalOffset,
+                                                    bool linePeakHistoryEnabled) {
         LinePeakTable current = SearchLinePeaks(signal, globalOffset);
-        ApplyLinePeakHistory(current, previous);
+        if (linePeakHistoryEnabled) {
+            ApplyLinePeakHistory(current, previous);
+        } else {
+            current.selectedByRank = current.strongestByNet;
+        }
         LinePeakCandidate selected{};
         const int selectedSlot = current.selectedByRank >= 0 ? current.selectedByRank : current.strongestByNet;
         if (selectedSlot >= 0 && selectedSlot < current.count) {
             selected = current.peaks[static_cast<std::size_t>(selectedSlot)];
         }
-        previous = current;
+        previous = linePeakHistoryEnabled ? current : LinePeakTable{};
         return selected;
     }
 
@@ -605,9 +618,16 @@ private:
                                     const AxisEdgeGeometry& dim1Edge,
                                     const AxisEdgeGeometry& dim2Edge,
                                     int dim1GlobalOffset,
-                                    int dim2GlobalOffset) {
-        LinePeakCandidate dim1Peak = ProcessTx1LinePeakAxis(out.projection.dim1, m_prevLinePeaksDim1, dim1GlobalOffset);
-        LinePeakCandidate dim2Peak = ProcessTx1LinePeakAxis(out.projection.dim2, m_prevLinePeaksDim2, dim2GlobalOffset);
+                                    int dim2GlobalOffset,
+                                    bool linePeakHistoryEnabled) {
+        LinePeakCandidate dim1Peak = ProcessTx1LinePeakAxis(out.projection.dim1,
+                                                            m_prevLinePeaksDim1,
+                                                            dim1GlobalOffset,
+                                                            linePeakHistoryEnabled);
+        LinePeakCandidate dim2Peak = ProcessTx1LinePeakAxis(out.projection.dim2,
+                                                            m_prevLinePeaksDim2,
+                                                            dim2GlobalOffset,
+                                                            linePeakHistoryEnabled);
         out.projection.peakIdxDim1 = dim1Peak.peakIdx;
         out.projection.peakIdxDim2 = dim2Peak.peakIdx;
         out.dim1SelectedPeakNetSignal = static_cast<uint16_t>(std::clamp(dim1Peak.netSignal, 0, 0xFFFF));

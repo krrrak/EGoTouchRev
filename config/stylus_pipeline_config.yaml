@@ -3,6 +3,242 @@
 # Default values are authoritative from C++ constexpr definitions.
 
 keys:
+  - key: hpp2.enabled
+    display: "HPP2 Enabled"
+    type: bool
+    member: m_hpp2.m_enabled
+    default: true
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.sensorTxCount
+    display: "HPP2 Sensor TX Count"
+    type: int
+    member: m_hpp2.m_sensorTxCount
+    default: 60
+    min: 1
+    max: 100
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.sensorRxCount
+    display: "HPP2 Sensor RX Count"
+    type: int
+    member: m_hpp2.m_sensorRxCount
+    default: 40
+    min: 1
+    max: 100
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.cmfWindowRadius
+    display: "HPP2 CMF Window Radius"
+    type: int
+    member: m_hpp2.m_cmfWindowRadius
+    default: 6
+    min: 0
+    max: 32
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.rawAbnormalLineSumThreshold
+    display: "HPP2 Raw Abnormal Line Sum Threshold"
+    type: uint32
+    member: m_hpp2.m_rawAbnormalLineSumThreshold
+    default: 30000
+    min: 0
+    max: 2147483647
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.rawAbnormalEnergyRatioThreshold
+    display: "HPP2 Raw Abnormal Energy Ratio Threshold"
+    type: uint16
+    member: m_hpp2.m_rawAbnormalEnergyRatioThreshold
+    default: 200
+    min: 0
+    max: 65535
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.cmnAbnormalSumThreshold
+    display: "HPP2 CMN Abnormal Sum Threshold"
+    type: uint32
+    member: m_hpp2.m_cmnAbnormalSumThreshold
+    default: 9000
+    min: 0
+    max: 2147483647
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.cmnAbnormalMinThreshold
+    display: "HPP2 CMN Abnormal Min Threshold"
+    type: uint16
+    member: m_hpp2.m_cmnAbnormalMinThreshold
+    default: 2500
+    min: 0
+    max: 65535
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.chargerNoiseClearFloor
+    display: "HPP2 Charger Noise Clear Floor"
+    type: uint16
+    member: m_hpp2.m_chargerNoiseClearFloor
+    default: 20
+    min: 1
+    max: 65535
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.chargerNoiseRatioThreshold
+    display: "HPP2 Charger Noise Ratio Threshold"
+    type: uint16
+    member: m_hpp2.m_chargerNoiseRatioThreshold
+    default: 299
+    min: 0
+    max: 65535
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.chargerNoiseSumThreshold
+    display: "HPP2 Charger Noise Sum Threshold"
+    type: uint32
+    member: m_hpp2.m_chargerNoiseSumThreshold
+    default: 400
+    min: 0
+    max: 2147483647
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.chargerNoiseMaxSampleThreshold
+    display: "HPP2 Charger Noise Max Sample Threshold"
+    type: uint16
+    member: m_hpp2.m_chargerNoiseMaxSampleThreshold
+    default: 200
+    min: 0
+    max: 65535
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.chargerNoiseAbnormalChannelThreshold
+    display: "HPP2 Charger Noise Abnormal Channel Threshold"
+    type: uint8
+    member: m_hpp2.m_chargerNoiseAbnormalChannelThreshold
+    default: 2
+    min: 0
+    max: 255
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.chargerNoisePeakProtectRadius
+    display: "HPP2 Charger Noise Peak Protect Radius"
+    type: uint16
+    member: m_hpp2.m_chargerNoisePeakProtectRadius
+    default: 2
+    min: 0
+    max: 65535
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.chargerNoiseMinRawSample
+    display: "HPP2 Charger Noise Min Raw Sample"
+    type: uint16
+    member: m_hpp2.m_chargerNoiseMinRawSample
+    default: 50
+    min: 0
+    max: 65535
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.peakSignalFloor
+    display: "HPP2 Peak Signal Floor"
+    type: uint16
+    member: m_hpp2.m_peakSignalFloor
+    default: 250
+    min: 0
+    max: 65535
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.peakSearchNeighborDist
+    display: "HPP2 Peak Search Neighbor Dist"
+    type: int
+    member: m_hpp2.m_peakSearchNeighborDist
+    default: 2
+    min: 1
+    max: 16
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.peakMinWidth
+    display: "HPP2 Peak Min Width"
+    type: int
+    member: m_hpp2.m_peakMinWidth
+    default: 2
+    min: 1
+    max: 100
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.peakMaxWidth
+    display: "HPP2 Peak Max Width"
+    type: int
+    member: m_hpp2.m_peakMaxWidth
+    default: 20
+    min: 1
+    max: 100
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.pressureEdgeEnterThreshold
+    display: "HPP2 Pressure Edge Enter Threshold"
+    type: uint16
+    member: m_hpp2.m_pressureEdgeEnterThreshold
+    default: 1500
+    min: 0
+    max: 65535
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.pressureEdgeExitThreshold
+    display: "HPP2 Pressure Edge Exit Threshold"
+    type: uint16
+    member: m_hpp2.m_pressureEdgeExitThreshold
+    default: 3000
+    min: 0
+    max: 65535
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.pressureDeltaNormal
+    display: "HPP2 Pressure Delta Normal"
+    type: uint16
+    member: m_hpp2.m_pressureDeltaNormal
+    default: 1024
+    min: 0
+    max: 65535
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.pressureDeltaTight
+    display: "HPP2 Pressure Delta Tight"
+    type: uint16
+    member: m_hpp2.m_pressureDeltaTight
+    default: 64
+    min: 0
+    max: 65535
+    module: "HPP2"
+    release: active
+
+  - key: hpp2.useTightPressureDelta
+    display: "HPP2 Use Tight Pressure Delta"
+    type: bool
+    member: m_hpp2.m_useTightPressureDelta
+    default: false
+    module: "HPP2"
+    release: active
+
   - key: sp.frameParserEnabled
     display: "Frame Parser Enabled"
     type: bool

@@ -183,6 +183,7 @@ RuntimeConfigValueType ToRuntimeConfigValueType(Solvers::ConfigParam::Type type)
     case Solvers::ConfigParam::Int: return RuntimeConfigValueType::Int32;
     case Solvers::ConfigParam::UInt8: return RuntimeConfigValueType::UInt8;
     case Solvers::ConfigParam::UInt16: return RuntimeConfigValueType::UInt16;
+    case Solvers::ConfigParam::UInt32: return RuntimeConfigValueType::UInt32;
     case Solvers::ConfigParam::Float: return RuntimeConfigValueType::Float32;
     case Solvers::ConfigParam::Double: return RuntimeConfigValueType::Float64;
     case Solvers::ConfigParam::String: return RuntimeConfigValueType::String;
@@ -257,6 +258,9 @@ void AppendPipelineRuntimeConfig(DvrRuntimeConfigSnapshot& snapshot,
                 break;
             case Solvers::ConfigParam::UInt16:
                 rawValue = *static_cast<const uint16_t*>(param.valuePtr);
+                break;
+            case Solvers::ConfigParam::UInt32:
+                rawValue = *static_cast<const uint32_t*>(param.valuePtr);
                 break;
             case Solvers::ConfigParam::Float:
                 rawValue = PackFloat32(*static_cast<const float*>(param.valuePtr));

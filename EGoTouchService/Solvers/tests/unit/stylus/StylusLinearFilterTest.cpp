@@ -12,12 +12,29 @@
 #include <array>
 #include <cmath>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
 void Require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+void LoadFromSavedText(Solvers::StylusPipeline& pipeline, const std::string& saved) {
+    std::istringstream in(saved);
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty()) {
+            continue;
+        }
+        const auto eq = line.find('=');
+        if (eq == std::string::npos) {
+            continue;
+        }
+        pipeline.LoadConfig(line.substr(0, eq), line.substr(eq + 1));
+    }
 }
 
 Asa::AsaCoorResult Coor(int32_t dim1, int32_t dim2) {

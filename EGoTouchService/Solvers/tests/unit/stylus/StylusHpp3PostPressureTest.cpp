@@ -6,7 +6,9 @@
 #include <array>
 #include <cstdint>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -475,7 +477,16 @@ void TestConfigRoundTripIncludesPostPressure() {
             "saved config should contain BT pressure suppress exit threshold");
 
     Solvers::StylusPipeline restored;
-    LoadFromSavedText(restored, saved);
+    {
+        std::istringstream in(saved);
+        std::string line;
+        while (std::getline(in, line)) {
+            const auto eq = line.find('=');
+            if (eq != std::string::npos) {
+                restored.LoadConfig(line.substr(0, eq), line.substr(eq + 1));
+            }
+        }
+    }
 
     Require(!restored.m_hpp3.m_postPressure.m_enabled,
             "loaded config should restore post-pressure enable flag");

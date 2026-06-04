@@ -63,6 +63,7 @@ enum class Dvr2ConfigValueType : uint8_t {
     Float32 = 4,
     Float64 = 5,
     String = 6,
+    UInt32 = 7,
 };
 
 enum class Dvr2FieldRank : uint8_t {

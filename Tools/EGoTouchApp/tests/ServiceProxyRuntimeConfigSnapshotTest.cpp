@@ -102,6 +102,11 @@ void TestPipelineFieldsAndTypes() {
     touchPipeline.m_tracker.m_stylusSuppressPenPeakThreshold = 2468;
     touchPipeline.m_gesture.m_bypassStateMachine = true;
     stylusPipeline.m_hpp3.m_postPressure.m_btFreqShiftDebounceFrames = 2;
+    // Near-default non-default values verify UInt32 snapshot support without
+    // suggesting new production thresholds.
+    stylusPipeline.m_hpp2.m_rawAbnormalLineSumThreshold = 32000;
+    stylusPipeline.m_hpp2.m_cmnAbnormalSumThreshold = 9500;
+    stylusPipeline.m_hpp2.m_chargerNoiseSumThreshold = 450;
 
     const auto snapshot = App::BuildRuntimeConfigSnapshotFromState({}, {}, touchPipeline, stylusPipeline);
 
@@ -112,6 +117,9 @@ void TestPipelineFieldsAndTypes() {
     RequireMissingField(snapshot, "TouchPipeline", "BypassStateMachine");
     RequireRawValue(snapshot, "TouchPipeline", "BaselineNoFingerMaxStep", Dvr::Format::Dvr2ConfigValueType::Int32, 777);
     RequireRawValue(snapshot, "StylusPipeline", "sp.btFreqShiftDebounceFrames", Dvr::Format::Dvr2ConfigValueType::Int32, 2);
+    RequireRawValue(snapshot, "StylusPipeline", "hpp2.rawAbnormalLineSumThreshold", Dvr::Format::Dvr2ConfigValueType::UInt32, 32000);
+    RequireRawValue(snapshot, "StylusPipeline", "hpp2.cmnAbnormalSumThreshold", Dvr::Format::Dvr2ConfigValueType::UInt32, 9500);
+    RequireRawValue(snapshot, "StylusPipeline", "hpp2.chargerNoiseSumThreshold", Dvr::Format::Dvr2ConfigValueType::UInt32, 450);
 }
 
 void TestFieldIdsAreContiguousAndValuesAligned() {

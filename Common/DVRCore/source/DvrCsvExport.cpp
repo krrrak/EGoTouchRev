@@ -68,6 +68,9 @@ std::string FormatRuntimeConfigValue(const RuntimeConfigValue& value) {
     case DvrFmt::Dvr2ConfigValueType::UInt16:
         out << static_cast<unsigned int>(value.rawValue & 0xFFFFu);
         break;
+    case DvrFmt::Dvr2ConfigValueType::UInt32:
+        out << static_cast<uint32_t>(value.rawValue & 0xFFFFFFFFu);
+        break;
     case DvrFmt::Dvr2ConfigValueType::Float32: {
         const uint32_t bits = static_cast<uint32_t>(value.rawValue & 0xFFFFFFFFu);
         float fv = 0.0f;

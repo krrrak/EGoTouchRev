@@ -18,18 +18,20 @@ namespace StylusConfig {
 // ── GetConfigSchema ──
 std::vector<ConfigParam> GetConfigSchema(StylusPipelineMembers& m) {
     std::vector<ConfigParam> s;
-    s.reserve(62);
+    s.reserve(65);
 
-    // ── HPP2 Pipeline ──
+    // ── HPP2 ──
     s.emplace_back(kHpp2EnabledName, "HPP2 Enabled", ConfigParam::Bool, const_cast<bool*>(&m.hpp2->m_enabled)).Module("HPP2");
     s.emplace_back(kHpp2SensorTxCountName, "HPP2 Sensor TX Count", ConfigParam::Int, const_cast<int*>(&m.hpp2->m_sensorTxCount), 1, 100).Module("HPP2");
     s.emplace_back(kHpp2SensorRxCountName, "HPP2 Sensor RX Count", ConfigParam::Int, const_cast<int*>(&m.hpp2->m_sensorRxCount), 1, 100).Module("HPP2");
     s.emplace_back(kHpp2CmfWindowRadiusName, "HPP2 CMF Window Radius", ConfigParam::Int, const_cast<int*>(&m.hpp2->m_cmfWindowRadius), 0, 32).Module("HPP2");
-    // ConfigParam has no UInt32 type, so HPP2 uint32 thresholds are handled by SaveConfig/LoadConfig only.
+    s.emplace_back(kHpp2RawAbnormalLineSumThresholdName, "HPP2 Raw Abnormal Line Sum Threshold", ConfigParam::UInt32, const_cast<uint32_t*>(&m.hpp2->m_rawAbnormalLineSumThreshold), 0, 2147483647).Module("HPP2");
     s.emplace_back(kHpp2RawAbnormalEnergyRatioThresholdName, "HPP2 Raw Abnormal Energy Ratio Threshold", ConfigParam::UInt16, const_cast<uint16_t*>(&m.hpp2->m_rawAbnormalEnergyRatioThreshold), 0, 65535).Module("HPP2");
+    s.emplace_back(kHpp2CmnAbnormalSumThresholdName, "HPP2 CMN Abnormal Sum Threshold", ConfigParam::UInt32, const_cast<uint32_t*>(&m.hpp2->m_cmnAbnormalSumThreshold), 0, 2147483647).Module("HPP2");
     s.emplace_back(kHpp2CmnAbnormalMinThresholdName, "HPP2 CMN Abnormal Min Threshold", ConfigParam::UInt16, const_cast<uint16_t*>(&m.hpp2->m_cmnAbnormalMinThreshold), 0, 65535).Module("HPP2");
     s.emplace_back(kHpp2ChargerNoiseClearFloorName, "HPP2 Charger Noise Clear Floor", ConfigParam::UInt16, const_cast<uint16_t*>(&m.hpp2->m_chargerNoiseClearFloor), 1, 65535).Module("HPP2");
     s.emplace_back(kHpp2ChargerNoiseRatioThresholdName, "HPP2 Charger Noise Ratio Threshold", ConfigParam::UInt16, const_cast<uint16_t*>(&m.hpp2->m_chargerNoiseRatioThreshold), 0, 65535).Module("HPP2");
+    s.emplace_back(kHpp2ChargerNoiseSumThresholdName, "HPP2 Charger Noise Sum Threshold", ConfigParam::UInt32, const_cast<uint32_t*>(&m.hpp2->m_chargerNoiseSumThreshold), 0, 2147483647).Module("HPP2");
     s.emplace_back(kHpp2ChargerNoiseMaxSampleThresholdName, "HPP2 Charger Noise Max Sample Threshold", ConfigParam::UInt16, const_cast<uint16_t*>(&m.hpp2->m_chargerNoiseMaxSampleThreshold), 0, 65535).Module("HPP2");
     s.emplace_back(kHpp2ChargerNoiseAbnormalChannelThresholdName, "HPP2 Charger Noise Abnormal Channel Threshold", ConfigParam::UInt8, const_cast<uint8_t*>(&m.hpp2->m_chargerNoiseAbnormalChannelThreshold), 0, 255).Module("HPP2");
     s.emplace_back(kHpp2ChargerNoisePeakProtectRadiusName, "HPP2 Charger Noise Peak Protect Radius", ConfigParam::UInt16, const_cast<uint16_t*>(&m.hpp2->m_chargerNoisePeakProtectRadius), 0, 65535).Module("HPP2");
@@ -196,6 +198,7 @@ void LoadConfig(StylusPipelineMembers& m, const std::string& key, const std::str
         else if (key == kHpp2RawAbnormalLineSumThresholdName) {
             int v = ParseConfigInt(key, value);
             if (v < 0) v = 0;
+            if (v > 2147483647) v = 2147483647;
             m.hpp2->m_rawAbnormalLineSumThreshold = static_cast<uint32_t>(v);
         }
         else if (key == kHpp2RawAbnormalEnergyRatioThresholdName) {
@@ -207,6 +210,7 @@ void LoadConfig(StylusPipelineMembers& m, const std::string& key, const std::str
         else if (key == kHpp2CmnAbnormalSumThresholdName) {
             int v = ParseConfigInt(key, value);
             if (v < 0) v = 0;
+            if (v > 2147483647) v = 2147483647;
             m.hpp2->m_cmnAbnormalSumThreshold = static_cast<uint32_t>(v);
         }
         else if (key == kHpp2CmnAbnormalMinThresholdName) {
@@ -230,6 +234,7 @@ void LoadConfig(StylusPipelineMembers& m, const std::string& key, const std::str
         else if (key == kHpp2ChargerNoiseSumThresholdName) {
             int v = ParseConfigInt(key, value);
             if (v < 0) v = 0;
+            if (v > 2147483647) v = 2147483647;
             m.hpp2->m_chargerNoiseSumThreshold = static_cast<uint32_t>(v);
         }
         else if (key == kHpp2ChargerNoiseMaxSampleThresholdName) {

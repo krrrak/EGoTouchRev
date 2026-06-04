@@ -167,7 +167,7 @@ bool RuntimeConfigSchemaHasUniqueFields(const std::vector<RuntimeConfigField>& f
 }
 
 bool IsValidRuntimeConfigValueType(uint8_t valueType) {
-    return valueType <= static_cast<uint8_t>(DvrFmt::Dvr2ConfigValueType::String);
+    return valueType <= static_cast<uint8_t>(DvrFmt::Dvr2ConfigValueType::UInt32);
 }
 
 uint64_t FieldExtent(const Dvr2FieldDef& field) {

@@ -64,9 +64,17 @@ void TestHpp2EdgePressureGuardSuppressesPressure() {
 
 void TestHpp2AbnormalRawRejects() {
     Solvers::StylusPipeline pipeline;
+
+    // Frame 1: warmup to populate line sum history.
+    // Without history, energyRatioPrev returns 100 (div-by-zero guard),
+    // which is below the 200 threshold required for rawAbnormal.
+    HeatmapFrame warmup = MakeHpp2Frame(12, 7, 2600, 2400, 512);
+    pipeline.Process(warmup);
+
+    // Frame 2: fill all 100 samples with 1000.
+    // rawLineSum = 100 * 1000 = 100000 > 30000 threshold.
+    // energyRatioPrev = 100000 * 100 / warmupLineSum ≈ much > 200.
     HeatmapFrame frame = MakeHpp2Frame(12, 7, 2600, 2400, 512);
-    // Fill all 100 samples with 1000 to trigger rawAbnormal:
-    // rawLineSum = 100 * 1000 = 100000 > 30000 threshold
     frame.stylus.input.hpp2LineData.fill(1000);
 
     pipeline.Process(frame);

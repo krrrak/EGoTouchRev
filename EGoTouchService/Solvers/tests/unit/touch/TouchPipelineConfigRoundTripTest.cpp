@@ -258,8 +258,8 @@ void TestInvalidConfigValuesAreIgnored() {
 
     Solvers::StylusPipeline stylus;
     stylus.m_hpp3.m_postPressure.m_btFreqShiftDebounceFrames = 12;
-    stylus.m_hpp3.m_aftCoorProcess.m_sensorTxCount = 40;
-    stylus.m_hpp3.m_aftCoorProcess.m_bypassLock = true;
+    stylus.m_commonPost.m_aftCoorProcess.m_sensorTxCount = 40;
+    stylus.m_commonPost.m_aftCoorProcess.m_bypassLock = true;
 
     stylus.LoadConfig("sp.btFreqShiftDebounceFrames", "999999999999999999999");
     stylus.LoadConfig("sp.lockSensorTxCount", "abc");
@@ -267,9 +267,9 @@ void TestInvalidConfigValuesAreIgnored() {
 
     Require(stylus.m_hpp3.m_postPressure.m_btFreqShiftDebounceFrames == 12,
             "out-of-range stylus integer config should preserve current value");
-    Require(stylus.m_hpp3.m_aftCoorProcess.m_sensorTxCount == 40,
+    Require(stylus.m_commonPost.m_aftCoorProcess.m_sensorTxCount == 40,
             "invalid stylus integer config should preserve current value");
-    Require(stylus.m_hpp3.m_aftCoorProcess.m_bypassLock,
+    Require(stylus.m_commonPost.m_aftCoorProcess.m_bypassLock,
             "invalid stylus boolean config should preserve current value");
 }
 

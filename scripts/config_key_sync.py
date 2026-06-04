@@ -59,7 +59,7 @@ class ConfigKeyDef:
     """单个配置键的完整定义。"""
     key: str
     display: str = ""
-    type: str = "int"                     # int | float | bool | uint8 | uint16
+    type: str = "int"                     # int | float | bool | uint8 | uint16 | uint32
     member: str = ""                      # C++ 成员字段路径
     default_raw: Optional[str] = None     # YAML 中的默认值字符串
     default_cpp: Optional[str] = None     # 从 C++ constexpr 提取的默认值
@@ -89,7 +89,7 @@ class ConfigKeyDef:
     @property
     def cpp_type(self) -> str:
         """映射到 C++ 类型名。"""
-        return {"int": "int", "float": "float", "bool": "bool", "uint8": "uint8_t", "uint16": "uint16_t"}.get(self.type, "int")
+        return {"int": "int", "float": "float", "bool": "bool", "uint8": "uint8_t", "uint16": "uint16_t", "uint32": "uint32_t"}.get(self.type, "int")
 
     @property
     def cpp_constexpr_name(self) -> str:
@@ -312,7 +312,7 @@ def parse_cpp_extract_keys(cpp_paths: list[Path]) -> dict[str, ConfigKeyDef]:
             display = m.group(3)
             type_str = m.group(4).lower()
             # ConfigParam::Bool → bool, ConfigParam::Int → int, etc.
-            type_map = {"bool": "bool", "int": "int", "float": "float", "uint8": "uint8", "uint16": "uint16"}
+            type_map = {"bool": "bool", "int": "int", "float": "float", "uint8": "uint8", "uint16": "uint16", "uint32": "uint32"}
             k = _ensure_key(keys, key_name)
             k.in_cpp_schema = True
             if display and display != key_name:
@@ -335,11 +335,11 @@ def parse_cpp_extract_keys(cpp_paths: list[Path]) -> dict[str, ConfigKeyDef]:
 
         # ── 5. 提取 constexpr 默认值 (来自生成的 ConfigKeys.h) ──
         for m in re.finditer(
-            r'constexpr\s+(int|float|bool|uint8_t|uint16_t)\s+k(\w+)\s*=\s*([^;]+);',
+            r'constexpr\s+(int|float|bool|uint8_t|uint16_t|uint32_t)\s+k(\w+)\s*=\s*([^;]+);',
             content
         ):
             key_name = name_constants.get(m.group(2), m.group(2))
-            cpp_type = {"uint8_t": "uint8", "uint16_t": "uint16"}.get(m.group(1), m.group(1))
+            cpp_type = {"uint8_t": "uint8", "uint16_t": "uint16", "uint32_t": "uint32"}.get(m.group(1), m.group(1))
             default_val = m.group(3).strip()
             # 去除可能的类型转换 (如 static_cast<int>(true))
             default_val = re.sub(r'static_cast<\w+>\((.*?)\)', r'\1', default_val)
@@ -350,11 +350,11 @@ def parse_cpp_extract_keys(cpp_paths: list[Path]) -> dict[str, ConfigKeyDef]:
 
         # ── 5b. 也搜索 constexpr 在命名空间内的形式 ──
         for m in re.finditer(
-            r'constexpr\s+(int|float|bool|uint8_t|uint16_t)\s+(\w+)\s*=\s*([^;]+);',
+            r'constexpr\s+(int|float|bool|uint8_t|uint16_t|uint32_t)\s+(\w+)\s*=\s*([^;]+);',
             content
         ):
             key_name = name_constants.get(m.group(2), m.group(2))
-            cpp_type = {"uint8_t": "uint8", "uint16_t": "uint16"}.get(m.group(1), m.group(1))
+            cpp_type = {"uint8_t": "uint8", "uint16_t": "uint16", "uint32_t": "uint32"}.get(m.group(1), m.group(1))
             default_val = m.group(3).strip()
             default_val = re.sub(r'static_cast<\w+>\((.*?)\)', r'\1', default_val)
             if key_name in keys:
@@ -672,6 +672,7 @@ def generate_config_source(keys: list[ConfigKeyDef], module_name: str) -> str:
 
 def _stylus_member_expr(member: str) -> str:
     root_map = {
+        "m_hpp2": "hpp2",
         "m_frameParser": "frameParser",
         "m_featureExtractor": "featureExtractor",
         "m_coordinateSolver": "coordinateSolver",
@@ -711,6 +712,9 @@ def _generate_stylus_config_header(keys: list[ConfigKeyDef], module_name: str) -
         "namespace Solvers {",
         "struct ConfigParam;",
         "namespace Stylus {",
+        "namespace Hpp2 {",
+        "class Pipeline;",
+        "} // namespace Hpp2",
         "class StylusFrameParser;",
         "class GridFeatureExtractor;",
         "class CoordinateSolver;",
@@ -744,6 +748,7 @@ def _generate_stylus_config_header(keys: list[ConfigKeyDef], module_name: str) -
         "#if EGOTOUCH_CONFIG_ENABLED",
         "",
         "struct StylusPipelineMembers {",
+        "    Stylus::Hpp2::Pipeline* hpp2;",
         "    Stylus::StylusFrameParser* frameParser;",
         "    Stylus::GridFeatureExtractor* featureExtractor;",
         "    Stylus::CoordinateSolver* coordinateSolver;",
@@ -775,8 +780,9 @@ def _generate_stylus_config_header(keys: list[ConfigKeyDef], module_name: str) -
 
 def _generate_stylus_config_source(keys: list[ConfigKeyDef], module_name: str) -> str:
     active_keys = [k for k in keys if k.release == "active" and k.member]
-    type_enum = {"int": "Int", "float": "Float", "bool": "Bool", "uint8": "UInt8", "uint16": "UInt16"}
+    type_enum = {"int": "Int", "float": "Float", "bool": "Bool", "uint8": "UInt8", "uint16": "UInt16", "uint32": "UInt32"}
     reset_on_false = {
+        "hpp2.enabled": "m.hpp2->ResetOnTerminal();",
         "sp.tiltProcessEnabled": "m.tiltProcess->Reset();",
         "sp.postPressureEnabled": "m.postPressure->Reset();",
         "sp.edgeCoorEnabled": "m.edgeCoorProcess->Reset();",
@@ -854,7 +860,7 @@ def _generate_stylus_config_source(keys: list[ConfigKeyDef], module_name: str) -
                     lines.append(f"            if (v < {_to_cpp_range_literal(k.min_val)}) v = {_to_cpp_range_literal(k.min_val)};")
                 if k.max_val is not None:
                     lines.append(f"            if (v > {_to_cpp_range_literal(k.max_val)}) v = {_to_cpp_range_literal(k.max_val)};")
-                if k.type in ("uint8", "uint16"):
+                if k.type in ("uint8", "uint16", "uint32"):
                     lines.append(f"            {member} = static_cast<{k.cpp_type}>(v);")
                 else:
                     lines.append(f"            {member} = v;")
@@ -939,7 +945,7 @@ def _to_cpp_literal(value: str, type_str: str) -> str:
         return "true" if v in ("true", "1", "yes") else "false"
     elif type_str == "float":
         return value.rstrip('f') + 'f'
-    elif type_str in ("uint8", "uint16"):
+    elif type_str in ("uint8", "uint16", "uint32"):
         return value
     else:
         return value

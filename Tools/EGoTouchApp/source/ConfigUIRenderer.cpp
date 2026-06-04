@@ -72,6 +72,10 @@ void ConfigUIRenderer::RenderConfigSchema(
                 RenderUnsignedInt<std::uint16_t>(label, param, 0xFFFF);
                 break;
 
+            case Solvers::ConfigParam::UInt32:
+                RenderUnsignedInt<std::uint32_t>(label, param, 0x7FFFFFFF);
+                break;
+
             case Solvers::ConfigParam::Float: {
                 float* ptr = static_cast<float*>(param.valuePtr);
                 if (param.maxVal > param.minVal) {
@@ -144,6 +148,10 @@ void ConfigUIRenderer::RenderConfigSchemaByModule(
 
             case Solvers::ConfigParam::UInt16:
                 RenderUnsignedInt<std::uint16_t>(label, param, 0xFFFF);
+                break;
+
+            case Solvers::ConfigParam::UInt32:
+                RenderUnsignedInt<std::uint32_t>(label, param, 0x7FFFFFFF);
                 break;
 
             case Solvers::ConfigParam::Float: {
