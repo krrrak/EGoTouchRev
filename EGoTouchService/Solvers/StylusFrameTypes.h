@@ -58,6 +58,17 @@ struct StylusInputSnapshot {
     bool tx1BlockValid = false;
     bool tx2BlockValid = false;
     uint32_t status = 0;
+
+    // HPP2 protocol/scalar fields mirror TSACore stylusFrame. They are zero
+    // until the frame bridge/parser starts exposing line-mode stylus payloads.
+    uint32_t auxStatusFlags = 0;
+    uint16_t mainFreq = 0;
+    uint16_t auxFreq = 0;
+    uint16_t framePressure = 0;
+    uint32_t buttonBits = 0;
+    bool hpp2LineValid = false;
+    std::array<uint16_t, 100> hpp2LineData{}; // 60 TX + 40 RX for current preset
+
     StylusBtInputSnapshot btSample{};
 };
 
@@ -107,6 +118,34 @@ struct StylusRuntimeParse {
 
 struct StylusRuntimeRawGrid {
     Asa::AsaGridData asaGrid{};
+};
+
+struct StylusRuntimeHpp2LineProfile {
+    static constexpr int kMaxSamples = 100;
+    static constexpr int kHistorySize = 10;
+
+    std::array<uint16_t, kMaxSamples> raw{};
+    std::array<uint16_t, kMaxSamples> cmnBaseline{};
+    std::array<uint16_t, kMaxSamples> cmnSubtracted{};
+    std::array<uint32_t, kHistorySize> lineSumHistory{};
+};
+
+struct StylusRuntimeHpp2 {
+    StylusRuntimeHpp2LineProfile line{};
+    uint32_t rawLineSum = 0;
+    uint16_t mainFreq = 0;
+    uint16_t auxFreq = 0;
+    uint16_t rawPressure = 0;
+    uint32_t buttonBits = 0;
+    uint16_t energyRatioPrev = 100;
+    uint16_t energyRatioPrev2 = 100;
+    bool rawAbnormal = false;
+    bool cmnAbnormal = false;
+    bool bypassCurFrame = false;
+    uint8_t selectedPeakDim1 = 0xff;
+    uint8_t selectedPeakDim2 = 0xff;
+    bool buttonPressed = false;
+    uint8_t buttonReleaseFrames = 0;
 };
 
 struct StylusGridFeature {
@@ -275,6 +314,7 @@ struct StylusRuntimeFrame {
     StylusRuntimeFlow flow{};
     StylusRuntimeParse parse{};
     StylusRuntimeRawGrid rawGrid{};
+    StylusRuntimeHpp2 hpp2{};
     StylusTxRuntime tx1{};
     StylusTxRuntime tx2{};
     StylusRuntimeSignal signal{};

@@ -1,7 +1,10 @@
 #pragma once
 
 #include "ConfigSchema.h"
+#include "hpp2/Hpp2Pipeline.h"
 #include "hpp3/Hpp3Pipeline.h"
+#include "shared/CommonStylusPostPipeline.h"
+#include "shared/EdgeCoorProcess.hpp"
 #include "shared/StylusFrameParser.hpp"
 #include "StylusRuntimeCommit.hpp"
 #include "SolverTypes.h"
@@ -35,11 +38,14 @@ public:
     bool GetEmitPacketWhenInvalid() const { return true; }
 
     // ── Shared / protocol-agnostic stages ──
-    Stylus::StylusFrameParser    m_frameParser;     // shared/
-    Stylus::StylusRuntimeCommit  m_commit;           // root
+    Stylus::StylusFrameParser          m_frameParser;      // shared/
+    Stylus::EdgeCoorProcess            m_edgeCoorProcess;  // shared state used by HPP2/HPP3
+    Stylus::CommonStylusPostPipeline   m_commonPost;       // shared ASA_CoorPostProcess tail
+    Stylus::StylusRuntimeCommit        m_commit;           // root
 
     // ── Protocol-specific sub-pipelines ──
-    Stylus::Hpp3::Pipeline       m_hpp3;             // hpp3/
+    Stylus::Hpp2::Pipeline             m_hpp2;             // hpp2/
+    Stylus::Hpp3::Pipeline             m_hpp3;             // hpp3/
 
 private:
     void FinalizeTerminalFrame(HeatmapFrame& frame);

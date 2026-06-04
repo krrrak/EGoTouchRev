@@ -1,16 +1,10 @@
 #pragma once
 
-#include "shared/EdgeCoorProcess.hpp"
-#include "AftCoorProcess.hpp"
-#include "CoorIIRProcess.hpp"
-#include "CoorReviseProcess.hpp"
-#include "CoorSpeedProcess.hpp"
 #include "CoordinateSolver.hpp"
 #include "EdgeCoorPostProcess.hpp"
 #include "GridFeatureExtractor.hpp"
 #include "Hpp3NoisePostProcess.hpp"
 #include "Hpp3PostPressureProcess.hpp"
-#include "LinearFilterProcess.hpp"
 #include "PressureSolver.hpp"
 #include "TiltProcess.hpp"
 #include "SolverTypes.h"
@@ -19,39 +13,26 @@ namespace Solvers::Stylus::Hpp3 {
 
 // HPP3 Pipeline — Grid-mode stylus data processing.
 //
-// Encapsulates the full HPP3 (Grid protocol) post-processing chain as a single
-// value-semantic aggregate.  The containing StylusPipeline dispatches to this
-// when the frame carries HPP3 protocol flags.
+// Encapsulates HPP3-only stages. Shared stateful stages that TSACore routes
+// through ASA_CoorPostProcess (edge carry, linear/coor revise/speed/IIR/AFT)
+// live in the containing StylusPipeline so HPP2 can reuse them.
 //
 // Process() returns false on a terminal frame (no valid stylus signal); the
 // caller is responsible for shared cleanup and commit.
-
 class Pipeline {
 public:
     bool m_enabled = true;
 
-    // ── Pipeline stages (public for ConfigKeys / direct access) ──
-
+    // ── HPP3-specific stages (public for ConfigKeys / direct access) ──
     GridFeatureExtractor     m_featureExtractor;
     CoordinateSolver         m_coordinateSolver;
     TiltProcess              m_tiltProcess;
     PressureSolver           m_pressureSolver;
     Hpp3PostPressureProcess  m_postPressure;
-    EdgeCoorProcess          m_edgeCoorProcess;   // shared/ impl, but called mid-HPP3
     EdgeCoorPostProcess      m_edgeCoorPostProcess;
     Hpp3NoisePostProcess     m_noisePostProcess;
-    LinearFilterProcess      m_linearFilterProcess;
-    CoorReviseProcess        m_coorReviseProcess;
-    CoorSpeedProcess         m_coorSpeedProcess;
-    CoorIIRProcess           m_coorIIRProcess;
-    AftCoorProcess           m_aftCoorProcess;
 
-    // ── Main entry point ──
-    //
-    // Runs the full HPP3 pipeline from feature extraction through final
-    // coordinate filtering.  Returns false when a terminal condition is
-    // detected (stylus not present / parse failure); the caller should
-    // call FinalizeTerminalFrame-style cleanup and commit.
+    // ── Main HPP3 entry point before shared edge/common post ──
     bool Process(HeatmapFrame& frame) {
         auto& runtime = frame.stylus.runtime;
         auto& flow = runtime.flow;
@@ -81,36 +62,19 @@ public:
         m_pressureSolver.Process(frame);
         m_postPressure.Process(frame);
 
-        // ── Stage 5: Shared edge-coordinate detection ──
-        m_edgeCoorProcess.Process(frame);
+        return true;  // non-terminal; caller runs shared edge/common post
+    }
 
-        // ── Stage 6: Coordinate post-processing chain ──
+    // ── HPP3-only hook after shared EdgeCoorProcess ──
+    void ProcessAfterSharedEdge(HeatmapFrame& frame) {
         m_edgeCoorPostProcess.Process(frame);
-        m_linearFilterProcess.Process(frame);
-        m_coorReviseProcess.Process(frame);
-        m_coorSpeedProcess.Process(frame);
-        m_coorIIRProcess.Process(frame);
-        m_aftCoorProcess.Process(frame);
-
-        return true;  // non-terminal
     }
 
-    // ── End-of-pipeline hook (called after HPP3 processing succeeds) ──
-    void CaptureFinal(StylusRuntimeFrame& runtime) {
-        m_edgeCoorProcess.CaptureFinal(runtime);
-    }
-
-    // ── Reset all HPP3 internal state on terminal transition ──
+    // ── Reset HPP3-specific internal state on terminal transition ──
     void ResetOnTerminal() {
         m_tiltProcess.Reset();
         m_postPressure.Reset();
-        m_edgeCoorProcess.Reset();
         m_edgeCoorPostProcess.Reset();
-        m_linearFilterProcess.Reset();
-        m_coorReviseProcess.Reset();
-        m_coorSpeedProcess.Reset();
-        m_coorIIRProcess.Reset();
-        m_aftCoorProcess.Reset();
     }
 };
 

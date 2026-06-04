@@ -43,6 +43,10 @@ public:
             return true;
         }
 
+        if (TryProcessFromHpp2Input(frame, priorInput)) {
+            return true;
+        }
+
         if (frame.rawPtr == nullptr) {
             if (TryProcessFromSlaveSuffix(frame, priorInput)) {
                 return true;
@@ -142,6 +146,35 @@ public:
     }
 
 private:
+    static inline bool TryProcessFromHpp2Input(HeatmapFrame& frame,
+                                               const StylusInputSnapshot& priorInput) {
+        const bool isHpp2 = (priorInput.auxStatusFlags & 0x1u) != 0 &&
+                            (priorInput.auxStatusFlags & 0x2u) == 0;
+        if (!isHpp2 || !priorInput.hpp2LineValid) {
+            return false;
+        }
+
+        auto& stylus = frame.stylus;
+        auto& flow = stylus.runtime.flow;
+        auto& parse = stylus.runtime.parse;
+
+        stylus.input.auxStatusFlags = priorInput.auxStatusFlags;
+        stylus.input.mainFreq = priorInput.mainFreq;
+        stylus.input.auxFreq = priorInput.auxFreq;
+        stylus.input.framePressure = priorInput.framePressure;
+        stylus.input.buttonBits = priorInput.buttonBits;
+        stylus.input.hpp2LineValid = priorInput.hpp2LineValid;
+        stylus.input.hpp2LineData = priorInput.hpp2LineData;
+
+        parse.valid = true;
+        parse.slaveValid = false;
+        parse.checksumOk = true;
+        parse.hasCurrentStylusSignal = true;
+        flow.terminal = false;
+        flow.frameClass = Asa::StylusFrameClass::Valid;
+        return true;
+    }
+
     static inline bool TryProcessFromSlaveSuffix(HeatmapFrame& frame,
                                                  const StylusInputSnapshot& priorInput) {
         if (!frame.slaveSuffixValid) return false;

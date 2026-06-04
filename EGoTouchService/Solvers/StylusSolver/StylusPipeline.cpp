@@ -15,14 +15,14 @@ Solvers::StylusConfig::StylusPipelineMembers MakeConfigMembers(Solvers::StylusPi
     m.tiltProcess = &p.m_hpp3.m_tiltProcess;
     m.pressureSolver = &p.m_hpp3.m_pressureSolver;
     m.postPressure = &p.m_hpp3.m_postPressure;
-    m.edgeCoorProcess = &p.m_hpp3.m_edgeCoorProcess;
+    m.edgeCoorProcess = &p.m_edgeCoorProcess;
     m.edgeCoorPostProcess = &p.m_hpp3.m_edgeCoorPostProcess;
     m.noisePostProcess = &p.m_hpp3.m_noisePostProcess;
-    m.linearFilterProcess = &p.m_hpp3.m_linearFilterProcess;
-    m.coorReviseProcess = &p.m_hpp3.m_coorReviseProcess;
-    m.coorSpeedProcess = &p.m_hpp3.m_coorSpeedProcess;
-    m.coorIIRProcess = &p.m_hpp3.m_coorIIRProcess;
-    m.aftCoorProcess = &p.m_hpp3.m_aftCoorProcess;
+    m.linearFilterProcess = &p.m_commonPost.m_linearFilterProcess;
+    m.coorReviseProcess = &p.m_commonPost.m_coorReviseProcess;
+    m.coorSpeedProcess = &p.m_commonPost.m_coorSpeedProcess;
+    m.coorIIRProcess = &p.m_commonPost.m_coorIIRProcess;
+    m.aftCoorProcess = &p.m_commonPost.m_aftCoorProcess;
     return m;
 }
 #endif
@@ -41,27 +41,49 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
         return true;
     }
 
-    // ── HPP3: feature extraction → coordinate → post-processing ──
-    if (!m_hpp3.Process(frame)) {
-        FinalizeTerminalFrame(frame);
-        return true;
+    const uint32_t auxStatusFlags = frame.stylus.input.auxStatusFlags;
+    const bool isHpp2 = (auxStatusFlags & 0x1u) != 0 && (auxStatusFlags & 0x2u) == 0;
+
+    if (isHpp2) {
+        if (!m_hpp2.Process(frame)) {
+            FinalizeTerminalFrame(frame);
+            return true;
+        }
+    } else {
+        // ── HPP3: feature extraction → pressure ────────────────────
+        // Preserve the existing HPP3 path when auxStatusFlags is still zero;
+        // the current shared parser does not expose TSACore stylusFrame flags yet.
+        if (!m_hpp3.Process(frame)) {
+            FinalizeTerminalFrame(frame);
+            return true;
+        }
     }
 
     m_lastFrameWasTerminal = false;
-    m_hpp3.CaptureFinal(frame.stylus.runtime);
+
+    // ── Shared / common post-processing tail ───────────────────────
+    m_edgeCoorProcess.Process(frame);
+    if (!isHpp2) {
+        m_hpp3.ProcessAfterSharedEdge(frame);
+    }
+    m_commonPost.Process(frame);
+    m_edgeCoorProcess.CaptureFinal(frame.stylus.runtime);
     m_commit.Commit(frame);
     return true;
 }
 
 void StylusPipeline::FinalizeTerminalFrame(HeatmapFrame& frame) {
     if (!m_lastFrameWasTerminal) {
+        m_hpp2.ResetOnTerminal();
         m_hpp3.ResetOnTerminal();
+        m_edgeCoorProcess.Reset();
+        m_commonPost.ResetOnTerminal();
     }
     m_lastFrameWasTerminal = true;
 #if EGOTOUCH_DIAG
     frame.stylus.runtime.ResetDiagnosticFields();
 #endif
-    m_hpp3.CaptureFinal(frame.stylus.runtime);
+    m_edgeCoorProcess.CaptureFinal(frame.stylus.runtime);
     m_commit.Commit(frame);
 }
 

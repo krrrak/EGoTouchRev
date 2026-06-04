@@ -73,6 +73,9 @@ ego_add_solvers_unit(SolversUnit_StylusLinearFilter stylus
 ego_add_solvers_unit(SolversUnit_StylusHpp3PostPressure stylus
     unit/stylus/StylusHpp3PostPressureTest.cpp
 )
+ego_add_solvers_unit(SolversUnit_StylusHpp2Pipeline stylus
+    unit/stylus/StylusHpp2PipelineTest.cpp
+)
 
 ego_add_solvers_perf(SolversPerf_RawdataBenchmark
     perf/RawdataBenchmark.cpp
