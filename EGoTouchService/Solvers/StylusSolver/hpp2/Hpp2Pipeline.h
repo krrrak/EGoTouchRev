@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace Solvers::Stylus::Hpp2 {
@@ -33,8 +34,15 @@ public:
     int m_cmfWindowRadius = 6;
     uint32_t m_rawAbnormalLineSumThreshold = 30000;
     uint16_t m_rawAbnormalEnergyRatioThreshold = 200;
-    uint32_t m_cmnAbnormalSumThreshold = 9000;
-    uint16_t m_cmnAbnormalMinThreshold = 0x09c4;
+    uint32_t m_cmnAbnormalSumThreshold = 9000;        // TSAPrmt: HPP2 CMN abnormal sum gate.
+    uint16_t m_cmnAbnormalMinThreshold = 0x09c4;      // TSAPrmt: HPP2 CMN minimum channel gate.
+    uint16_t m_chargerNoiseClearFloor = 20;           // TSAPrmt: ChargerNoiseJudge clear-frame denominator floor.
+    uint16_t m_chargerNoiseRatioThreshold = 299;      // TSAPrmt: ChargerNoiseJudge ratio must be > 299.
+    uint32_t m_chargerNoiseSumThreshold = 400;        // TSAPrmt: ChargerNoiseJudge accumulated noise sum must be > 400.
+    uint16_t m_chargerNoiseMaxSampleThreshold = 200;  // TSAPrmt: ChargerNoiseJudge max noise sample must be > 200.
+    uint8_t m_chargerNoiseAbnormalChannelThreshold = 2; // TSAPrmt: ChargerNoiseJudge abnormal count must be > 2.
+    uint16_t m_chargerNoisePeakProtectRadius = 2;     // TSAPrmt: IndexValidation peak-neighbor exclusion radius.
+    uint16_t m_chargerNoiseMinRawSample = 50;         // TSAPrmt: IndexValidation ignores raw samples below 0x32.
     uint16_t m_peakSignalFloor = 250;
     uint16_t m_pressureEdgeEnterThreshold = 1500;
     uint16_t m_pressureEdgeExitThreshold = 3000;
@@ -93,6 +101,18 @@ public:
         m_wasInRange = false;
         m_freqNoiseLatchF1 = false;
         m_freqNoiseLatchF2 = false;
+        m_rawHistory = {};
+        m_noiseSum.fill(0);
+        m_noiseFlag.fill(0);
+        m_noiseSumHistory = {};
+        m_noiseFlagHistory = {};
+        m_curFreqIdx = 0;
+        m_f1FrameCnt = 0;
+        m_f2FrameCnt = 0;
+        m_energyRatioF1 = 100;
+        m_energyRatioF2 = 100;
+        m_prevPeakDim1ByFreq.fill(kInvalidPeak);
+        m_prevPeakDim2ByFreq.fill(kInvalidPeak);
         m_cmnSum.fill(0);
         m_cmnMin.fill(0xffff);
     }
@@ -100,11 +120,22 @@ public:
 private:
     static constexpr int kMaxSamples = StylusRuntimeHpp2LineProfile::kMaxSamples;
     static constexpr int kHistorySize = StylusRuntimeHpp2LineProfile::kHistorySize;
+    static constexpr int kNumRawHistoryFrames = 10;
     static constexpr uint16_t kFreqF1 = 0x00b0;
     static constexpr uint16_t kFreqF2 = 0x00fc;
     static constexpr int kInvalidPeak = 0xff;
 
     std::array<uint32_t, kHistorySize> m_lineSumHistory{};
+    std::array<std::array<std::array<uint16_t, kMaxSamples>, kNumRawHistoryFrames>, 2> m_rawHistory{}; // [freqIdx][frame][sample]
+    std::array<uint32_t, 2> m_noiseSum{};
+    std::array<uint8_t, 2> m_noiseFlag{};
+    std::array<std::array<uint32_t, kNumRawHistoryFrames>, 2> m_noiseSumHistory{};
+    std::array<std::array<uint8_t, kNumRawHistoryFrames>, 2> m_noiseFlagHistory{};
+    uint8_t m_curFreqIdx = 0;
+    int m_f1FrameCnt = 0;
+    int m_f2FrameCnt = 0;
+    uint16_t m_energyRatioF1 = 100;
+    uint16_t m_energyRatioF2 = 100;
     std::array<uint32_t, 2> m_cmnSum{};
     std::array<uint16_t, 2> m_cmnMin{{0xffff, 0xffff}};
     uint16_t m_prevPressure = 0;
@@ -113,6 +144,8 @@ private:
     bool m_wasInRange = false;
     bool m_freqNoiseLatchF1 = false;
     bool m_freqNoiseLatchF2 = false;
+    std::array<uint8_t, 2> m_prevPeakDim1ByFreq{{kInvalidPeak, kInvalidPeak}};
+    std::array<uint8_t, 2> m_prevPeakDim2ByFreq{{kInvalidPeak, kInvalidPeak}};
 
     static constexpr std::array<double, 4> kPitchCompDim1{{
         0.0, -1.7109151490662926, 0.005959771652221362, -5.113555667385272e-06}};
@@ -138,6 +171,7 @@ private:
         hpp2.auxFreq = input.auxFreq;
         hpp2.rawPressure = input.framePressure;
         hpp2.buttonBits = input.buttonBits;
+        m_curFreqIdx = (hpp2.mainFreq == kFreqF1) ? 0 : 1;
 
         const int count = SampleCount();
         uint32_t sum = 0;
@@ -154,8 +188,15 @@ private:
         }
         m_lineSumHistory[0] = sum;
         hpp2.line.lineSumHistory = m_lineSumHistory;
-        hpp2.energyRatioPrev = RatioToHistory(sum, 1);
+        hpp2.energyRatioPrev = RatioToHistory(sum, 1);  // Mirrors pPeakFlagMap[0xdf0].
         hpp2.energyRatioPrev2 = RatioToHistory(sum, 2);
+        if (m_curFreqIdx == 0) {
+            m_energyRatioF1 = hpp2.energyRatioPrev2;     // Mirrors pPeakFlagMap[0xdf2].
+        } else {
+            m_energyRatioF2 = hpp2.energyRatioPrev2;     // Mirrors pPeakFlagMap[0xdf4].
+        }
+        hpp2.energyRatioF1Prev2 = m_energyRatioF1;
+        hpp2.energyRatioF2Prev2 = m_energyRatioF2;
     }
 
     void DispatchDataProcess(HeatmapFrame& frame) {
@@ -183,10 +224,16 @@ private:
             (m_cmnSum[0] + m_cmnSum[1]) > m_cmnAbnormalSumThreshold &&
             (m_cmnMin[0] < m_cmnAbnormalMinThreshold || m_cmnMin[1] < m_cmnAbnormalMinThreshold);
 
-        const bool noisy = hpp2.rawAbnormal || hpp2.cmnAbnormal;
+        const std::size_t freqIdx = static_cast<std::size_t>(m_curFreqIdx);
+        m_noiseSum[freqIdx] = 0;
+        m_noiseFlag[freqIdx] = 0;
+        ChargerNoiseJudge(frame);
+        RotateRawHistory(hpp2.line.raw, SampleCount());
+
+        const bool noisy = hpp2.rawAbnormal || hpp2.cmnAbnormal || m_noiseFlag[freqIdx] != 0;
         if (hpp2.mainFreq == kFreqF1) {
             m_freqNoiseLatchF1 = noisy;
-        } else if (hpp2.mainFreq == kFreqF2) {
+        } else {
             m_freqNoiseLatchF2 = noisy;
         }
     }
@@ -199,6 +246,9 @@ private:
 
         hpp2.selectedPeakDim1 = dim1.valid ? static_cast<uint8_t>(dim1.index) : kInvalidPeak;
         hpp2.selectedPeakDim2 = dim2.valid ? static_cast<uint8_t>(dim2.index) : kInvalidPeak;
+        const std::size_t freqIdx = static_cast<std::size_t>(m_curFreqIdx);
+        m_prevPeakDim1ByFreq[freqIdx] = hpp2.selectedPeakDim1;
+        m_prevPeakDim2ByFreq[freqIdx] = hpp2.selectedPeakDim2;
 
         runtime.signal.signalX = dim1.signal;
         runtime.signal.signalY = dim2.signal;
@@ -224,9 +274,10 @@ private:
 
     void NoiseProcess(HeatmapFrame& frame) {
         auto& hpp2 = frame.stylus.runtime.hpp2;
-        hpp2.bypassCurFrame =
-            (hpp2.mainFreq == kFreqF1 && m_freqNoiseLatchF1) ||
-            (hpp2.mainFreq == kFreqF2 && m_freqNoiseLatchF2);
+        const std::size_t freqIdx = static_cast<std::size_t>(m_curFreqIdx);
+        const bool chargerNoise = m_noiseFlag[freqIdx] != 0;
+        hpp2.bypassCurFrame = chargerNoise ||
+            (hpp2.mainFreq == kFreqF1 ? m_freqNoiseLatchF1 : m_freqNoiseLatchF2);
     }
 
     bool UpdateInRangeStatus(HeatmapFrame& frame) {
@@ -360,6 +411,12 @@ private:
         return std::clamp(m_sensorTxCount + m_sensorRxCount, 0, kMaxSamples);
     }
 
+    struct Peak {
+        int index = -1;
+        uint16_t signal = 0;
+        bool valid = false;
+    };
+
     uint16_t RatioToHistory(uint32_t current, int historyIndex) const {
         if (historyIndex < 0 || historyIndex >= kHistorySize) {
             return 100;
@@ -369,6 +426,133 @@ private:
             return 100;
         }
         return static_cast<uint16_t>(std::min<uint32_t>((current * 100u) / denom, 0xffffu));
+    }
+
+    void ChargerNoiseJudge(HeatmapFrame& frame) {
+        auto& hpp2 = frame.stylus.runtime.hpp2;
+        const std::size_t freqIdx = static_cast<std::size_t>(m_curFreqIdx);
+        const int frameCount = CurrentFreqFrameCount();
+        uint16_t maxNoiseSample = 0;
+        uint8_t abnormalChannelCount = 0;
+        hpp2.line.chargerNoiseRatio.fill(0);
+
+        if (frameCount > 1) {
+            const int clearFrame = GetClearFrameIndex(frameCount);
+            const Peak currentDim1 = FindPeak(hpp2.line.cmnSubtracted, 0, m_sensorTxCount);
+            const Peak currentDim2 = FindPeak(hpp2.line.cmnSubtracted, m_sensorTxCount, m_sensorRxCount);
+            const int count = SampleCount();
+            for (int i = 0; i < count; ++i) {
+                const uint16_t clearSample = m_rawHistory[freqIdx][static_cast<std::size_t>(clearFrame)][static_cast<std::size_t>(i)];
+                const uint16_t floor = std::max<uint16_t>(m_chargerNoiseClearFloor, 1);
+                const uint16_t denom = std::max<uint16_t>(clearSample, floor);
+                const uint16_t currentSample = hpp2.line.raw[static_cast<std::size_t>(i)];
+                const uint32_t ratio = (static_cast<uint32_t>(currentSample) * 100u) / denom;
+                hpp2.line.chargerNoiseRatio[static_cast<std::size_t>(i)] =
+                    static_cast<uint16_t>(std::min<uint32_t>(ratio, 0xffffu));
+
+                if (IndexValidation(i, currentSample, currentDim1, currentDim2)) {
+                    continue;
+                }
+
+                if (ratio > m_chargerNoiseRatioThreshold) {
+                    ++abnormalChannelCount;
+                    maxNoiseSample = std::max(maxNoiseSample, currentSample);
+                    m_noiseSum[freqIdx] += currentSample;
+                }
+            }
+        }
+
+        if (m_noiseSum[freqIdx] > m_chargerNoiseSumThreshold &&
+            maxNoiseSample > m_chargerNoiseMaxSampleThreshold &&
+            abnormalChannelCount > m_chargerNoiseAbnormalChannelThreshold) {
+            m_noiseFlag[freqIdx] = 1;
+        }
+    }
+
+    int GetClearFrameIndex(int frameCount) const {
+        const std::size_t freqIdx = static_cast<std::size_t>(m_curFreqIdx);
+        int fallbackNoiseIndex = -1;
+        uint16_t minNoiseSum = 0xffffu;
+        const int historyLimit = std::min(frameCount, kNumRawHistoryFrames);
+        for (int i = 0; i < historyLimit; ++i) {
+            const std::size_t idx = static_cast<std::size_t>(i);
+            if (m_noiseFlagHistory[freqIdx][idx] == 0) {
+                return i;
+            }
+            const uint16_t truncatedNoiseSum = static_cast<uint16_t>(m_noiseSumHistory[freqIdx][idx]);
+            if (truncatedNoiseSum < minNoiseSum) {
+                minNoiseSum = truncatedNoiseSum;
+                fallbackNoiseIndex = i;
+            }
+        }
+        if (fallbackNoiseIndex >= 0) {
+            return fallbackNoiseIndex;
+        }
+        return 0;
+    }
+
+    bool IndexValidation(int index, uint16_t rawSample, const Peak& currentDim1, const Peak& currentDim2) const {
+        if (rawSample < m_chargerNoiseMinRawSample) {
+            return true;
+        }
+        if (IsProtectedPeakIndex(index, 0, currentDim1.valid ? currentDim1.index : kInvalidPeak)) {
+            return true;
+        }
+        if (IsProtectedPeakIndex(index, m_sensorTxCount, currentDim2.valid ? currentDim2.index : kInvalidPeak)) {
+            return true;
+        }
+        // TSACore anchors this range against asaPrePrpt. The rebuild keeps the
+        // closest observable equivalent: previous selected HPP2 line peaks for
+        // the same frequency, avoiding cross-frequency F1/F2 contamination.
+        const std::size_t freqIdx = static_cast<std::size_t>(m_curFreqIdx);
+        if (IsProtectedPeakIndex(index, 0, m_prevPeakDim1ByFreq[freqIdx])) {
+            return true;
+        }
+        if (IsProtectedPeakIndex(index, m_sensorTxCount, m_prevPeakDim2ByFreq[freqIdx])) {
+            return true;
+        }
+        return false;
+    }
+
+    bool IsProtectedPeakIndex(int globalIndex, int offset, int localPeak) const {
+        if (localPeak == kInvalidPeak) {
+            return false;
+        }
+        const int localIndex = globalIndex - offset;
+        const int length = offset == 0 ? m_sensorTxCount : m_sensorRxCount;
+        if (localIndex < 0 || localIndex >= length) {
+            return false;
+        }
+        const int delta = localIndex - localPeak;
+        const int radius = static_cast<int>(m_chargerNoisePeakProtectRadius);
+        return delta >= -radius && delta <= radius;
+    }
+
+    void RotateRawHistory(const std::array<uint16_t, kMaxSamples>& currentRaw, int count) {
+        const std::size_t freqIdx = static_cast<std::size_t>(m_curFreqIdx);
+        for (int i = kNumRawHistoryFrames - 1; i > 0; --i) {
+            m_rawHistory[freqIdx][static_cast<std::size_t>(i)] = m_rawHistory[freqIdx][static_cast<std::size_t>(i - 1)];
+            m_noiseFlagHistory[freqIdx][static_cast<std::size_t>(i)] = m_noiseFlagHistory[freqIdx][static_cast<std::size_t>(i - 1)];
+            m_noiseSumHistory[freqIdx][static_cast<std::size_t>(i)] = m_noiseSumHistory[freqIdx][static_cast<std::size_t>(i - 1)];
+        }
+        auto& head = m_rawHistory[freqIdx][0];
+        head.fill(0);
+        for (int i = 0; i < count; ++i) {
+            head[static_cast<std::size_t>(i)] = currentRaw[static_cast<std::size_t>(i)];
+        }
+        m_noiseFlagHistory[freqIdx][0] = m_noiseFlag[freqIdx];
+        m_noiseSumHistory[freqIdx][0] = m_noiseSum[freqIdx];
+
+        int& frameCount = CurrentFreqFrameCountRef();
+        frameCount = std::min(frameCount + 1, kNumRawHistoryFrames);
+    }
+
+    int CurrentFreqFrameCount() const {
+        return m_curFreqIdx == 0 ? m_f1FrameCnt : m_f2FrameCnt;
+    }
+
+    int& CurrentFreqFrameCountRef() {
+        return m_curFreqIdx == 0 ? m_f1FrameCnt : m_f2FrameCnt;
     }
 
     void ProcessCmfGroup(HeatmapFrame& frame, int group, int offset, int length) {
@@ -403,12 +587,6 @@ private:
         m_cmnSum[static_cast<std::size_t>(group)] = cmnSum;
         m_cmnMin[static_cast<std::size_t>(group)] = cmnMin;
     }
-
-    struct Peak {
-        int index = -1;
-        uint16_t signal = 0;
-        bool valid = false;
-    };
 
     Peak FindPeak(const std::array<uint16_t, kMaxSamples>& line, int offset, int length) const {
         Peak peak{};

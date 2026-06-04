@@ -127,6 +127,7 @@ struct StylusRuntimeHpp2LineProfile {
     std::array<uint16_t, kMaxSamples> raw{};
     std::array<uint16_t, kMaxSamples> cmnBaseline{};
     std::array<uint16_t, kMaxSamples> cmnSubtracted{};
+    std::array<uint16_t, kMaxSamples> chargerNoiseRatio{};
     std::array<uint32_t, kHistorySize> lineSumHistory{};
 };
 
@@ -139,6 +140,8 @@ struct StylusRuntimeHpp2 {
     uint32_t buttonBits = 0;
     uint16_t energyRatioPrev = 100;
     uint16_t energyRatioPrev2 = 100;
+    uint16_t energyRatioF1Prev2 = 100;
+    uint16_t energyRatioF2Prev2 = 100;
     bool rawAbnormal = false;
     bool cmnAbnormal = false;
     bool bypassCurFrame = false;
