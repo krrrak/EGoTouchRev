@@ -5,6 +5,7 @@
 #include "hpp3/Hpp3Pipeline.h"
 #include "shared/CommonStylusPostPipeline.h"
 #include "shared/EdgeCoorProcess.hpp"
+#include "shared/EdgeCoorPostProcess.hpp"
 #include "shared/StylusFrameParser.hpp"
 #include "StylusRuntimeCommit.hpp"
 #include "SolverTypes.h"
@@ -38,10 +39,11 @@ public:
     bool GetEmitPacketWhenInvalid() const { return true; }
 
     // ── Shared / protocol-agnostic stages ──
-    Stylus::StylusFrameParser          m_frameParser;      // shared/
-    Stylus::EdgeCoorProcess            m_edgeCoorProcess;  // shared state used by HPP2/HPP3
-    Stylus::CommonStylusPostPipeline   m_commonPost;       // shared ASA_CoorPostProcess tail
-    Stylus::StylusRuntimeCommit        m_commit;           // root
+    Stylus::StylusFrameParser          m_frameParser;          // shared/
+    Stylus::EdgeCoorProcess            m_edgeCoorProcess;      // shared state used by HPP2/HPP3
+    Stylus::EdgeCoorPostProcess        m_edgeCoorPostProcess;  // shared edge remapping used by HPP2/HPP3
+    Stylus::CommonStylusPostPipeline   m_commonPost;           // shared ASA_CoorPostProcess tail
+    Stylus::StylusRuntimeCommit        m_commit;               // root
 
     // ── Protocol-specific sub-pipelines ──
     Stylus::Hpp2::Pipeline             m_hpp2;             // hpp2/

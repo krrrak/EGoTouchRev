@@ -17,7 +17,7 @@ Solvers::StylusConfig::StylusPipelineMembers MakeConfigMembers(Solvers::StylusPi
     m.pressureSolver = &p.m_hpp3.m_pressureSolver;
     m.postPressure = &p.m_hpp3.m_postPressure;
     m.edgeCoorProcess = &p.m_edgeCoorProcess;
-    m.edgeCoorPostProcess = &p.m_hpp3.m_edgeCoorPostProcess;
+    m.edgeCoorPostProcess = &p.m_edgeCoorPostProcess;
     m.noisePostProcess = &p.m_hpp3.m_noisePostProcess;
     m.linearFilterProcess = &p.m_commonPost.m_linearFilterProcess;
     m.coorReviseProcess = &p.m_commonPost.m_coorReviseProcess;
@@ -64,7 +64,7 @@ bool StylusPipeline::Process(HeatmapFrame& frame) {
 
     // ── Shared / common post-processing tail ───────────────────────
     m_edgeCoorProcess.Process(frame);
-    m_hpp3.ProcessAfterSharedEdge(frame);
+    m_edgeCoorPostProcess.Process(frame);
     m_commonPost.Process(frame);
     m_edgeCoorProcess.CaptureFinal(frame.stylus.runtime);
     m_commit.Commit(frame);
@@ -76,6 +76,7 @@ void StylusPipeline::FinalizeTerminalFrame(HeatmapFrame& frame) {
         m_hpp2.ResetOnTerminal();
         m_hpp3.ResetOnTerminal();
         m_edgeCoorProcess.Reset();
+        m_edgeCoorPostProcess.Reset();
         m_commonPost.ResetOnTerminal();
     }
     m_lastFrameWasTerminal = true;

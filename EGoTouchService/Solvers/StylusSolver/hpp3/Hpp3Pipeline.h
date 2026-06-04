@@ -1,7 +1,6 @@
 #pragma once
 
 #include "CoordinateSolver.hpp"
-#include "EdgeCoorPostProcess.hpp"
 #include "GridFeatureExtractor.hpp"
 #include "Hpp3NoisePostProcess.hpp"
 #include "Hpp3PostPressureProcess.hpp"
@@ -29,7 +28,6 @@ public:
     TiltProcess              m_tiltProcess;
     PressureSolver           m_pressureSolver;
     Hpp3PostPressureProcess  m_postPressure;
-    EdgeCoorPostProcess      m_edgeCoorPostProcess;
     Hpp3NoisePostProcess     m_noisePostProcess;
 
     // ── Main HPP3 entry point before shared edge/common post ──
@@ -65,16 +63,10 @@ public:
         return true;  // non-terminal; caller runs shared edge/common post
     }
 
-    // ── HPP3-only hook after shared EdgeCoorProcess ──
-    void ProcessAfterSharedEdge(HeatmapFrame& frame) {
-        m_edgeCoorPostProcess.Process(frame);
-    }
-
     // ── Reset HPP3-specific internal state on terminal transition ──
     void ResetOnTerminal() {
         m_tiltProcess.Reset();
         m_postPressure.Reset();
-        m_edgeCoorPostProcess.Reset();
     }
 };
 

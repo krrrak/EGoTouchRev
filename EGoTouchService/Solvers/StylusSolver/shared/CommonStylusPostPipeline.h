@@ -1,10 +1,10 @@
 #pragma once
 
-#include "../hpp3/AftCoorProcess.hpp"
-#include "../hpp3/CoorIIRProcess.hpp"
-#include "../hpp3/CoorReviseProcess.hpp"
-#include "../hpp3/CoorSpeedProcess.hpp"
-#include "../hpp3/LinearFilterProcess.hpp"
+#include "AftCoorProcess.hpp"
+#include "CoorIIRProcess.hpp"
+#include "CoorReviseProcess.hpp"
+#include "CoorSpeedProcess.hpp"
+#include "LinearFilterProcess.hpp"
 #include "SolverTypes.h"
 
 namespace Solvers::Stylus {
