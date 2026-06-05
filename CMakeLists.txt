@@ -121,6 +121,7 @@ file(GLOB IPC_HEADERS "${IPC_ROOT}/include/Ipc/*.h")
 add_subdirectory("${COMMON_ROOT}/spdlog-1.17.0" "spdlog_build")
 
 # yaml-cpp
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 include(FetchContent)
 FetchContent_Declare(
     yaml-cpp
