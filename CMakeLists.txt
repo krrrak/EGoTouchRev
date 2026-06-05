@@ -344,6 +344,39 @@ elseif(WIN32)
     target_link_options(EGoTouchService PRIVATE -municode)
 endif()
 
+# ── Config deployment (POST_BUILD + install) ──
+set(CONFIG_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/config")
+
+# POST_BUILD: copy config/ to Service output dir
+add_custom_command(TARGET EGoTouchService POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:EGoTouchService>/config"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CONFIG_SOURCE_DIR}/default.yaml"
+        "$<TARGET_FILE_DIR:EGoTouchService>/config/default.yaml"
+    COMMENT "Deploy config/default.yaml to Service output dir"
+)
+
+# POST_BUILD: copy config/ to App output dir
+add_custom_command(TARGET EGoTouchApp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:EGoTouchApp>/config"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CONFIG_SOURCE_DIR}/default.yaml"
+        "$<TARGET_FILE_DIR:EGoTouchApp>/config/default.yaml"
+    COMMENT "Deploy config/default.yaml to App output dir"
+)
+
+# CPack / install rules
+install(DIRECTORY config/
+    DESTINATION config
+    COMPONENT Config
+    FILES_MATCHING
+    PATTERN "*.yaml"
+)
+install(TARGETS EGoTouchService EGoTouchApp
+    RUNTIME DESTINATION .
+    COMPONENT Runtime
+)
+
 # --- BtMcuTestTool (ImGui BT Protocol Validator) ---
 add_executable(BtMcuTestTool
     Tools/BtMcuTestTool/BtMcuTestTool.cpp
