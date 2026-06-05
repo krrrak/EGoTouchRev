@@ -95,6 +95,7 @@ public:
     // Config sync
     void SaveConfig();
     void RefreshConfigSnapshot();
+    void ApplyConfigStoreToLocalRuntime();
     const Config::ConfigSchemaSnapshot& GetConfigSchemaSnapshot() const { return m_configSchema; }
     Config::ConfigStore& GetConfigStore() { return m_configStore; }
     std::vector<std::string> GetConfigModuleTags() const;
@@ -152,7 +153,6 @@ private:
     Dvr::DvrDynamicDebugFrameSlot CaptureDvrDynamicDebugFrameSlot(uint64_t dvrSeq) const;
     DvrRuntimeConfigSnapshot CaptureRuntimeConfigSnapshot() const;
     void InitConfigSchema();
-    void ApplyConfigStoreToLocalRuntime();
 
     static constexpr const wchar_t* kSharedMemName =
         L"Global\\EGoTouchSharedFrame";

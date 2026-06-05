@@ -1,5 +1,6 @@
 #include "DiagnosticsWorkbench.h"
 #include "DiagnosticsWorkbenchInternal.h"
+#include "ConfigUIRenderer.h"
 #include "ServiceProxy.h"
 #include "GuiLogSink.h"
 #include "SystemStateMonitor.h"
@@ -17,6 +18,7 @@
 #include <iomanip>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace App {
@@ -27,6 +29,30 @@ ImVec4 GoodColor() { return ImVec4(0.2f, 0.9f, 0.3f, 1.0f); }
 ImVec4 WarnColor() { return ImVec4(1.0f, 0.8f, 0.2f, 1.0f); }
 ImVec4 BadColor() { return ImVec4(1.0f, 0.35f, 0.3f, 1.0f); }
 ImVec4 InfoColor() { return ImVec4(0.4f, 0.85f, 1.0f, 1.0f); }
+
+std::vector<std::string> CollectModuleTagsWithPrefix(
+    const Config::ConfigSchemaSnapshot& schema,
+    std::string_view prefix) {
+    std::vector<std::string> tags;
+    for (const auto& tag : ConfigUIRenderer::CollectModuleTags(schema)) {
+        if (tag.rfind(prefix, 0) == 0) {
+            tags.push_back(tag);
+        }
+    }
+    return tags;
+}
+
+const char* ModuleDisplayName(const std::string& tag) {
+    const auto slash = tag.rfind('/');
+    if (slash == std::string::npos) {
+        return tag.c_str();
+    }
+    auto pos = slash + 1;
+    while (pos < tag.size() && tag[pos] == ' ') {
+        ++pos;
+    }
+    return tag.c_str() + pos;
+}
 
 ImVec4 StatusColor(bool ok) {
     return ok ? GoodColor() : BadColor();
@@ -215,23 +241,18 @@ void DiagnosticsWorkbench::DrawTouchPipelineConfigPanel() {
         return;
     }
 
-    static const char* modules[] = {
-        "Frame Parser",
-        "Signal Conditioning",
-        "Peak Detection",
-        "Zone & Contact",
-        "Palm Rejection",
-        "Tracking",
-        "Stylus Suppress",
-        "Coordinate Filter",
-        "Gesture",
-    };
+    const auto& schema = m_proxy->GetConfigSchemaSnapshot();
+    const auto modules = CollectModuleTagsWithPrefix(schema, "Touch /");
+    if (modules.empty()) {
+        ImGui::TextDisabled("No ConfigStore/ConfigBinder touch parameters are registered.");
+        return;
+    }
 
-    constexpr int moduleCount = IM_ARRAYSIZE(modules);
+    const int moduleCount = static_cast<int>(modules.size());
     m_touchConfigModuleIndex = std::clamp(m_touchConfigModuleIndex, 0, moduleCount - 1);
     const bool masterParserOnly = m_proxy->IsMasterParserOnlyMode();
 
-    ImGui::TextWrapped("Edit touch pipeline parameters by processing stage. Changes are applied only when Save & Apply is pressed.");
+    ImGui::TextWrapped("Edit touch pipeline parameters by processing stage. Changes are applied only when Apply Local Runtime is pressed.");
     if (masterParserOnly) {
         ImGui::TextColored(WarnColor(), "Master Parser Only is enabled. Pipeline configuration controls are disabled.");
     }
@@ -250,19 +271,26 @@ void DiagnosticsWorkbench::DrawTouchPipelineConfigPanel() {
         ImGui::TableSetColumnIndex(0);
         const float moduleItemWidth = std::max(1.0f, ImGui::GetContentRegionAvail().x);
         for (int i = 0; i < moduleCount; ++i) {
-            if (ImGui::Selectable(modules[i], m_touchConfigModuleIndex == i, 0, ImVec2(moduleItemWidth, 0.0f))) {
+            if (ImGui::Selectable(ModuleDisplayName(modules[static_cast<size_t>(i)]), m_touchConfigModuleIndex == i, 0, ImVec2(moduleItemWidth, 0.0f))) {
                 m_touchConfigModuleIndex = i;
             }
         }
 
         ImGui::TableSetColumnIndex(1);
-        const char* activeModule = modules[m_touchConfigModuleIndex];
-        ImGui::TextColored(InfoColor(), "%s", activeModule);
+        const std::string& activeModule = modules[static_cast<size_t>(m_touchConfigModuleIndex)];
+        ImGui::TextColored(InfoColor(), "%s", activeModule.c_str());
         ImGui::Separator();
 
-        ImGui::TextWrapped("Legacy ConfigParam UI has been removed. Use the ConfigStore/ConfigBinder-driven configuration UI path.");
         if (masterParserOnly) {
-            ImGui::TextDisabled("Master Parser Only is enabled.");
+            ImGui::BeginDisabled();
+        }
+        ConfigUIRenderer::RenderConfigStoreByModule(schema, m_proxy->GetConfigStore(), activeModule);
+        if (masterParserOnly) {
+            ImGui::EndDisabled();
+        }
+
+        if (ImGui::Button("Apply Local Runtime")) {
+            m_proxy->ApplyConfigStoreToLocalRuntime();
         }
 
         ImGui::EndTable();
@@ -489,11 +517,17 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
         }
 
         if (ImGui::BeginTabItem("Config")) {
-            if (ImGui::BeginTabBar("StylusConfigTabs")) {
-                static const char* modules[] = {"HPP2", "Frame Parser", "Data Solve", "Pressure", "Coordinate"};
-                for (const char* module : modules) {
-                    if (ImGui::BeginTabItem(module)) {
-                        ImGui::TextWrapped("Legacy ConfigParam UI has been removed. Use the ConfigStore/ConfigBinder-driven configuration UI path.");
+            const auto& schema = m_proxy->GetConfigSchemaSnapshot();
+            const auto modules = CollectModuleTagsWithPrefix(schema, "Stylus /");
+            if (modules.empty()) {
+                ImGui::TextDisabled("No ConfigStore/ConfigBinder stylus parameters are registered.");
+            } else if (ImGui::BeginTabBar("StylusConfigTabs")) {
+                for (const auto& module : modules) {
+                    if (ImGui::BeginTabItem(ModuleDisplayName(module))) {
+                        ConfigUIRenderer::RenderConfigStoreByModule(schema, m_proxy->GetConfigStore(), module);
+                        if (ImGui::Button("Apply Local Runtime")) {
+                            m_proxy->ApplyConfigStoreToLocalRuntime();
+                        }
                         ImGui::EndTabItem();
                     }
                 }
