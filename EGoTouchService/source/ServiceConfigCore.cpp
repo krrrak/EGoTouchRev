@@ -87,17 +87,17 @@ const char* ServiceModeToConfig(ServiceMode mode) {
 
 void ServiceConfigState::registerBindings(Config::ConfigBinder& binder) {
     binder.bindEnum("service.mode", &ServiceConfigState::mode, *this,
-                    ServiceMode::Full, kServiceModeConfigNames,
+                    ServiceMode::Full, std::span<const std::pair<ServiceMode, std::string>>{kServiceModeConfigNames},
                     "Service operating mode (full | touch_only)");
     binder.bind("service.auto_mode", &ServiceConfigState::autoMode, *this,
                 true, {}, "Auto-select service mode");
     binder.bind("service.stylus_vhf_enabled", &ServiceConfigState::stylusVhfEnabled, *this,
                 true, {}, "Enable stylus VHF output");
     binder.bindEnum("service.pen_button_mode", &ServiceConfigState::penButtonMode, *this,
-                    PenButtonMode::OemCustom, kPenButtonModeConfigNames,
+                    PenButtonMode::OemCustom, std::span<const std::pair<PenButtonMode, std::string>>{kPenButtonModeConfigNames},
                     "Pen button mode (oem_custom | native_barrel | native_eraser)");
     binder.bindEnum("service.pen_button_route", &ServiceConfigState::penButtonRoute, *this,
-                    PenButtonRoute::VhfOnly, kPenButtonRouteConfigNames,
+                    PenButtonRoute::VhfOnly, std::span<const std::pair<PenButtonRoute, std::string>>{kPenButtonRouteConfigNames},
                     "Pen button injection route (vhf_only | win32_only | vhf_and_win32)");
 }
 

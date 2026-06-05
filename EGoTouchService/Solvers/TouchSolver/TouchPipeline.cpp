@@ -426,38 +426,38 @@ namespace Solvers {
 void TouchPipeline::registerBindings(Config::ConfigBinder& binder) {
     using Config::ConfigRange;
 
-    binder.bind<int32_t>("touch.signal_cond.baseline_bg_alpha_shift",
-                         m_baseline.m_backgroundAlphaShift,
-                         3,
-                         ConfigRange{0, 15});
-    binder.bind<int32_t>("touch.signal_cond.baseline_bg_max_step",
-                         m_baseline.m_backgroundMaxStep,
-                         512,
-                         ConfigRange{1, 2048});
-    binder.bind<int32_t>("touch.signal_cond.baseline_no_finger_alpha_shift",
-                         m_baseline.m_noFingerAlphaShift,
-                         3,
-                         ConfigRange{0, 15});
-    binder.bind<int32_t>("touch.signal_cond.baseline_no_finger_max_step",
-                         m_baseline.m_noFingerMaxStep,
-                         512,
-                         ConfigRange{1, 2048});
-    binder.bind<int32_t>("touch.signal_cond.baseline_recovery_alpha_shift",
-                         m_baseline.m_recoveryAlphaShift,
-                         2,
-                         ConfigRange{0, 15});
-    binder.bind<int32_t>("touch.signal_cond.baseline_recovery_max_frames",
-                         m_baseline.m_recoveryMaxFrames,
-                         30,
-                         ConfigRange{1, 120});
-    binder.bind<int32_t>("touch.signal_cond.baseline_recovery_max_step",
-                         m_baseline.m_recoveryMaxStep,
-                         256,
-                         ConfigRange{1, 2048});
+    binder.bind("touch.signal_cond.baseline_bg_alpha_shift",
+                &Touch::BaselineTracker::m_backgroundAlphaShift, m_baseline,
+                static_cast<int32_t>(3), ConfigRange{0, 15},
+                "Background alpha shift for baseline tracking");
+    binder.bind("touch.signal_cond.baseline_bg_max_step",
+                &Touch::BaselineTracker::m_backgroundMaxStep, m_baseline,
+                static_cast<int32_t>(512), ConfigRange{1, 2048},
+                "Background max step for baseline tracking");
+    binder.bind("touch.signal_cond.baseline_no_finger_alpha_shift",
+                &Touch::BaselineTracker::m_noFingerAlphaShift, m_baseline,
+                static_cast<int32_t>(3), ConfigRange{0, 15},
+                "No-finger alpha shift for baseline tracking");
+    binder.bind("touch.signal_cond.baseline_no_finger_max_step",
+                &Touch::BaselineTracker::m_noFingerMaxStep, m_baseline,
+                static_cast<int32_t>(512), ConfigRange{1, 2048},
+                "No-finger max step for baseline tracking");
+    binder.bind("touch.signal_cond.baseline_recovery_alpha_shift",
+                &Touch::BaselineTracker::m_recoveryAlphaShift, m_baseline,
+                static_cast<int32_t>(2), ConfigRange{0, 15},
+                "Recovery alpha shift for baseline tracking");
+    binder.bind("touch.signal_cond.baseline_recovery_max_frames",
+                &Touch::BaselineTracker::m_recoveryMaxFrames, m_baseline,
+                static_cast<int32_t>(30), ConfigRange{1, 120},
+                "Max frames for baseline recovery");
+    binder.bind("touch.signal_cond.baseline_recovery_max_step",
+                &Touch::BaselineTracker::m_recoveryMaxStep, m_baseline,
+                static_cast<int32_t>(256), ConfigRange{1, 2048},
+                "Recovery max step for baseline tracking");
 
-    binder.bind<bool>("touch.frame_parser.enabled",
-                      m_frameParser.m_enabled,
-                      true);
+    binder.bind("touch.frame_parser.enabled",
+                &Touch::MasterFrameParser::m_enabled, m_frameParser,
+                true, {}, "Frame Parser enable switch");
 }
 
 void TouchPipeline::applyConfig(const Config::ConfigStore& store) {
