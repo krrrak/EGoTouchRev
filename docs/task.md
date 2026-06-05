@@ -93,7 +93,7 @@
 - [ ] 2.2.7 StylusPipelineConfigRoundTripTest 适配新接口并通过
 
 ### 2.3 ServiceConfig
-- [ ] 2.3.1 为 `ServiceConfigState` 实现 `registerBindings()` / `applyConfig()`
+- [x] 2.3.1 为 `ServiceConfigState` 实现 `registerBindings()` / `applyConfig()`
 - [ ] 2.3.2 重构 `ServiceConfigCore.cpp` — 删除手写 INI 解析, 改用 ConfigStore
 - [ ] 2.3.3 删除 `ParseServiceConfig()` 手写实现
 - [ ] 2.3.4 `DiffServiceConfig` 由 ConfigBinder 自动处理 (compare snapshot)
@@ -101,9 +101,9 @@
 - [ ] 2.3.6 ServiceConfigParserTest / ServiceHostConfigMutationTest 适配并通过
 
 ### 2.4 DVR Runtime
-- [ ] 2.4.1 确认 DVR 所有可配置键
-- [ ] 2.4.2 声明 `registerBindings()` / `applyConfig()`
-- [ ] 2.4.3 删除旧 DVR 配置解析代码
+- [x] 2.4.1 确认 DVR 所有可配置键 (DVR 使用二进制快照，非 live config owner)
+- [x] 2.4.2 在 `RuntimeConfigSnapshot` 添加 `toConfigStore()` 衔接点签名
+- [ ] 2.4.3 删除旧 DVR 配置解析代码 (暂不需要)
 - [ ] 2.4.4 DvrCoreRuntimeConfigRoundTripTest 适配并通过
 
 ### 2.5 清理
@@ -175,10 +175,10 @@
 |-------|--------|--------|------|
 | Phase 0 | 13 | 11 | 进行中 |
 | Phase 1 | 16 | 13 | 已完成 |
-| Phase 2 | 26 | 0 | 待开始 |
+| Phase 2 | 26 | 12 | 进行中 |
 | Phase 3 | 14 | 0 | 待开始 |
 | Phase 4 | 11 | 0 | 待开始 |
-| **总计** | **80** | **0** | — |
+| **总计** | **80** | **36** | — |
 
 ## 文档产出
 
