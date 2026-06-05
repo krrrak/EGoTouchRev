@@ -120,10 +120,25 @@ file(GLOB IPC_HEADERS "${IPC_ROOT}/include/Ipc/*.h")
 
 add_subdirectory("${COMMON_ROOT}/spdlog-1.17.0" "spdlog_build")
 
+# yaml-cpp
+include(FetchContent)
+FetchContent_Declare(
+    yaml-cpp
+    GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
+    GIT_TAG yaml-cpp-0.8.0
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(yaml-cpp)
+
 # Common library: Pure utilities (Logger, SharedFrameBuffer) - NO ImGui
 add_library(Common STATIC
     ${COMMON_SOURCES}
     ${COMMON_HEADERS}
+)
+
+target_sources(Common PRIVATE
+    "${COMMON_ROOT}/source/config/YamlParser.cpp"
+    "${COMMON_ROOT}/source/config/ConfigStore.cpp"
 )
 
 target_include_directories(Common PUBLIC
@@ -132,6 +147,7 @@ target_include_directories(Common PUBLIC
 # Common links Solvers for SharedFrameBuffer (EngineTypes.h)
 # Forward-declare include path; Solvers target linked below after Solvers is defined
 target_link_libraries(Common PUBLIC spdlog::spdlog)
+target_link_libraries(Common PUBLIC yaml-cpp)
 if (WIN32)
     target_link_libraries(Common PUBLIC advapi32)
 endif()
