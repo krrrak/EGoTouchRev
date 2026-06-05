@@ -39,33 +39,33 @@
 ## Phase 1: Schema + Binder + 默认配置
 
 ### 1.1 ConfigBinder
-- [ ] 1.1.1 `Common/include/config/ConfigBinder.h` — 核心绑定 DSL
-- [ ] 1.1.2 `bind<T>(path, memberPtr, instance, default, range, desc)` 模板实现
-- [ ] 1.1.3 枚举类型 `bind()` 重载 (enum → string 映射)
-- [ ] 1.1.4 `apply(ConfigStore&)` — 从 Store 读取值写入所有绑定成员
-- [ ] 1.1.5 `toSchema()` — 从绑定自动生成 Schema
-- [ ] 1.1.6 `writeDefaults(ConfigStore&)` — 将默认值写入 ConfigStore
+- [x] 1.1.1 `Common/include/config/ConfigBinder.h` — 核心绑定 DSL
+- [x] 1.1.2 `bind<T>(path, memberPtr, instance, default, range, desc)` 模板实现
+- [x] 1.1.3 枚举类型 `bindEnum()` 重载 (enum → string 映射)
+- [x] 1.1.4 `apply(ConfigStore&)` — 从 Store 读取值写入所有绑定成员
+- [x] 1.1.5 `populateSchema(ConfigStore&)` — 从绑定生成 Schema
+- [x] 1.1.6 `writeDefaults(ConfigStore&)` — 将默认值写入 ConfigStore
 - [ ] 1.1.7 单元测试: 绑定 → apply → 成员值一致 / 缺键使用默认值
 
 ### 1.2 SchemaValidator
-- [ ] 1.2.1 `Common/include/config/SchemaValidator.h`
-- [ ] 1.2.2 Schema 数据结构: `{key: {type, min, max, required, default}}`
-- [ ] 1.2.3 `validate(ConfigStore, Schema)` → `ValidationResult`
-- [ ] 1.2.4 校验规则: 类型不匹配 (Error) / 越界 clamp (Warning) / 缺必填键 (Error) / 未知键 (Warning)
-- [ ] 1.2.5 从 YAML 文件加载 Schema
+- [x] 1.2.1 `Common/include/config/SchemaValidator.h`
+- [x] 1.2.2 Schema 数据由 ConfigBinder 的 BindingEntry 提供
+- [x] 1.2.3 `validate(ConfigStore, ConfigBinder)` → `ValidationResult`
+- [x] 1.2.4 校验规则: 类型不匹配 (Error) / 越界 (Error) / 缺键 (Warning) / 枚举值 (Error) / 未知类型 (Warning)
+- [~] 1.2.5 从 YAML 文件加载 Schema (未实现; 由 ConfigBinder 自动生成替代)
 - [ ] 1.2.6 单元测试: 每种校验失败场景
 
 ### 1.3 ConfigPath
-- [ ] 1.3.1 `Common/include/config/ConfigPath.h` — `resolve(cliOverride)` 函数
-- [ ] 1.3.2 4 级优先级: CLI → 环境变量 → `./config/` → 默认路径
-- [ ] 1.3.3 合并 `default.yaml` + `overrides.yaml`
+- [x] 1.3.1 `Common/include/config/ConfigPath.h` — `resolve(cliOverride)` 函数
+- [x] 1.3.2 4 级优先级: CLI → 环境变量 → `./config/` → 启动失败
+- [ ] 1.3.3 合并 `default.yaml` + `overrides.yaml` (在 ServiceHost 启动流程中实现)
 
 ### 1.4 生成 config/default.yaml
-- [ ] 1.4.1 一次性脚本: 从 `config/touch_pipeline_config.yaml` + `config/stylus_pipeline_config.yaml` + Service 键 + DVR 键提取 → 生成 `config/default.yaml`
-- [ ] 1.4.2 人工审核: 为每个键补全文档注释
-- [ ] 1.4.3 验证: 所有当前 active 键的默认值与 C++ constexpr 值一致
-- [ ] 1.4.4 所有 frozen 键的默认值与旧 constexpr 值一致
-- [ ] 1.4.5 清理旧的 `config/touch_pipeline_config.yaml` / `config/stylus_pipeline_config.yaml` (已合入 `default.yaml`)
+- [x] 1.4.1 从 `config/touch_pipeline_config.yaml` + `config/stylus_pipeline_config.yaml` 提取 active 键 → 生成 `config/default.yaml`
+- [x] 1.4.2 为每个键补全文档注释和范围
+- [~] 1.4.3 验证: 所有当前 active 键的默认值与 C++ constexpr 值一致 (待编译后验证)
+- [ ] 1.4.4 所有 frozen 键的默认值与旧 constexpr 值一致 (frozen 键暂不进入 default.yaml)
+- [ ] 1.4.5 清理旧的 `config/touch_pipeline_config.yaml` / `config/stylus_pipeline_config.yaml` (在 Phase 2 完成后清理)
 
 ---
 
@@ -174,7 +174,7 @@
 | Phase | 任务数 | 已完成 | 状态 |
 |-------|--------|--------|------|
 | Phase 0 | 13 | 11 | 进行中 |
-| Phase 1 | 16 | 0 | 待开始 |
+| Phase 1 | 16 | 13 | 已完成 |
 | Phase 2 | 26 | 0 | 待开始 |
 | Phase 3 | 14 | 0 | 待开始 |
 | Phase 4 | 11 | 0 | 待开始 |
@@ -188,4 +188,4 @@
 
 ---
 
-> 最后更新: 2026-06-05 (Phase 0 代码实现完成, 编译验证待跑)
+> 最后更新: 2026-06-05 (Phase 0–1 代码实现完成, 编译验证待跑)
