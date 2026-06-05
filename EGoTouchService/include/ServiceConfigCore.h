@@ -3,12 +3,6 @@
 #include "PenButtonConfig.h"
 
 #include <cstdint>
-#include <string>
-
-namespace Config {
-class ConfigBinder;
-class ConfigStore;
-}
 
 namespace Service {
 
@@ -25,9 +19,6 @@ struct ServiceConfigState {
     PenButtonMode penButtonMode = PenButtonMode::OemCustom;
     PenButtonRoute penButtonRoute = PenButtonRoute::VhfOnly;
     bool penButtonRouteExplicit = false;
-
-    void registerBindings(Config::ConfigBinder& binder);
-    void applyConfig(const Config::ConfigStore& store);
 };
 
 struct ReloadServiceConfigResult {
@@ -49,7 +40,6 @@ constexpr uint8_t ToServiceConfigFieldBit(ServiceConfigField field) {
 }
 
 const char* ServiceModeToConfig(ServiceMode mode);
-ServiceConfigState ParseServiceConfig(const std::string& configPath);
 ReloadServiceConfigResult DiffServiceConfig(const ServiceConfigState& current,
                                             const ServiceConfigState& reloaded,
                                             bool runtimeAvailable);

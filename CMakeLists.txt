@@ -120,31 +120,10 @@ file(GLOB IPC_HEADERS "${IPC_ROOT}/include/Ipc/*.h")
 
 add_subdirectory("${COMMON_ROOT}/spdlog-1.17.0" "spdlog_build")
 
-# yaml-cpp
-include(FetchContent)
-FetchContent_Declare(
-    yaml-cpp
-    GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
-    GIT_TAG yaml-cpp-0.9.0
-    GIT_SHALLOW TRUE
-)
-FetchContent_MakeAvailable(yaml-cpp)
-
 # Common library: Pure utilities (Logger, SharedFrameBuffer) - NO ImGui
 add_library(Common STATIC
     ${COMMON_SOURCES}
     ${COMMON_HEADERS}
-)
-
-target_sources(Common PRIVATE
-    "${COMMON_ROOT}/source/config/YamlParser.cpp"
-    "${COMMON_ROOT}/source/config/ConfigStore.cpp"
-    "${COMMON_ROOT}/source/config/ConfigBinder.cpp"
-    "${COMMON_ROOT}/source/config/ConfigSchemaSnapshot.cpp"
-    "${COMMON_ROOT}/source/config/SchemaValidator.cpp"
-    "${COMMON_ROOT}/source/config/ConfigPath.cpp"
-    "${COMMON_ROOT}/source/config/ConfigTlv.cpp"
-    "${COMMON_ROOT}/source/config/ConfigKeyMap.cpp"
 )
 
 target_include_directories(Common PUBLIC
@@ -153,7 +132,6 @@ target_include_directories(Common PUBLIC
 # Common links Solvers for SharedFrameBuffer (EngineTypes.h)
 # Forward-declare include path; Solvers target linked below after Solvers is defined
 target_link_libraries(Common PUBLIC spdlog::spdlog)
-target_link_libraries(Common PUBLIC yaml-cpp)
 if (WIN32)
     target_link_libraries(Common PUBLIC advapi32)
 endif()
@@ -208,10 +186,8 @@ set(SOLVERS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/EGoTouchService/Solvers")
 set(SOLVERS_SOURCES
     # TouchSolver (linear orchestrator — all algorithm modules are header-only .hpp)
     EGoTouchService/Solvers/TouchSolver/TouchPipeline.cpp
-    EGoTouchService/Solvers/TouchSolver/TouchPipelineConfigKeys.cpp
     # StylusSolver (official ASA pipeline — modules are header-only .hpp)
     EGoTouchService/Solvers/StylusSolver/StylusPipeline.cpp
-    EGoTouchService/Solvers/StylusSolver/StylusPipelineConfigKeys.cpp
 )
 
 function(ego_configure_solvers_target target config_enabled)
@@ -347,39 +323,6 @@ elseif(WIN32)
     target_link_options(EGoTouchService PRIVATE -municode)
 endif()
 
-# ── Config deployment (POST_BUILD + install) ──
-set(CONFIG_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/config")
-
-# POST_BUILD: copy config/ to Service output dir
-add_custom_command(TARGET EGoTouchService POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:EGoTouchService>/config"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CONFIG_SOURCE_DIR}/default.yaml"
-        "$<TARGET_FILE_DIR:EGoTouchService>/config/default.yaml"
-    COMMENT "Deploy config/default.yaml to Service output dir"
-)
-
-# POST_BUILD: copy config/ to App output dir
-add_custom_command(TARGET EGoTouchApp POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:EGoTouchApp>/config"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CONFIG_SOURCE_DIR}/default.yaml"
-        "$<TARGET_FILE_DIR:EGoTouchApp>/config/default.yaml"
-    COMMENT "Deploy config/default.yaml to App output dir"
-)
-
-# CPack / install rules
-install(DIRECTORY config/
-    DESTINATION config
-    COMPONENT Config
-    FILES_MATCHING
-    PATTERN "*.yaml"
-)
-install(TARGETS EGoTouchService EGoTouchApp
-    RUNTIME DESTINATION .
-    COMPONENT Runtime
-)
-
 # --- BtMcuTestTool (ImGui BT Protocol Validator) ---
 add_executable(BtMcuTestTool
     Tools/BtMcuTestTool/BtMcuTestTool.cpp
@@ -454,18 +397,6 @@ if (EGO_BUILD_TESTS)
     endif()
 
 
-    add_executable(EGoTouchApp_ServiceProxyConfigMergeTest
-        Tools/EGoTouchApp/tests/ServiceProxyConfigMergeTest.cpp
-        Tools/EGoTouchApp/source/ServiceProxy.cpp
-    )
-    target_include_directories(EGoTouchApp_ServiceProxyConfigMergeTest PRIVATE
-        "${APP_ROOT}/include"
-        "${APP_ROOT}/source"
-        "${IPCCORE_ROOT}/include/Ipc"
-    )
-    target_compile_definitions(EGoTouchApp_ServiceProxyConfigMergeTest PRIVATE EGOTOUCH_CONFIG_ENABLED=1)
-    target_link_libraries(EGoTouchApp_ServiceProxyConfigMergeTest PRIVATE DVRCoreRuntimeConfig Common)
-
     function(add_dvrcore_test_with_variant target source labels timeout dvrcore_target solvers_target config_enabled)
         add_executable(${target} ${source})
         target_compile_definitions(${target} PRIVATE EGOTOUCH_CONFIG_ENABLED=${config_enabled})
@@ -515,18 +446,6 @@ if (EGO_BUILD_TESTS)
         "dvrcore;negative;corruption;device-free"
         15
     )
-
-    add_executable(EGoTouchApp_ServiceProxyRuntimeConfigSnapshotTest
-        Tools/EGoTouchApp/tests/ServiceProxyRuntimeConfigSnapshotTest.cpp
-        Tools/EGoTouchApp/source/ServiceProxy.cpp
-    )
-    target_include_directories(EGoTouchApp_ServiceProxyRuntimeConfigSnapshotTest PRIVATE
-        "${APP_ROOT}/include"
-        "${APP_ROOT}/source"
-        "${IPCCORE_ROOT}/include/Ipc"
-    )
-    target_compile_definitions(EGoTouchApp_ServiceProxyRuntimeConfigSnapshotTest PRIVATE EGOTOUCH_CONFIG_ENABLED=1)
-    target_link_libraries(EGoTouchApp_ServiceProxyRuntimeConfigSnapshotTest PRIVATE DVRCoreRuntimeConfig Common)
 
     add_executable(EGoTouchApp_ServiceProxyDvrBridgeTest
         Tools/EGoTouchApp/tests/ServiceProxyDvrBridgeTest.cpp
@@ -592,19 +511,6 @@ if (EGO_BUILD_TESTS)
 
     set(SERVICE_TEST_ROOT "${SERVICE_ROOT}/tests")
 
-    add_executable(ServiceConfigParserTest
-        "${SERVICE_TEST_ROOT}/unit/ServiceConfigParserTest.cpp"
-        "${SERVICE_TEST_ROOT}/support/TempConfig.cpp"
-    )
-    target_include_directories(ServiceConfigParserTest PRIVATE "${SERVICE_TEST_ROOT}/support")
-    target_link_libraries(ServiceConfigParserTest PRIVATE EGoTouchServiceCore)
-
-    add_executable(ServiceHostConfigMutationTest
-        "${SERVICE_TEST_ROOT}/unit/ServiceHostConfigMutationTest.cpp"
-    )
-    target_include_directories(ServiceHostConfigMutationTest PRIVATE "${SERVICE_TEST_ROOT}/support")
-    target_link_libraries(ServiceHostConfigMutationTest PRIVATE EGoTouchServiceCore)
-
     add_executable(ServiceEntryArgumentRoutingTest
         "${SERVICE_TEST_ROOT}/unit/ServiceEntryArgumentRoutingTest.cpp"
     )
@@ -617,16 +523,6 @@ if (EGO_BUILD_TESTS)
     target_include_directories(ServiceHostLifecycleFakeIntegrationTest PRIVATE "${SERVICE_TEST_ROOT}/support")
     target_link_libraries(ServiceHostLifecycleFakeIntegrationTest PRIVATE EGoTouchServiceCore)
 
-    add_test(NAME EGoTouchApp.ServiceProxyConfigMergeTest COMMAND EGoTouchApp_ServiceProxyConfigMergeTest)
-    set_tests_properties(EGoTouchApp.ServiceProxyConfigMergeTest PROPERTIES
-        LABELS "App;EGoTouchApp;ServiceProxy;PureLogic"
-        TIMEOUT 30
-        WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-    add_test(NAME EGoTouchApp.ServiceProxyRuntimeConfigSnapshotTest COMMAND EGoTouchApp_ServiceProxyRuntimeConfigSnapshotTest)
-    set_tests_properties(EGoTouchApp.ServiceProxyRuntimeConfigSnapshotTest PROPERTIES
-        LABELS "App;EGoTouchApp;ServiceProxy;PureLogic"
-        TIMEOUT 30
-        WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME EGoTouchApp.ServiceProxyDvrBridgeTest COMMAND EGoTouchApp_ServiceProxyDvrBridgeTest)
     set_tests_properties(EGoTouchApp.ServiceProxyDvrBridgeTest PROPERTIES
         LABELS "App;EGoTouchApp;ServiceProxy;DVRBridge;IntegrationLight"
@@ -638,19 +534,9 @@ if (EGO_BUILD_TESTS)
         TIMEOUT 30
         WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 
-    add_test(NAME ServiceConfigParserTest COMMAND ServiceConfigParserTest)
-    add_test(NAME ServiceHostConfigMutationTest COMMAND ServiceHostConfigMutationTest)
     add_test(NAME ServiceEntryArgumentRoutingTest COMMAND ServiceEntryArgumentRoutingTest)
     add_test(NAME ServiceHostLifecycleFakeIntegrationTest COMMAND ServiceHostLifecycleFakeIntegrationTest)
 
-    set_tests_properties(ServiceConfigParserTest PROPERTIES
-        LABELS "unit;service;windows"
-        TIMEOUT 10
-        WORKING_DIRECTORY "$<TARGET_FILE_DIR:ServiceConfigParserTest>")
-    set_tests_properties(ServiceHostConfigMutationTest PROPERTIES
-        LABELS "unit;service;windows"
-        TIMEOUT 10
-        WORKING_DIRECTORY "$<TARGET_FILE_DIR:ServiceHostConfigMutationTest>")
     set_tests_properties(ServiceEntryArgumentRoutingTest PROPERTIES
         LABELS "unit;service;windows"
         TIMEOUT 10
@@ -660,6 +546,5 @@ if (EGO_BUILD_TESTS)
         TIMEOUT 10
         WORKING_DIRECTORY "$<TARGET_FILE_DIR:ServiceHostLifecycleFakeIntegrationTest>")
 endif()
-
 
 

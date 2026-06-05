@@ -27,8 +27,6 @@ public:
     static constexpr int kCellCount = kRows * kCols;
 
     // ── Public configurable parameters ────────────────────────────
-    //  (exposed as public members for ConfigParam registration via
-    //   const_cast, consistent with all other pipeline modules)
 
     bool m_enabled = true;
 

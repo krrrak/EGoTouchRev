@@ -1,7 +1,6 @@
 #pragma once
 
 #include "ServiceConfigCore.h"
-#include "config/ConfigStore.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -54,7 +53,6 @@ private:
 
     std::unique_ptr<DeviceRuntime> m_deviceRuntime;
     std::unique_ptr<Impl> m_impl;
-    Config::ConfigStore m_yamlConfigStore;
 
     static void CopyCString(char* dst, size_t dstSize, std::string_view src);
     static uint32_t HashDebugSchema(const std::vector<Ipc::DebugFieldSchemaWire>& defs);
@@ -69,14 +67,9 @@ private:
                                    bool& valid);
     void BuildDebugSchema();
 
-    ServiceConfigState ParseServiceConfig(const std::string& configPath) const;
     void ApplyServiceConfigToRuntime(const ServiceConfigState& config);
     ReloadServiceConfigResult HandleReloadServiceConfig(const ServiceConfigState& reloadedConfig);
-    void BuildDefaultPipeline(const std::string& configPath);
-    Config::ConfigStore LoadYamlConfigStore() const;
-    void ApplyYamlConfigToServiceAndRuntime();
-
-    bool StartRuntimeAndPipeline(const std::string& configPath, bool yamlLoaded);
+    bool StartRuntimeAndPipeline(const std::string& configPath);
     void StartSystemStateMonitor();
     void StartIpcSubsystem();
     void StartPenSubsystem();

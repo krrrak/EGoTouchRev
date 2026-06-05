@@ -281,12 +281,9 @@ bool WriteFrameCsvFile(const std::filesystem::path& filePath,
     if (runtimeConfig && !runtimeConfig->Empty()) {
         WriteRuntimeConfigCsvSection(out, *runtimeConfig);
     } else if (pipeline) {
+        (void)pipeline;
         out << "--- Config Parameters ---\n";
-        out << "[TouchPipeline]\n";
-        std::ostringstream cfgStream;
-        pipeline->SaveConfig(cfgStream);
-        out << cfgStream.str();
-        out << "\n";
+        out << "# TODO: migrate CSV config export to ConfigSchemaSnapshot/ConfigStore.\n\n";
     }
 
     WritePeaksCsvSection(out, frame);

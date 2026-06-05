@@ -31,8 +31,6 @@ private:
     void DrawSlaveHeatmap(); // TX1 / TX2 9x9 Heatmap
 
     // Content panels (drawn inside Inspector tabs)
-    void DrawTouchSolverPanel();
-    void DrawTouchTrackingPanel();
     void DrawStylusControlPanel();
     void DrawHeatmap();
     void DrawCoordinateTable();
@@ -64,8 +62,6 @@ private:
     bool m_renderVisualization = true;
     bool m_showTouchDebugPanel = true;
     bool m_showStylusDebugPanel = true;
-    bool m_showTouchSolverPanel = true;
-    bool m_showTouchTrackingPanel = true;
     bool m_showStylusControlPanel = false;
     bool m_showMasterSuffixTable = true;
     bool m_showSlaveSuffixTable = true;

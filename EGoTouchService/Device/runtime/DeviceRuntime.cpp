@@ -1,8 +1,6 @@
 #include "runtime/DeviceRuntime.h"
 #include "Logger.h"
 #include "SolverTypes.h"
-#include "config/ConfigBinder.h"
-#include "config/ConfigStore.h"
 
 
 #include <chrono>
@@ -276,52 +274,6 @@ void DeviceRuntime::SetFramePushCallback(DeviceRuntime::FramePushCallback cb) {
   m_framePushCb = std::move(cb);
 }
 #endif
-
-void DeviceRuntime::registerBindings(Config::ConfigBinder& binder) {
-  std::lock_guard<std::mutex> lk(m_pipelineMu);
-  m_touchPipeline.registerBindings(binder);
-  m_stylusPipeline.registerBindings(binder);
-}
-
-void DeviceRuntime::applyConfig(const Config::ConfigStore& store) {
-  std::lock_guard<std::mutex> lk(m_pipelineMu);
-  m_touchPipeline.applyConfig(store);
-  m_stylusPipeline.applyConfig(store);
-  m_vhfReporter.SetStylusPacketSensorRows(
-      m_stylusPipeline.GetPacketSensorRows());
-  m_vhfReporter.SetStylusPacketSensorCols(
-      m_stylusPipeline.GetPacketSensorCols());
-  m_vhfReporter.SetStylusPacketEmitWhenInvalid(
-      m_stylusPipeline.GetEmitPacketWhenInvalid());
-}
-
-void DeviceRuntime::LoadPipelineConfig(const std::string &key,
-                                       const std::string &value) {
-  std::lock_guard<std::mutex> lk(m_pipelineMu);
-  m_touchPipeline.LoadConfig(key, value);
-}
-
-void DeviceRuntime::LoadStylusPipelineConfig(const std::string &key,
-                                             const std::string &value) {
-  std::lock_guard<std::mutex> lk(m_pipelineMu);
-  m_stylusPipeline.LoadConfig(key, value);
-  m_vhfReporter.SetStylusPacketSensorRows(
-      m_stylusPipeline.GetPacketSensorRows());
-  m_vhfReporter.SetStylusPacketSensorCols(
-      m_stylusPipeline.GetPacketSensorCols());
-  m_vhfReporter.SetStylusPacketEmitWhenInvalid(
-      m_stylusPipeline.GetEmitPacketWhenInvalid());
-}
-
-void DeviceRuntime::SavePipelineConfig(std::ostream &out) const {
-  std::lock_guard<std::mutex> lk(m_pipelineMu);
-  m_touchPipeline.SaveConfig(out);
-}
-
-void DeviceRuntime::SaveStylusPipelineConfig(std::ostream &out) const {
-  std::lock_guard<std::mutex> lk(m_pipelineMu);
-  m_stylusPipeline.SaveConfig(out);
-}
 
 void DeviceRuntime::SetVhfEnabled(bool enabled) {
   m_vhfReporter.SetEnabled(enabled);

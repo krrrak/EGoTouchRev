@@ -61,9 +61,6 @@ function(ego_add_solvers_perf name)
     )
 endfunction()
 
-ego_add_solvers_config(SolversConfig_TouchPipelineRoundTrip touch
-    unit/touch/TouchPipelineConfigRoundTripTest.cpp
-)
 ego_add_solvers_unit(SolversUnit_TouchBaselineTracker touch
     unit/touch/TouchBaselineTrackerTest.cpp
 )
@@ -83,9 +80,6 @@ ego_add_solvers_unit(SolversUnit_TouchCloseSplit touch
     unit/touch/TouchCloseSplitTest.cpp
 )
 
-ego_add_solvers_config(SolversConfig_StylusPipelineRoundTrip stylus
-    unit/stylus/StylusPipelineConfigRoundTripTest.cpp
-)
 ego_add_solvers_unit(SolversUnit_StylusLinearFilter stylus
     unit/stylus/StylusLinearFilterTest.cpp
 )

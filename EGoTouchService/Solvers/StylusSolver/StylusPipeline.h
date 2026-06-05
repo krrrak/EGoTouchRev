@@ -1,6 +1,5 @@
 #pragma once
 
-#include "ConfigSchema.h"
 #include "hpp2/Hpp2Pipeline.h"
 #include "hpp3/Hpp3Pipeline.h"
 #include "shared/CommonStylusPostPipeline.h"
@@ -13,9 +12,7 @@
 #include <array>
 #include <cstdint>
 #include <mutex>
-#include <iosfwd>    // std::ostream 前向声明
 #include <string>
-#include <vector>
 
 namespace Config {
 class ConfigBinder;
@@ -39,18 +36,11 @@ struct StylusPenSession {
     uint32_t revision = 0;
 };
 
-class StylusPipeline : public IConfigProvider {
+class StylusPipeline {
 public:
     StylusPipeline() = default;
 
     bool Process(HeatmapFrame& frame);
-
-    std::vector<ConfigParam> GetConfigSchema() const override;
-    void SaveConfig(std::ostream& out) const override;
-    void LoadConfig(const std::string& key, const std::string& value) override;
-
-    void registerBindings(Config::ConfigBinder& binder);
-    void applyConfig(const Config::ConfigStore& store);
 
     void SetBtMcuPressure(uint16_t pressure);
     void SetBtMcuPressurePacket(const std::array<uint16_t, 4>& pressure,
@@ -62,6 +52,9 @@ public:
     int GetPacketSensorRows() const { return kPacketSensorRows; }
     int GetPacketSensorCols() const { return kPacketSensorCols; }
     bool GetEmitPacketWhenInvalid() const { return true; }
+
+    void registerBindings(Config::ConfigBinder& binder);
+    void applyConfig(const Config::ConfigStore& store);
 
     // ── Shared / protocol-agnostic stages ──
     Stylus::StylusFrameParser          m_frameParser;          // shared/

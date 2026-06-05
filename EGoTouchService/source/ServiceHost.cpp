@@ -14,8 +14,6 @@
 #include "GuiLogSink.h"
 #include "Logger.h"
 #include "Ipc/IpcProtocol.h"
-#include "config/ConfigBinder.h"
-#include "config/ConfigPath.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -24,20 +22,12 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
 #include <cstring>
 #include <cwchar>
 #include <cwctype>
-#include <fstream>
-#include <exception>
-#include <filesystem>
-#include <iomanip>
 #include <mutex>
-#include <optional>
-#include <sstream>
 #include <string>
 #include <string_view>
-#include <ctime>
 #include <utility>
 #include <vector>
 
@@ -111,10 +101,7 @@ static void EnsureCommandLineParsed() {
 
 static std::string GetConfigPath() {
     EnsureCommandLineParsed();
-    if (!g_overrideConfigPath.empty()) {
-        return g_overrideConfigPath;
-    }
-    return "C:/ProgramData/EGoTouchRev/config.ini";
+    return g_overrideConfigPath;
 }
 #else
 // Release: returns empty string — callers should skip file I/O when path is empty
@@ -218,174 +205,6 @@ std::string_view CStrArrayView(const char (&value)[N]) {
     return std::string_view(value, static_cast<size_t>(end - value));
 }
 
-struct LoadPipelineConfigResult {
-    bool fileOpened = false;
-    bool migrated = false;
-    bool touchLoaded = false;
-    bool stylusLoaded = false;
-};
-
-std::string TrimCopy(std::string_view input) {
-    const size_t start = input.find_first_not_of(" \t\r\n");
-    if (start == std::string_view::npos) return {};
-    const size_t end = input.find_last_not_of(" \t\r\n");
-    return std::string(input.substr(start, end - start + 1));
-}
-
-std::string ToLowerCopy(std::string_view input) {
-    std::string out;
-    out.reserve(input.size());
-    for (char ch : input) {
-        out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
-    }
-    return out;
-}
-
-bool ParseBoolValue(std::string_view value) {
-    const std::string lowered = ToLowerCopy(TrimCopy(value));
-    return lowered == "1" || lowered == "true" || lowered == "yes" || lowered == "on";
-}
-
-bool ParseIniKeyValue(std::string_view line, std::string& key, std::string& value) {
-    const size_t eq = line.find('=');
-    if (eq == std::string_view::npos) return false;
-    key = TrimCopy(line.substr(0, eq));
-    value = TrimCopy(line.substr(eq + 1));
-    return !key.empty();
-}
-
-bool HasIniSection(const std::string& configPath, std::string_view sectionName) {
-    std::ifstream cfg(configPath);
-    if (!cfg.is_open()) {
-        return false;
-    }
-
-    std::string line;
-    while (std::getline(cfg, line)) {
-        const std::string trimmed = TrimCopy(line);
-        if (trimmed.empty() || trimmed[0] == ';' || trimmed[0] == '#') continue;
-        if (trimmed.front() != '[' || trimmed.back() != ']') continue;
-        const std::string current = TrimCopy(std::string_view(trimmed).substr(1, trimmed.size() - 2));
-        if (current == sectionName) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool IsLegacyTouchSection(const std::string& section) {
-    return section == "Master Frame Parser" ||
-           section == "Baseline Subtraction" ||
-           section == "CMF Processor" ||
-           section == "Grid IIR Processor" ||
-           section == "Feature Extractor (4.1/4.2)" ||
-           section == "Touch Tracker (IDT)" ||
-           section == "Coordinate Filter (1 Euro)" ||
-           section == "TouchGestureStateMachine";
-}
-
-std::optional<std::string> MapLegacyTouchKey(const std::string& section,
-                                             const std::string& key) {
-    if (section == "Master Frame Parser") {
-        if (key == "Enabled") return std::string("FrameParserEnabled");
-        return std::nullopt;
-    }
-    if (section == "Baseline Subtraction") {
-        if (key == "Enabled") return std::string("BaselineEnabled");
-        return key;
-    }
-    if (section == "CMF Processor") {
-        if (key == "Enabled") return std::string("CMFEnabled");
-        if (key == "DimensionMode") return std::string("CMFDimensionMode");
-        if (key == "ExclusionThreshold") return std::string("CMFExclusionThreshold");
-        if (key == "MaxCorrection") return std::string("CMFMaxCorrection");
-        return key;
-    }
-    if (section == "Grid IIR Processor") {
-        if (key == "Enabled") return std::string("GridIIREnabled");
-        return key;
-    }
-    if (section == "Feature Extractor (4.1/4.2)") {
-        if (key == "Enabled") return std::nullopt;
-        return key;
-    }
-    if (section == "Touch Tracker (IDT)") {
-        if (key == "Enabled") return std::string("TrackerEnabled");
-        return key;
-    }
-    if (section == "Coordinate Filter (1 Euro)") {
-        if (key == "Enabled") return std::string("CoordFilterEnabled");
-        return key;
-    }
-    if (section == "TouchGestureStateMachine") {
-        if (key == "Enabled") return std::string("GestureEnabled");
-        return key;
-    }
-    return std::nullopt;
-}
-
-std::string BuildBackupPath(const std::string& configPath) {
-    namespace fs = std::filesystem;
-    const fs::path source(configPath);
-    std::time_t now = std::time(nullptr);
-    std::tm localTm{};
-    localtime_s(&localTm, &now);
-
-    std::ostringstream stamp;
-    stamp << std::put_time(&localTm, "%Y%m%d-%H%M%S");
-
-    const std::string backupName =
-        source.stem().string() + ".legacy-" + stamp.str() + source.extension().string() + ".bak";
-    return (source.parent_path() / backupName).string();
-}
-
-bool BackupConfigFile(const std::string& configPath, std::string& outBackupPath) {
-    namespace fs = std::filesystem;
-    const std::string backupPath = BuildBackupPath(configPath);
-    std::error_code ec;
-    fs::copy_file(configPath, backupPath, fs::copy_options::overwrite_existing, ec);
-    if (ec) return false;
-    outBackupPath = backupPath;
-    return true;
-}
-
-bool WriteCanonicalConfig(const std::string& configPath,
-                          ServiceMode mode,
-                          bool autoMode,
-                          bool stylusVhfEnabled,
-                          PenButtonMode penButtonMode,
-                          PenButtonRoute penButtonRoute,
-                          bool penButtonRouteExplicit,
-                          const DeviceRuntime& runtime) {
-    if (configPath.empty()) {
-        return true;
-    }
-
-    std::ofstream out(configPath, std::ios::trunc);
-    if (!out.is_open()) return false;
-
-    out << "[Service]\n";
-    out << "mode=" << ServiceModeToConfig(mode) << "\n";
-    out << "auto_mode=" << (autoMode ? "1" : "0") << "\n";
-    out << "stylus_vhf_enabled=" << (stylusVhfEnabled ? "1" : "0") << "\n";
-    out << "pen_button_mode="
-        << static_cast<int>(penButtonMode) << "\n";
-    if (penButtonRouteExplicit) {
-        out << "pen_button_route="
-            << static_cast<int>(penButtonRoute) << "\n";
-    }
-    out << "\n";
-
-    out << "[TouchPipeline]\n";
-    runtime.SavePipelineConfig(out);
-    out << "\n";
-
-    out << "[StylusPipeline]\n";
-    runtime.SaveStylusPipelineConfig(out);
-    out << "\n";
-    return true;
-}
-
 RuntimePolicyEvent TranslateSystemStateEvent(const Host::SystemStateEvent& event) {
     RuntimePolicyEvent translated{};
     translated.timestamp = event.timestamp;
@@ -431,10 +250,6 @@ ServiceHost::~ServiceHost() {
 }
 
 // ── 模式解析 ──────────────────────────────────────────
-ServiceConfigState ServiceHost::ParseServiceConfig(const std::string& configPath) const {
-    return Service::ParseServiceConfig(configPath);
-}
-
 void ServiceHost::ApplyServiceConfigToRuntime(const ServiceConfigState& config) {
     if (!m_deviceRuntime) return;
 
@@ -514,58 +329,10 @@ ReloadServiceConfigResult ServiceHost::HandleReloadServiceConfig(
     return result;
 }
 
-Config::ConfigStore ServiceHost::LoadYamlConfigStore() const {
-    Config::ConfigStore store;
-
-    const auto paths = Config::resolve(std::nullopt);
-    if (!paths.has_value()) {
-        LOG_WARN("Service", __func__, "Boot", "YAML config dir not found, using empty store");
-        return store;
-    }
-
-    try {
-        store.loadFromYaml(paths->defaultConfig);
-        LOG_INFO("Service", __func__, "Boot", "Loaded default config: {}", paths->defaultConfig);
-    } catch (const std::exception& ex) {
-        LOG_ERROR("Service", __func__, "Boot", "Failed to load default.yaml: {}", ex.what());
-        return store;
-    }
-
-    if (paths->overrideExists) {
-        try {
-            Config::ConfigStore overrides;
-            overrides.loadFromYaml(paths->overrideConfig);
-            store.mergeFrom(overrides);
-            LOG_INFO("Service", __func__, "Boot", "Merged overrides from: {}", paths->overrideConfig);
-        } catch (const std::exception& ex) {
-            LOG_WARN("Service", __func__, "Boot", "Failed to load overrides.yaml, using defaults: {}", ex.what());
-        }
-    }
-
-    return store;
-}
-
-void ServiceHost::ApplyYamlConfigToServiceAndRuntime() {
-    if (!m_deviceRuntime) return;
-
-    m_configState.applyConfig(m_yamlConfigStore);
-    m_runtimeMode = m_configState.mode;
-
-    ApplyServiceConfigToRuntime(m_configState);
-    m_deviceRuntime->applyConfig(m_yamlConfigStore);
-
-    LOG_INFO("Service", __func__, "Boot", "YAML config applied to service and runtime");
-}
-
-bool ServiceHost::StartRuntimeAndPipeline(const std::string& configPath, bool yamlLoaded) {
+bool ServiceHost::StartRuntimeAndPipeline(const std::string& configPath) {
     m_deviceRuntime = std::make_unique<DeviceRuntime>(
         kDevicePathMaster, kDevicePathSlave, kDevicePathInterrupt);
     ApplyServiceConfigToRuntime(m_configState);
-    if (yamlLoaded) {
-        m_deviceRuntime->applyConfig(m_yamlConfigStore);
-    } else {
-        BuildDefaultPipeline(configPath);
-    }
     BuildDebugSchema();
 
     if (!m_deviceRuntime->Start()) {
@@ -671,26 +438,13 @@ void ServiceHost::StartPenSubsystem() {
 }
 
 bool ServiceHost::Start() {
-    m_yamlConfigStore = LoadYamlConfigStore();
-    const bool yamlLoaded = !m_yamlConfigStore.allPaths().empty();
-    std::string configPath;
-
-    if (yamlLoaded) {
-        m_configState.applyConfig(m_yamlConfigStore);
-        m_runtimeMode = m_configState.mode;
-        LOG_INFO("Service", __func__, "Boot", "Config loaded from YAML ({} keys)", m_yamlConfigStore.allPaths().size());
-    } else {
-        configPath = GetConfigPath();
-        if (!configPath.empty()) {
-            m_configState = ParseServiceConfig(configPath);
-        }
-        m_runtimeMode = m_configState.mode;
-    }
-
+    const std::string configPath = GetConfigPath();
+    (void)configPath;
+    m_runtimeMode = m_configState.mode;
     LOG_INFO("Service", __func__, "Boot", "Service mode: {}, AutoMode: {}",
              ServiceModeToConfig(m_configState.mode), m_configState.autoMode);
 
-    if (!StartRuntimeAndPipeline(configPath, yamlLoaded)) {
+    if (!StartRuntimeAndPipeline(configPath)) {
         return false;
     }
 
@@ -774,56 +528,6 @@ void ServiceHost::Stop() {
     StopRuntimeSubsystem();
 
     LOG_INFO("Service", __func__, "Shutdown", "All modules stopped.");
-}
-
-// ── Shared config loader ────────────────────────────────────────────
-template <typename TouchLoader, typename StylusLoader>
-LoadPipelineConfigResult LoadPipelineConfig(
-    const std::string& configPath,
-    TouchLoader&& loadTouch,
-    StylusLoader&& loadStylus)
-{
-    LoadPipelineConfigResult result;
-    if (configPath.empty()) {
-        return result;
-    }
-
-    std::ifstream in(configPath);
-    if (!in.is_open()) return result;
-    result.fileOpened = true;
-
-    std::string line, section;
-    while (std::getline(in, line)) {
-        const std::string trimmed = TrimCopy(line);
-        if (trimmed.empty() || trimmed[0] == ';' || trimmed[0] == '#') continue;
-        if (trimmed.front() == '[' && trimmed.back() == ']') {
-            section = TrimCopy(std::string_view(trimmed).substr(1, trimmed.size() - 2));
-            continue;
-        }
-
-        std::string key;
-        std::string val;
-        if (!ParseIniKeyValue(trimmed, key, val)) continue;
-
-        if (section == "TouchPipeline") {
-            loadTouch(key, val);
-            result.touchLoaded = true;
-            continue;
-        }
-        if (section == "StylusPipeline") {
-            loadStylus(key, val);
-            result.stylusLoaded = true;
-            continue;
-        }
-        if (IsLegacyTouchSection(section)) {
-            const auto mappedKey = MapLegacyTouchKey(section, key);
-            if (!mappedKey.has_value()) continue;
-            loadTouch(*mappedKey, val);
-            result.touchLoaded = true;
-            result.migrated = true;
-        }
-    }
-    return result;
 }
 
 // ── Pipeline 构建 ──────────────────────────────
@@ -1118,57 +822,6 @@ void ServiceHost::BuildDebugSchema() {
     m_impl->m_debugSchemaVersion = DeriveDebugSchemaVersion(m_impl->m_debugSchemaHash);
 }
 
-void ServiceHost::BuildDefaultPipeline(const std::string& configPath) {
-    if (configPath.empty()) {
-        LOG_INFO("Service", __func__, "Boot", "Config file I/O disabled; using built-in pipeline defaults.");
-        return;
-    }
-
-    // TouchPipeline is self-contained: no processor registration needed.
-    // Just load config.
-    auto loadTouch = [this](const std::string& key, const std::string& value) {
-        m_deviceRuntime->LoadPipelineConfig(key, value);
-    };
-    auto loadStylus = [this](const std::string& key, const std::string& value) {
-        m_deviceRuntime->LoadStylusPipelineConfig(key, value);
-    };
-    LOG_INFO("Service", __func__, "Boot", "TouchPipeline initialized (linear orchestrator).");
-
-    // Load saved config
-    const auto loadResult = LoadPipelineConfig(configPath, loadTouch, loadStylus);
-    if (!loadResult.fileOpened) {
-        LOG_WARN("Service", __func__, "Boot", "Config file not found: {}", configPath);
-        return;
-    }
-
-    if (loadResult.migrated) {
-        std::string backupPath;
-        if (BackupConfigFile(configPath, backupPath)) {
-            if (WriteCanonicalConfig(configPath, m_configState.mode, m_configState.autoMode, m_configState.stylusVhfEnabled, m_configState.penButtonMode, m_configState.penButtonRoute, m_configState.penButtonRouteExplicit, *m_deviceRuntime)) {
-                LOG_INFO("Service", __func__, "Boot",
-                         "Migrated legacy pipeline config from {} and rewrote canonical sections. Backup: {}",
-                         configPath, backupPath);
-            } else {
-                LOG_WARN("Service", __func__, "Boot",
-                         "Loaded legacy pipeline config from {} but failed to rewrite canonical config.",
-                         configPath);
-            }
-        } else {
-            LOG_WARN("Service", __func__, "Boot",
-                     "Loaded legacy pipeline config from {} but failed to create backup before migration.",
-                     configPath);
-        }
-    } else {
-        LOG_INFO("Service", __func__, "Boot", "Loaded canonical config from {}.", configPath);
-    }
-
-    if (!loadResult.touchLoaded && !loadResult.stylusLoaded) {
-        LOG_WARN("Service", __func__, "Boot",
-                 "Config file {} opened, but no pipeline sections were applied; keeping defaults.",
-                 configPath);
-    }
-}
-
 // ── IPC helpers ──────────────────────────────
 void ServiceHost::HandleIpcEnterDebugMode(Ipc::IpcResponse& resp) {
 #ifdef _DEBUG
@@ -1297,22 +950,12 @@ void ServiceHost::HandleIpcPersistConfig(Ipc::IpcResponse& resp) {
         return;
     }
 
-    const std::string configPath = GetConfigPath();
-    if (!WriteCanonicalConfig(configPath, m_configState.mode, m_configState.autoMode, m_configState.stylusVhfEnabled, m_configState.penButtonMode, m_configState.penButtonRoute, m_configState.penButtonRouteExplicit, *m_deviceRuntime)) {
-        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InternalError);
-        return;
-    }
-
     Ipc::PersistConfigResponseWire result{};
     result.persistedFields = ToPersistedFieldBits();
     std::memcpy(resp.data, &result, sizeof(result));
     resp.dataLen = static_cast<uint16_t>(sizeof(result));
     Ipc::MarkSuccess(resp);
-    if (configPath.empty()) {
-        LOG_INFO("Service", __func__, "IPC", "PersistConfig skipped; config file I/O disabled.");
-    } else {
-        LOG_INFO("Service", __func__, "IPC", "Canonical config persisted to {}.", configPath);
-    }
+    LOG_INFO("Service", __func__, "IPC", "PersistConfig accepted; legacy INI persistence is disabled.");
 }
 
 void ServiceHost::HandleIpcReloadConfig(Ipc::IpcResponse& resp) {
@@ -1321,80 +964,7 @@ void ServiceHost::HandleIpcReloadConfig(Ipc::IpcResponse& resp) {
         return;
     }
 
-    m_yamlConfigStore = LoadYamlConfigStore();
-    if (!m_yamlConfigStore.allPaths().empty()) {
-        ApplyYamlConfigToServiceAndRuntime();
-
-        Ipc::ReloadConfigSummaryWire summary{};
-        std::memcpy(resp.data, &summary, sizeof(summary));
-        resp.dataLen = static_cast<uint16_t>(sizeof(summary));
-        Ipc::MarkSuccess(resp);
-        LOG_INFO("Service", __func__, "IPC", "ReloadConfig completed from YAML ({} keys).", m_yamlConfigStore.allPaths().size());
-        return;
-    }
-
-    const std::string configPath = GetConfigPath();
-    if (configPath.empty()) {
-        Ipc::ReloadConfigSummaryWire summary{};
-        std::memcpy(resp.data, &summary, sizeof(summary));
-        resp.dataLen = static_cast<uint16_t>(sizeof(summary));
-        Ipc::MarkSuccess(resp);
-        LOG_INFO("Service", __func__, "IPC", "ReloadConfig skipped; config file I/O disabled.");
-        return;
-    }
-
-    auto loadTouch = [this](const std::string& key, const std::string& value) {
-        m_deviceRuntime->LoadPipelineConfig(key, value);
-    };
-    auto loadStylus = [this](const std::string& key, const std::string& value) {
-        m_deviceRuntime->LoadStylusPipelineConfig(key, value);
-    };
-    const auto loadResult = LoadPipelineConfig(configPath, loadTouch, loadStylus);
-    if (!loadResult.fileOpened) {
-        LOG_WARN("Service", __func__, "IPC", "ReloadConfig failed: config file not found: {}", configPath);
-        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::NotFound);
-        return;
-    }
-
-    const auto reloadedConfig = ParseServiceConfig(configPath);
-    const auto reloadState = HandleReloadServiceConfig(reloadedConfig);
-    const bool missingCanonicalServiceSection = !HasIniSection(configPath, "Service");
-
-    if (loadResult.migrated || missingCanonicalServiceSection) {
-        std::string backupPath;
-        if (BackupConfigFile(configPath, backupPath)) {
-            if (WriteCanonicalConfig(configPath, m_configState.mode, m_configState.autoMode, m_configState.stylusVhfEnabled, m_configState.penButtonMode, m_configState.penButtonRoute, m_configState.penButtonRouteExplicit, *m_deviceRuntime)) {
-                LOG_INFO("Service", __func__, "IPC",
-                         "Reloaded legacy config from {} and rewrote canonical sections. Backup: {}",
-                         configPath, backupPath);
-            } else {
-                LOG_WARN("Service", __func__, "IPC",
-                         "Reloaded legacy config from {} but failed to rewrite canonical config.",
-                         configPath);
-            }
-        } else {
-            LOG_WARN("Service", __func__, "IPC",
-                     "Reloaded legacy config from {} but failed to create backup before migration.",
-                     configPath);
-        }
-    } else {
-        LOG_INFO("Service", __func__, "IPC", "Config reloaded from {}.", configPath);
-    }
-
-    if (reloadState.restartRequiredFields != 0u) {
-        LOG_WARN("Service", __func__, "IPC",
-                 "ReloadConfig completed with restart-required fields. changed=0x{:02X} applied_now=0x{:02X} restart_required=0x{:02X}.",
-                 static_cast<unsigned int>(reloadState.changedFields),
-                 static_cast<unsigned int>(reloadState.appliedFields),
-                 static_cast<unsigned int>(reloadState.restartRequiredFields));
-    } else {
-        LOG_INFO("Service", __func__, "IPC",
-                 "ReloadConfig completed. changed=0x{:02X} applied_now=0x{:02X} restart_required=0x{:02X}.",
-                 static_cast<unsigned int>(reloadState.changedFields),
-                 static_cast<unsigned int>(reloadState.appliedFields),
-                 static_cast<unsigned int>(reloadState.restartRequiredFields));
-    }
-
+    const auto reloadState = HandleReloadServiceConfig(m_configState);
     Ipc::ReloadConfigSummaryWire summary{};
     summary.changedFields = reloadState.changedFields;
     summary.appliedFields = reloadState.appliedFields;
@@ -1402,6 +972,7 @@ void ServiceHost::HandleIpcReloadConfig(Ipc::IpcResponse& resp) {
     std::memcpy(resp.data, &summary, sizeof(summary));
     resp.dataLen = static_cast<uint16_t>(sizeof(summary));
     Ipc::MarkSuccess(resp);
+    LOG_INFO("Service", __func__, "IPC", "ReloadConfig accepted; legacy INI reload is disabled.");
 }
 
 void ServiceHost::HandleIpcSaveConfig(Ipc::IpcResponse& resp) {

@@ -1,7 +1,6 @@
 #include "DiagnosticsWorkbench.h"
 #include "DiagnosticsWorkbenchInternal.h"
 #include "ServiceProxy.h"
-#include "ConfigUIRenderer.h"
 #include "GuiLogSink.h"
 #include "SystemStateMonitor.h"
 #include "imgui.h"
@@ -216,21 +215,20 @@ void DiagnosticsWorkbench::DrawTouchPipelineConfigPanel() {
         return;
     }
 
-    const auto allModules = ConfigUIRenderer::CollectModuleTags(m_proxy->GetConfigSchemaSnapshot());
-    std::vector<const char*> modules;
-    modules.reserve(allModules.size());
-    for (const auto& mod : allModules) {
-        if (mod.find("Touch / ") == 0 || mod == "Service") {
-            modules.push_back(mod.c_str());
-        }
-    }
+    static const char* modules[] = {
+        "Frame Parser",
+        "Signal Conditioning",
+        "Peak Detection",
+        "Zone & Contact",
+        "Palm Rejection",
+        "Tracking",
+        "Stylus Suppress",
+        "Coordinate Filter",
+        "Gesture",
+    };
 
-    const int moduleCount = static_cast<int>(modules.size());
-    if (moduleCount > 0) {
-        m_touchConfigModuleIndex = std::clamp(m_touchConfigModuleIndex, 0, moduleCount - 1);
-    } else {
-        m_touchConfigModuleIndex = 0;
-    }
+    constexpr int moduleCount = IM_ARRAYSIZE(modules);
+    m_touchConfigModuleIndex = std::clamp(m_touchConfigModuleIndex, 0, moduleCount - 1);
     const bool masterParserOnly = m_proxy->IsMasterParserOnlyMode();
 
     ImGui::TextWrapped("Edit touch pipeline parameters by processing stage. Changes are applied only when Save & Apply is pressed.");
@@ -258,22 +256,13 @@ void DiagnosticsWorkbench::DrawTouchPipelineConfigPanel() {
         }
 
         ImGui::TableSetColumnIndex(1);
-        if (moduleCount == 0) {
-            ImGui::TextDisabled("No touch config modules available.");
-        } else {
-            const char* activeModule = modules[m_touchConfigModuleIndex];
-            ImGui::TextColored(InfoColor(), "%s", activeModule);
-            ImGui::Separator();
+        const char* activeModule = modules[m_touchConfigModuleIndex];
+        ImGui::TextColored(InfoColor(), "%s", activeModule);
+        ImGui::Separator();
 
-            auto& store = m_proxy->GetConfigStore();
-            const auto& schema = m_proxy->GetConfigSchemaSnapshot();
-            if (masterParserOnly) ImGui::BeginDisabled();
-            ConfigUIRenderer::RenderConfigStoreByModule(schema, store, activeModule);
-            ImGui::Separator();
-            if (ImGui::Button("Save & Apply", ImVec2(-1.0f, 0.0f))) {
-                m_proxy->SaveConfig();
-            }
-            if (masterParserOnly) ImGui::EndDisabled();
+        ImGui::TextWrapped("Legacy ConfigParam UI has been removed. Use the ConfigStore/ConfigBinder-driven configuration UI path.");
+        if (masterParserOnly) {
+            ImGui::TextDisabled("Master Parser Only is enabled.");
         }
 
         ImGui::EndTable();
@@ -359,63 +348,6 @@ void DiagnosticsWorkbench::DrawTouchContactSummaryTable() {
             ImGui::TableSetColumnIndex(7); ImGui::TextUnformatted(TouchReportEventLabel(contact.reportEvent));
         }
         ImGui::EndTable();
-    }
-}
-
-void DiagnosticsWorkbench::DrawTouchSolverPanel() {
-    if (!m_proxy) {
-        ImGui::TextUnformatted("ServiceProxy unavailable.");
-        return;
-    }
-
-    const bool masterParserOnly = m_proxy->IsMasterParserOnlyMode();
-    if (masterParserOnly) {
-        ImGui::TextUnformatted("Master Parser Only is enabled.");
-        ImGui::BeginDisabled();
-    }
-
-    // Unified config schema from TouchPipeline
-    auto schema = m_proxy->GetPipeline().GetConfigSchema();
-    ConfigUIRenderer::RenderConfigSchema(schema, "Touch Solver (Feature Extraction)");
-
-    if (masterParserOnly) {
-        ImGui::EndDisabled();
-    }
-}
-
-void DiagnosticsWorkbench::DrawTouchTrackingPanel() {
-    if (!m_proxy) {
-        ImGui::TextUnformatted("ServiceProxy unavailable.");
-        return;
-    }
-
-    const bool masterParserOnly = m_proxy->IsMasterParserOnlyMode();
-    if (masterParserOnly) {
-        ImGui::TextUnformatted("Master Parser Only is enabled.");
-        ImGui::BeginDisabled();
-    }
-
-    // Unified config schema from TouchPipeline
-    auto schema = m_proxy->GetPipeline().GetConfigSchema();
-    ConfigUIRenderer::RenderConfigSchema(schema, "Tracking & Report");
-
-    if (masterParserOnly) {
-        ImGui::EndDisabled();
-    }
-
-    // --- FPS Stats ---
-    ImGui::Separator();
-    ImGui::TextUnformatted("Performance");
-    if (m_proxy) {
-        const int fps = m_proxy->GetAcquisitionFps();
-        const int slaveFps = m_proxy->GetSlaveAcquisitionFps();
-        auto fpsColor = [](int f) -> ImVec4 {
-            if (f >= 100) return ImVec4(0.2f, 0.9f, 0.2f, 1.f);
-            if (f >=  50) return ImVec4(1.0f, 0.8f, 0.0f, 1.f);
-            return            ImVec4(1.0f, 0.3f, 0.3f, 1.f);
-        };
-        ImGui::TextColored(fpsColor(fps),       "Master Frame Rate: %d Hz", fps);
-        ImGui::TextColored(fpsColor(slaveFps),   "Slave  Frame Rate: %d Hz", slaveFps);
     }
 }
 
@@ -558,29 +490,12 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
 
         if (ImGui::BeginTabItem("Config")) {
             if (ImGui::BeginTabBar("StylusConfigTabs")) {
-                const auto allModules = ConfigUIRenderer::CollectModuleTags(m_proxy->GetConfigSchemaSnapshot());
-                std::vector<const char*> stylusModules;
-                stylusModules.reserve(allModules.size());
-                for (const auto& mod : allModules) {
-                    if (mod.find("Stylus / ") == 0) {
-                        stylusModules.push_back(mod.c_str());
-                    }
-                }
-
-                auto& store = m_proxy->GetConfigStore();
-                const auto& schema = m_proxy->GetConfigSchemaSnapshot();
-                for (const char* module : stylusModules) {
+                static const char* modules[] = {"HPP2", "Frame Parser", "Data Solve", "Pressure", "Coordinate"};
+                for (const char* module : modules) {
                     if (ImGui::BeginTabItem(module)) {
-                        ConfigUIRenderer::RenderConfigStoreByModule(schema, store, module);
-                        ImGui::Separator();
-                        if (ImGui::Button("Save & Apply")) {
-                            m_proxy->SaveConfig();
-                        }
+                        ImGui::TextWrapped("Legacy ConfigParam UI has been removed. Use the ConfigStore/ConfigBinder-driven configuration UI path.");
                         ImGui::EndTabItem();
                     }
-                }
-                if (stylusModules.empty()) {
-                    ImGui::TextDisabled("No stylus config modules available.");
                 }
                 ImGui::EndTabBar();
             }
