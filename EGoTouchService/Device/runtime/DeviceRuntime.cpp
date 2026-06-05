@@ -1,6 +1,8 @@
 #include "runtime/DeviceRuntime.h"
 #include "Logger.h"
 #include "SolverTypes.h"
+#include "config/ConfigBinder.h"
+#include "config/ConfigStore.h"
 
 
 #include <chrono>
@@ -274,6 +276,24 @@ void DeviceRuntime::SetFramePushCallback(DeviceRuntime::FramePushCallback cb) {
   m_framePushCb = std::move(cb);
 }
 #endif
+
+void DeviceRuntime::registerBindings(Config::ConfigBinder& binder) {
+  std::lock_guard<std::mutex> lk(m_pipelineMu);
+  m_touchPipeline.registerBindings(binder);
+  m_stylusPipeline.registerBindings(binder);
+}
+
+void DeviceRuntime::applyConfig(const Config::ConfigStore& store) {
+  std::lock_guard<std::mutex> lk(m_pipelineMu);
+  m_touchPipeline.applyConfig(store);
+  m_stylusPipeline.applyConfig(store);
+  m_vhfReporter.SetStylusPacketSensorRows(
+      m_stylusPipeline.GetPacketSensorRows());
+  m_vhfReporter.SetStylusPacketSensorCols(
+      m_stylusPipeline.GetPacketSensorCols());
+  m_vhfReporter.SetStylusPacketEmitWhenInvalid(
+      m_stylusPipeline.GetEmitPacketWhenInvalid());
+}
 
 void DeviceRuntime::LoadPipelineConfig(const std::string &key,
                                        const std::string &value) {

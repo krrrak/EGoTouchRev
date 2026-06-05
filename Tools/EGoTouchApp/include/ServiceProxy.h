@@ -13,6 +13,8 @@
 #include "StylusPipeline.h"
 #include "ConcurrentRingBuffer.h"
 #include "DvrFrameSlot.h"
+#include "config/ConfigSchemaSnapshot.h"
+#include "config/ConfigStore.h"
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -93,6 +95,9 @@ public:
     // Config sync
     void SaveConfig();
     void LoadConfig();
+    const Config::ConfigSchemaSnapshot& GetConfigSchemaSnapshot() const { return m_configSchema; }
+    Config::ConfigStore& GetConfigStore() { return m_configStore; }
+    std::vector<std::string> GetConfigModuleTags() const;
 
     // VHF control (forwarded to Service via IPC)
     bool SetVhfEnabled(bool enabled);
@@ -146,6 +151,8 @@ private:
     DvrDynamicDebugFrame CaptureDynamicDebugFrame() const;
     Dvr::DvrDynamicDebugFrameSlot CaptureDvrDynamicDebugFrameSlot(uint64_t dvrSeq) const;
     DvrRuntimeConfigSnapshot CaptureRuntimeConfigSnapshot() const;
+    void InitConfigSchema();
+    void ApplyConfigStoreToLocalRuntime();
 
     static constexpr const wchar_t* kSharedMemName =
         L"Global\\EGoTouchSharedFrame";
@@ -156,6 +163,9 @@ private:
     Ipc::SharedFrameReader m_frameReader;
     Solvers::TouchPipeline m_pipeline;
     Solvers::StylusPipeline m_stylusPipeline;
+    Config::ConfigSchemaSnapshot m_configSchema;
+    Config::ConfigStore m_configStore;
+    Config::ConfigStore m_configDefaults;
 
     // Latest frame snapshot for GUI
     std::mutex m_frameMutex;

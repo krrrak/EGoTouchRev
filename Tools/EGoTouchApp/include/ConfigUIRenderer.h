@@ -1,8 +1,13 @@
 #pragma once
 #include "ConfigSchema.h"
+#include "config/ConfigSchemaSnapshot.h"
 #include <vector>
 #include <string>
 #include <optional>
+
+namespace Config {
+class ConfigStore;
+}
 
 namespace App {
 
@@ -18,6 +23,19 @@ public:
     static void RenderConfigSchemaByModule(
         const std::vector<Solvers::ConfigParam>& schema,
         const std::string& moduleTag);
+
+    static void RenderConfigStore(
+        const Config::ConfigSchemaSnapshot& schema,
+        Config::ConfigStore& values,
+        const std::string& sectionName);
+
+    static void RenderConfigStoreByModule(
+        const Config::ConfigSchemaSnapshot& schema,
+        Config::ConfigStore& values,
+        const std::string& moduleTag);
+
+    static std::vector<std::string> CollectModuleTags(
+        const Config::ConfigSchemaSnapshot& schema);
 };
 
 } // namespace App

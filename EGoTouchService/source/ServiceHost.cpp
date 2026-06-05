@@ -14,6 +14,8 @@
 #include "GuiLogSink.h"
 #include "Logger.h"
 #include "Ipc/IpcProtocol.h"
+#include "config/ConfigBinder.h"
+#include "config/ConfigPath.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -27,6 +29,7 @@
 #include <cwchar>
 #include <cwctype>
 #include <fstream>
+#include <exception>
 #include <filesystem>
 #include <iomanip>
 #include <mutex>
@@ -511,11 +514,58 @@ ReloadServiceConfigResult ServiceHost::HandleReloadServiceConfig(
     return result;
 }
 
-bool ServiceHost::StartRuntimeAndPipeline(const std::string& configPath) {
+Config::ConfigStore ServiceHost::LoadYamlConfigStore() const {
+    Config::ConfigStore store;
+
+    const auto paths = Config::resolve(std::nullopt);
+    if (!paths.has_value()) {
+        LOG_WARN("Service", __func__, "Boot", "YAML config dir not found, using empty store");
+        return store;
+    }
+
+    try {
+        store.loadFromYaml(paths->defaultConfig);
+        LOG_INFO("Service", __func__, "Boot", "Loaded default config: {}", paths->defaultConfig);
+    } catch (const std::exception& ex) {
+        LOG_ERROR("Service", __func__, "Boot", "Failed to load default.yaml: {}", ex.what());
+        return store;
+    }
+
+    if (paths->overrideExists) {
+        try {
+            Config::ConfigStore overrides;
+            overrides.loadFromYaml(paths->overrideConfig);
+            store.mergeFrom(overrides);
+            LOG_INFO("Service", __func__, "Boot", "Merged overrides from: {}", paths->overrideConfig);
+        } catch (const std::exception& ex) {
+            LOG_WARN("Service", __func__, "Boot", "Failed to load overrides.yaml, using defaults: {}", ex.what());
+        }
+    }
+
+    return store;
+}
+
+void ServiceHost::ApplyYamlConfigToServiceAndRuntime() {
+    if (!m_deviceRuntime) return;
+
+    m_configState.applyConfig(m_yamlConfigStore);
+    m_runtimeMode = m_configState.mode;
+
+    ApplyServiceConfigToRuntime(m_configState);
+    m_deviceRuntime->applyConfig(m_yamlConfigStore);
+
+    LOG_INFO("Service", __func__, "Boot", "YAML config applied to service and runtime");
+}
+
+bool ServiceHost::StartRuntimeAndPipeline(const std::string& configPath, bool yamlLoaded) {
     m_deviceRuntime = std::make_unique<DeviceRuntime>(
         kDevicePathMaster, kDevicePathSlave, kDevicePathInterrupt);
     ApplyServiceConfigToRuntime(m_configState);
-    BuildDefaultPipeline(configPath);
+    if (yamlLoaded) {
+        m_deviceRuntime->applyConfig(m_yamlConfigStore);
+    } else {
+        BuildDefaultPipeline(configPath);
+    }
     BuildDebugSchema();
 
     if (!m_deviceRuntime->Start()) {
@@ -621,15 +671,26 @@ void ServiceHost::StartPenSubsystem() {
 }
 
 bool ServiceHost::Start() {
-    const std::string configPath = GetConfigPath();
-    if (!configPath.empty()) {
-        m_configState = ParseServiceConfig(configPath);
+    m_yamlConfigStore = LoadYamlConfigStore();
+    const bool yamlLoaded = !m_yamlConfigStore.allPaths().empty();
+    std::string configPath;
+
+    if (yamlLoaded) {
+        m_configState.applyConfig(m_yamlConfigStore);
+        m_runtimeMode = m_configState.mode;
+        LOG_INFO("Service", __func__, "Boot", "Config loaded from YAML ({} keys)", m_yamlConfigStore.allPaths().size());
+    } else {
+        configPath = GetConfigPath();
+        if (!configPath.empty()) {
+            m_configState = ParseServiceConfig(configPath);
+        }
+        m_runtimeMode = m_configState.mode;
     }
-    m_runtimeMode = m_configState.mode;
+
     LOG_INFO("Service", __func__, "Boot", "Service mode: {}, AutoMode: {}",
              ServiceModeToConfig(m_configState.mode), m_configState.autoMode);
 
-    if (!StartRuntimeAndPipeline(configPath)) {
+    if (!StartRuntimeAndPipeline(configPath, yamlLoaded)) {
         return false;
     }
 
@@ -1257,6 +1318,18 @@ void ServiceHost::HandleIpcPersistConfig(Ipc::IpcResponse& resp) {
 void ServiceHost::HandleIpcReloadConfig(Ipc::IpcResponse& resp) {
     if (!m_deviceRuntime) {
         Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidState);
+        return;
+    }
+
+    m_yamlConfigStore = LoadYamlConfigStore();
+    if (!m_yamlConfigStore.allPaths().empty()) {
+        ApplyYamlConfigToServiceAndRuntime();
+
+        Ipc::ReloadConfigSummaryWire summary{};
+        std::memcpy(resp.data, &summary, sizeof(summary));
+        resp.dataLen = static_cast<uint16_t>(sizeof(summary));
+        Ipc::MarkSuccess(resp);
+        LOG_INFO("Service", __func__, "IPC", "ReloadConfig completed from YAML ({} keys).", m_yamlConfigStore.allPaths().size());
         return;
     }
 

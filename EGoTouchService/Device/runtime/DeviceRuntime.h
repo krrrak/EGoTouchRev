@@ -24,6 +24,11 @@
 #include "vhf/VhfReporter.h"
 #include "StylusSolver/StylusPipeline.h"
 
+namespace Config {
+class ConfigBinder;
+class ConfigStore;
+}
+
 // --------------- 基础类型 ---------------
 
 enum class result { error, timeout };
@@ -178,6 +183,8 @@ public:
     PenButtonRoute GetPenButtonRoute() const { return m_penButtonRoute.load(std::memory_order_acquire); }
 
     // Pipeline/VHF façade methods for Phase 0 contract freeze.
+    void registerBindings(Config::ConfigBinder& binder);
+    void applyConfig(const Config::ConfigStore& store);
     void LoadPipelineConfig(const std::string& key, const std::string& value);
     void LoadStylusPipelineConfig(const std::string& key, const std::string& value);
     void SavePipelineConfig(std::ostream& out) const;

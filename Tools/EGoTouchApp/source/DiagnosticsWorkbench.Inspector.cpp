@@ -216,20 +216,21 @@ void DiagnosticsWorkbench::DrawTouchPipelineConfigPanel() {
         return;
     }
 
-    static const char* modules[] = {
-        "Frame Parser",
-        "Signal Conditioning",
-        "Peak Detection",
-        "Zone & Contact",
-        "Palm Rejection",
-        "Tracking",
-        "Stylus Suppress",
-        "Coordinate Filter",
-        "Gesture",
-    };
+    const auto allModules = ConfigUIRenderer::CollectModuleTags(m_proxy->GetConfigSchemaSnapshot());
+    std::vector<const char*> modules;
+    modules.reserve(allModules.size());
+    for (const auto& mod : allModules) {
+        if (mod.find("Touch / ") == 0 || mod == "Service") {
+            modules.push_back(mod.c_str());
+        }
+    }
 
-    constexpr int moduleCount = IM_ARRAYSIZE(modules);
-    m_touchConfigModuleIndex = std::clamp(m_touchConfigModuleIndex, 0, moduleCount - 1);
+    const int moduleCount = static_cast<int>(modules.size());
+    if (moduleCount > 0) {
+        m_touchConfigModuleIndex = std::clamp(m_touchConfigModuleIndex, 0, moduleCount - 1);
+    } else {
+        m_touchConfigModuleIndex = 0;
+    }
     const bool masterParserOnly = m_proxy->IsMasterParserOnlyMode();
 
     ImGui::TextWrapped("Edit touch pipeline parameters by processing stage. Changes are applied only when Save & Apply is pressed.");
@@ -257,18 +258,23 @@ void DiagnosticsWorkbench::DrawTouchPipelineConfigPanel() {
         }
 
         ImGui::TableSetColumnIndex(1);
-        const char* activeModule = modules[m_touchConfigModuleIndex];
-        ImGui::TextColored(InfoColor(), "%s", activeModule);
-        ImGui::Separator();
+        if (moduleCount == 0) {
+            ImGui::TextDisabled("No touch config modules available.");
+        } else {
+            const char* activeModule = modules[m_touchConfigModuleIndex];
+            ImGui::TextColored(InfoColor(), "%s", activeModule);
+            ImGui::Separator();
 
-        auto schema = m_proxy->GetPipeline().GetConfigSchema();
-        if (masterParserOnly) ImGui::BeginDisabled();
-        ConfigUIRenderer::RenderConfigSchemaByModule(schema, activeModule);
-        ImGui::Separator();
-        if (ImGui::Button("Save & Apply", ImVec2(-1.0f, 0.0f))) {
-            m_proxy->SaveConfig();
+            auto& store = m_proxy->GetConfigStore();
+            const auto& schema = m_proxy->GetConfigSchemaSnapshot();
+            if (masterParserOnly) ImGui::BeginDisabled();
+            ConfigUIRenderer::RenderConfigStoreByModule(schema, store, activeModule);
+            ImGui::Separator();
+            if (ImGui::Button("Save & Apply", ImVec2(-1.0f, 0.0f))) {
+                m_proxy->SaveConfig();
+            }
+            if (masterParserOnly) ImGui::EndDisabled();
         }
-        if (masterParserOnly) ImGui::EndDisabled();
 
         ImGui::EndTable();
     }
@@ -450,7 +456,6 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
     ImGui::Separator();
 
     if (ImGui::BeginTabBar("StylusSubTabs")) {
-        auto schema = m_proxy->GetStylusPipeline().GetConfigSchema();
         const auto& sd = m_currentFrame.stylus;
         const auto& diag = sd.debug.coord;
         const auto& point = sd.output.point;
@@ -553,16 +558,29 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
 
         if (ImGui::BeginTabItem("Config")) {
             if (ImGui::BeginTabBar("StylusConfigTabs")) {
-                static const char* modules[] = {"HPP2", "Frame Parser", "Data Solve", "Pressure", "Coordinate"};
-                for (const char* module : modules) {
+                const auto allModules = ConfigUIRenderer::CollectModuleTags(m_proxy->GetConfigSchemaSnapshot());
+                std::vector<const char*> stylusModules;
+                stylusModules.reserve(allModules.size());
+                for (const auto& mod : allModules) {
+                    if (mod.find("Stylus / ") == 0) {
+                        stylusModules.push_back(mod.c_str());
+                    }
+                }
+
+                auto& store = m_proxy->GetConfigStore();
+                const auto& schema = m_proxy->GetConfigSchemaSnapshot();
+                for (const char* module : stylusModules) {
                     if (ImGui::BeginTabItem(module)) {
-                        ConfigUIRenderer::RenderConfigSchemaByModule(schema, module);
+                        ConfigUIRenderer::RenderConfigStoreByModule(schema, store, module);
                         ImGui::Separator();
                         if (ImGui::Button("Save & Apply")) {
                             m_proxy->SaveConfig();
                         }
                         ImGui::EndTabItem();
                     }
+                }
+                if (stylusModules.empty()) {
+                    ImGui::TextDisabled("No stylus config modules available.");
                 }
                 ImGui::EndTabBar();
             }

@@ -2,9 +2,14 @@
 #include "Ipc/IpcProtocol.h"
 #include "Logger.h"
 #include "SolverBuildConfig.h"
+#include "config/ConfigBinder.h"
+#include "config/ConfigKeyMap.h"
+#include <algorithm>
+#include <array>
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <span>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -12,11 +17,71 @@
 #include <Windows.h>
 
 namespace App {
+namespace {
+
+enum class ConfigServiceMode {
+    Full,
+    TouchOnly,
+};
+
+struct ConfigServiceMirrorState {
+    ConfigServiceMode mode = ConfigServiceMode::Full;
+    bool autoMode = true;
+    bool stylusVhfEnabled = true;
+    PenButtonMode penButtonMode = PenButtonMode::OemCustom;
+    PenButtonRoute penButtonRoute = PenButtonRoute::VhfOnly;
+
+    void registerBindings(Config::ConfigBinder& binder) {
+        static const std::array<std::pair<ConfigServiceMode, std::string>, 2> kModeNames{{
+            {ConfigServiceMode::Full, "full"},
+            {ConfigServiceMode::TouchOnly, "touch_only"},
+        }};
+        static const std::array<std::pair<PenButtonMode, std::string>, 3> kPenButtonModeNames{{
+            {PenButtonMode::OemCustom, "oem_custom"},
+            {PenButtonMode::NativeBarrel, "native_barrel"},
+            {PenButtonMode::NativeEraser, "native_eraser"},
+        }};
+        static const std::array<std::pair<PenButtonRoute, std::string>, 3> kPenButtonRouteNames{{
+            {PenButtonRoute::VhfOnly, "vhf_only"},
+            {PenButtonRoute::Win32Only, "win32_only"},
+            {PenButtonRoute::VhfAndWin32, "vhf_and_win32"},
+        }};
+
+        binder.bindEnum("service.mode", &ConfigServiceMirrorState::mode, *this,
+                        ConfigServiceMode::Full, std::span<const std::pair<ConfigServiceMode, std::string>>{kModeNames.data(), kModeNames.size()},
+                        "Service operating mode (full | touch_only)");
+        binder.bind("service.auto_mode", &ConfigServiceMirrorState::autoMode, *this,
+                    true, {}, "Auto-select service mode");
+        binder.bind("service.stylus_vhf_enabled", &ConfigServiceMirrorState::stylusVhfEnabled, *this,
+                    true, {}, "Enable stylus VHF output");
+        binder.bindEnum("service.pen_button_mode", &ConfigServiceMirrorState::penButtonMode, *this,
+                        PenButtonMode::OemCustom, std::span<const std::pair<PenButtonMode, std::string>>{kPenButtonModeNames.data(), kPenButtonModeNames.size()},
+                        "Pen button mode (oem_custom | native_barrel | native_eraser)");
+        binder.bindEnum("service.pen_button_route", &ConfigServiceMirrorState::penButtonRoute, *this,
+                        PenButtonRoute::VhfOnly, std::span<const std::pair<PenButtonRoute, std::string>>{kPenButtonRouteNames.data(), kPenButtonRouteNames.size()},
+                        "Pen button injection route (vhf_only | win32_only | vhf_and_win32)");
+    }
+};
+
+PenButtonMode ParsePenButtonModeName(const std::string& value) {
+    if (value == "native_barrel") return PenButtonMode::NativeBarrel;
+    if (value == "native_eraser") return PenButtonMode::NativeEraser;
+    return PenButtonMode::OemCustom;
+}
+
+PenButtonRoute ParsePenButtonRouteName(const std::string& value) {
+    if (value == "win32_only") return PenButtonRoute::Win32Only;
+    if (value == "vhf_and_win32") return PenButtonRoute::VhfAndWin32;
+    return PenButtonRoute::VhfOnly;
+}
+
+} // namespace
 
 void ServiceProxy::SaveConfig() {
 #if !EGOTOUCH_CONFIG_ENABLED
     return;  // Release: no config file I/O
 #endif
+    ApplyConfigStoreToLocalRuntime();
     if (!IsLiveControlAllowed()) return;
 
     const bool serviceConnected = m_client.IsConnected();
@@ -212,79 +277,172 @@ void ServiceProxy::LoadConfig() {
     }
 
     std::ifstream in(kConfigPath);
-    if (!in.is_open()) return;
-    std::string line, section;
-    while (std::getline(in, line)) {
-        const std::string trimmed = TrimCopy(line);
-        if (trimmed.empty() || trimmed[0] == ';' || trimmed[0] == '#') continue;
-        if (trimmed.front() == '[' && trimmed.back() == ']') {
-            section = TrimCopy(std::string_view(trimmed).substr(1, trimmed.size() - 2));
-            continue;
-        }
-
-        std::string key;
-        std::string value;
-        if (!ParseIniKeyValue(trimmed, key, value)) continue;
-
-        if (section == "Service") {
-            if (!loadedServiceFromSnapshot) {
-                if (key == "mode") {
-                    const bool desiredFull = (value == "full");
-                    m_srvDesiredModeFull.store(desiredFull, std::memory_order_relaxed);
-                    // Offline fallback has no runtime distinction; mirror desired->active.
-                    m_srvActiveModeFull.store(desiredFull, std::memory_order_relaxed);
-                } else if (key == "auto_mode") {
-                    m_srvAutoMode.store(ParseServiceBool(value), std::memory_order_relaxed);
-                } else if (key == "stylus_vhf_enabled") {
-                    m_srvStylusVhfEnabled.store(ParseServiceBool(value), std::memory_order_relaxed);
-                } else if (key == "pen_button_mode") {
-                    int ival = std::atoi(value.c_str());
-                    m_srvPenButtonMode.store(
-                        static_cast<PenButtonMode>(std::clamp(ival, 0, 2)),
-                        std::memory_order_relaxed);
-                } else if (key == "pen_button_route") {
-                    int ival = std::atoi(value.c_str());
-                    m_srvPenButtonRoute.store(
-                        static_cast<PenButtonRoute>(std::clamp(ival, 0, 2)),
-                        std::memory_order_relaxed);
-                }
+    if (in.is_open()) {
+        std::string line, section;
+        while (std::getline(in, line)) {
+            const std::string trimmed = TrimCopy(line);
+            if (trimmed.empty() || trimmed[0] == ';' || trimmed[0] == '#') continue;
+            if (trimmed.front() == '[' && trimmed.back() == ']') {
+                section = TrimCopy(std::string_view(trimmed).substr(1, trimmed.size() - 2));
+                continue;
             }
-        } else if (section == "TouchPipeline") {
-            m_pipeline.LoadConfig(key, value);
-        } else if (section == "StylusPipeline") {
-            m_stylusPipeline.LoadConfig(key, value);
-        } else if (IsLegacyTouchSection(section)) {
-            const auto mappedKey = MapLegacyTouchKey(section, key);
-            if (mappedKey.has_value()) {
-                m_pipeline.LoadConfig(*mappedKey, value);
+
+            std::string key;
+            std::string value;
+            if (!ParseIniKeyValue(trimmed, key, value)) continue;
+
+            if (section == "Service") {
+                if (!loadedServiceFromSnapshot) {
+                    if (key == "mode") {
+                        const bool desiredFull = (value == "full");
+                        m_srvDesiredModeFull.store(desiredFull, std::memory_order_relaxed);
+                        // Offline fallback has no runtime distinction; mirror desired->active.
+                        m_srvActiveModeFull.store(desiredFull, std::memory_order_relaxed);
+                    } else if (key == "auto_mode") {
+                        m_srvAutoMode.store(ParseServiceBool(value), std::memory_order_relaxed);
+                    } else if (key == "stylus_vhf_enabled") {
+                        m_srvStylusVhfEnabled.store(ParseServiceBool(value), std::memory_order_relaxed);
+                    } else if (key == "pen_button_mode") {
+                        int ival = std::atoi(value.c_str());
+                        m_srvPenButtonMode.store(
+                            static_cast<PenButtonMode>(std::clamp(ival, 0, 2)),
+                            std::memory_order_relaxed);
+                    } else if (key == "pen_button_route") {
+                        int ival = std::atoi(value.c_str());
+                        m_srvPenButtonRoute.store(
+                            static_cast<PenButtonRoute>(std::clamp(ival, 0, 2)),
+                            std::memory_order_relaxed);
+                    }
+                }
+            } else if (section == "TouchPipeline") {
+                m_pipeline.LoadConfig(key, value);
+            } else if (section == "StylusPipeline") {
+                m_stylusPipeline.LoadConfig(key, value);
+            } else if (IsLegacyTouchSection(section)) {
+                const auto mappedKey = MapLegacyTouchKey(section, key);
+                if (mappedKey.has_value()) {
+                    m_pipeline.LoadConfig(*mappedKey, value);
+                }
             }
         }
     }
+
+    InitConfigSchema();
+}
+
+void ServiceProxy::InitConfigSchema() {
+#if !EGOTOUCH_CONFIG_ENABLED
+    return;
+#endif
+    Config::ConfigBinder binder;
+    m_pipeline.registerBindings(binder);
+    m_stylusPipeline.registerBindings(binder);
+
+    ConfigServiceMirrorState serviceState{};
+    serviceState.mode = m_srvDesiredModeFull.load(std::memory_order_relaxed)
+        ? ConfigServiceMode::Full
+        : ConfigServiceMode::TouchOnly;
+    serviceState.autoMode = m_srvAutoMode.load(std::memory_order_relaxed);
+    serviceState.stylusVhfEnabled = m_srvStylusVhfEnabled.load(std::memory_order_relaxed);
+    serviceState.penButtonMode = m_srvPenButtonMode.load(std::memory_order_relaxed);
+    serviceState.penButtonRoute = m_srvPenButtonRoute.load(std::memory_order_relaxed);
+    serviceState.registerBindings(binder);
+
+    try {
+        m_configDefaults.loadFromYaml("config/default.yaml");
+    } catch (...) {
+        m_configDefaults = Config::ConfigStore{};
+        binder.writeDefaults(m_configDefaults);
+    }
+    m_configStore = m_configDefaults;
+    binder.writeCurrent(m_configStore);
+    m_configSchema = Config::BuildMergedSchema(m_configDefaults, binder);
+}
+
+void ServiceProxy::ApplyConfigStoreToLocalRuntime() {
+#if !EGOTOUCH_CONFIG_ENABLED
+    return;
+#endif
+    Config::ConfigBinder binder;
+    m_pipeline.registerBindings(binder);
+    m_stylusPipeline.registerBindings(binder);
+    binder.apply(m_configStore);
+
+    const std::string mode = m_configStore.getOr<std::string>("service.mode", m_srvDesiredModeFull.load(std::memory_order_relaxed) ? "full" : "touch_only");
+    const bool desiredFull = mode != "touch_only";
+    m_srvDesiredModeFull.store(desiredFull, std::memory_order_relaxed);
+    if (!m_client.IsConnected()) {
+        m_srvActiveModeFull.store(desiredFull, std::memory_order_relaxed);
+    }
+    m_srvAutoMode.store(m_configStore.getOr<bool>("service.auto_mode", m_srvAutoMode.load(std::memory_order_relaxed)), std::memory_order_relaxed);
+    m_srvStylusVhfEnabled.store(m_configStore.getOr<bool>("service.stylus_vhf_enabled", m_srvStylusVhfEnabled.load(std::memory_order_relaxed)), std::memory_order_relaxed);
+    m_srvPenButtonMode.store(ParsePenButtonModeName(m_configStore.getOr<std::string>("service.pen_button_mode", "oem_custom")), std::memory_order_relaxed);
+    m_srvPenButtonRoute.store(ParsePenButtonRouteName(m_configStore.getOr<std::string>("service.pen_button_route", "vhf_only")), std::memory_order_relaxed);
+}
+
+std::vector<std::string> ServiceProxy::GetConfigModuleTags() const {
+    std::vector<std::string> tags;
+    tags.reserve(m_configSchema.entries.size());
+    for (const auto& entry : m_configSchema.entries) {
+        if (!entry.moduleTag.empty()) {
+            tags.push_back(entry.moduleTag);
+        }
+    }
+    std::sort(tags.begin(), tags.end());
+    tags.erase(std::unique(tags.begin(), tags.end()), tags.end());
+    return tags;
 }
 
 void ServiceProxy::SetSrvModeFull(bool full) {
     if (!IsLiveControlAllowed()) return;
     m_srvDesiredModeFull.store(full, std::memory_order_relaxed);
+    m_configStore.set<std::string>("service.mode", full ? "full" : "touch_only");
 }
 
 void ServiceProxy::SetSrvStylusVhfEnabled(bool enabled) {
     if (!IsLiveControlAllowed()) return;
     m_srvStylusVhfEnabled.store(enabled, std::memory_order_relaxed);
+    m_configStore.set<bool>("service.stylus_vhf_enabled", enabled);
 }
 
 void ServiceProxy::SetSrvAutoMode(bool enabled) {
     if (!IsLiveControlAllowed()) return;
     m_srvAutoMode.store(enabled, std::memory_order_relaxed);
+    m_configStore.set<bool>("service.auto_mode", enabled);
 }
 
 void ServiceProxy::SetPenButtonMode(PenButtonMode m) {
     if (!IsLiveControlAllowed()) return;
     m_srvPenButtonMode.store(m, std::memory_order_relaxed);
+    switch (m) {
+        case PenButtonMode::NativeBarrel:
+            m_configStore.set<std::string>("service.pen_button_mode", "native_barrel");
+            break;
+        case PenButtonMode::NativeEraser:
+            m_configStore.set<std::string>("service.pen_button_mode", "native_eraser");
+            break;
+        case PenButtonMode::OemCustom:
+        default:
+            m_configStore.set<std::string>("service.pen_button_mode", "oem_custom");
+            break;
+    }
 }
 
 void ServiceProxy::SetPenButtonRoute(PenButtonRoute r) {
     if (!IsLiveControlAllowed()) return;
     m_srvPenButtonRoute.store(r, std::memory_order_relaxed);
+    switch (r) {
+        case PenButtonRoute::Win32Only:
+            m_configStore.set<std::string>("service.pen_button_route", "win32_only");
+            break;
+        case PenButtonRoute::VhfAndWin32:
+            m_configStore.set<std::string>("service.pen_button_route", "vhf_and_win32");
+            break;
+        case PenButtonRoute::VhfOnly:
+        default:
+            m_configStore.set<std::string>("service.pen_button_route", "vhf_only");
+            break;
+    }
 }
 
 // ── MasterParser-only mode (local) ──
