@@ -72,9 +72,9 @@
 ## Phase 2: Pipeline 迁移
 
 ### 2.1 TouchPipeline
-- [ ] 2.1.1 在 `TouchPipeline.h` 中声明 `registerBindings(ConfigBinder&)` / `applyConfig(const ConfigStore&)`
-- [ ] 2.1.2 实现 `registerBindings()` — 所有 active 键 (约 7 个) + frozen 键 (约 113 个)
-- [ ] 2.1.3 实现 `applyConfig()` — 一次性从 ConfigStore 读取并缓存到成员字段
+- [x] 2.1.1 在 `TouchPipeline.h` 中声明 `registerBindings(ConfigBinder&)` / `applyConfig(const ConfigStore&)`
+- [x] 2.1.2 实现 `registerBindings()` — 所有 active 键 (8 个)
+- [x] 2.1.3 实现 `applyConfig()` — 一次性从 ConfigStore 读取并缓存到成员字段
 - [ ] 2.1.4 ServiceHost 启动时调用: `binder → apply → TouchPipeline`
 - [ ] 2.1.5 重载时调用: `ConfigStore::loadFromYaml() → binder.apply()`
 - [ ] 2.1.6 删除 `TouchPipelineConfigKeys.h`
@@ -84,9 +84,9 @@
 - [ ] 2.1.10 TouchPipelineConfigRoundTripTest 适配新接口并通过
 
 ### 2.2 StylusPipeline
-- [ ] 2.2.1 声明 `registerBindings()` / `applyConfig()`
-- [ ] 2.2.2 实现 `registerBindings()` — 所有键 (约 65 个)
-- [ ] 2.2.3 实现 `applyConfig()`
+- [x] 2.2.1 声明 `registerBindings()` / `applyConfig()`
+- [x] 2.2.2 实现 `registerBindings()` — ~40 bindable 键 (bool + int), uint 成员由 applyConfig 处理
+- [x] 2.2.3 实现 `applyConfig()` — 含 disable-flag reset 逻辑
 - [ ] 2.2.4 删除 `StylusPipelineConfigKeys.h`
 - [ ] 2.2.5 删除 `StylusPipelineConfigKeys.cpp`
 - [ ] 2.2.6 删除 `StylusPipeline::LoadConfig()` / `SaveConfig()` / `GetConfigSchema()` 旧实现
