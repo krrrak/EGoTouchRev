@@ -13,8 +13,8 @@ public:
 
     // ── IIR coefficient selection (GetIIRCoef equivalent) ──
     // In-band mode params (edge NOT active)
-    uint8_t m_coefLowInBand = 2;      // asa[0xA5E]
-    uint8_t m_coefHighInBand = 16;    // asa[0xA5F]
+    uint8_t m_coefLowInBand = 12;      // asa[0xA5E]
+    uint8_t m_coefHighInBand = 6;    // asa[0xA5F]
     uint8_t m_speedTholdInBand = 20;  // 0x14
 
     // Edge mode params (edge active)
@@ -22,7 +22,7 @@ public:
     uint8_t m_coefHighEdge = 18;   // asa[0xA5D]
     uint8_t m_speedTholdEdge = 10; // 0x0A
 
-    int m_speedMax = 205;  // 0xCD — speed value at which high coef is fully engaged
+    int m_speedMax = 140;  // 0xCD — speed value at which high coef is fully engaged
     uint8_t m_maxCoef = 32;   // asa[0xA60] — denominator in IIR formula
 
     // ── Output ──
