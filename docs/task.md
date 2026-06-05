@@ -122,11 +122,11 @@
 ## Phase 3: IPC 协议
 
 ### 3.1 TLV 协议定义
-- [ ] 3.1.1 定义 `ConfigKeyId` enum (Service/Touch/Stylus/DVR 分区)
-- [ ] 3.1.2 定义 `ConfigTlvEntry` / `ConfigSnapshotTlv` / `ConfigPatchTlv` struct
-- [ ] 3.1.3 `ConfigMutationResultTlv` struct
-- [ ] 3.1.4 keyId ↔ YAML path 双向映射 (由 ConfigBinder 注册时自动生成)
-- [ ] 3.1.5 TLV 序列化/反序列化函数
+- [x] 3.1.1 定义 `ConfigKeyId` enum (Service/Touch/Stylus/DVR 分区)
+- [x] 3.1.2 定义 `ConfigTlvEntry` / `ConfigSnapshotTlv` / `ConfigPatchTlv` struct
+- [x] 3.1.3 `ConfigMutationResultTlv` struct
+- [x] 3.1.4 keyId ↔ YAML path 双向映射 (ConfigKeyMap)
+- [x] 3.1.5 TLV 序列化/反序列化函数
 - [ ] 3.1.6 单元测试: TLV round-trip / 未知 keyId 跳过 / 版本不匹配检测
 
 ### 3.2 Service 侧 IPC Handler
@@ -155,8 +155,8 @@
 - [ ] 4.1.4 删除 `ConfigUIRenderer` 对旧 `IConfigProvider` / `ConfigParam` 的依赖
 
 ### 4.2 CMake 打包
-- [ ] 4.2.1 `POST_BUILD` 规则: 复制 `config/` 到输出目录
-- [ ] 4.2.2 `install()` 规则: Config 组件
+- [x] 4.2.1 `POST_BUILD` 规则: 复制 `config/` 到输出目录
+- [x] 4.2.2 `install()` 规则: Config 组件
 - [ ] 4.2.3 验证: 构建后 `config/default.yaml` 在 .exe 同目录
 
 ### 4.3 端到端验证
@@ -176,9 +176,9 @@
 | Phase 0 | 13 | 11 | 进行中 |
 | Phase 1 | 16 | 13 | 已完成 |
 | Phase 2 | 26 | 12 | 进行中 |
-| Phase 3 | 14 | 0 | 待开始 |
-| Phase 4 | 11 | 0 | 待开始 |
-| **总计** | **80** | **36** | — |
+| Phase 3 | 14 | 5 | 进行中 |
+| Phase 4 | 11 | 2 | 进行中 |
+| **总计** | **80** | **41** | — |
 
 ## 文档产出
 
