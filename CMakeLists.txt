@@ -121,12 +121,11 @@ file(GLOB IPC_HEADERS "${IPC_ROOT}/include/Ipc/*.h")
 add_subdirectory("${COMMON_ROOT}/spdlog-1.17.0" "spdlog_build")
 
 # yaml-cpp
-set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 include(FetchContent)
 FetchContent_Declare(
     yaml-cpp
     GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
-    GIT_TAG 0.8.0
+    GIT_TAG yaml-cpp-0.9.0
     GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(yaml-cpp)
