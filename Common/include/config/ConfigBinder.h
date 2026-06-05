@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ConfigKeyMap.h"
+#include "ConfigSchemaSnapshot.h"
 #include "ConfigValue.h"
 
 #include <cstdint>
@@ -23,8 +25,11 @@ struct BindingEntry {
     std::function<ConfigValue()> getter;               // 从成员读取值
     ConfigValue defaultValue;
     std::string typeName;    // "bool" / "int" / "float" / "string" / "enum"
+    std::optional<ConfigKeyId> keyId;    // 来自 ConfigKeyMap 的静态映射
     std::optional<ConfigRange> range;
+    std::string displayName;              // 来自 deriveDisplayName()
     std::string description;
+    std::string moduleTag;                // 来自 deriveModuleTag()
     std::vector<std::pair<int, std::string>> enumMapping;  // 枚举值映射
 };
 
@@ -54,6 +59,15 @@ public:
 
     // ── 从绑定生成 Schema (用于校验) ──
     void populateSchema(ConfigStore& schemaStore) const;
+
+    // ── 返回所有绑定的当前 schema + 当前值 ──
+    ConfigSchemaSnapshot snapshot() const;
+
+    // ── 将当前绑定值写入 ConfigStore ──
+    void writeCurrent(ConfigStore& store) const;
+
+    // ── 返回所有不重复的 moduleTag ──
+    std::vector<std::string> moduleTags() const;
 
     // ── 访问绑定列表 (用于 UI / 调试) ──
     const std::vector<BindingEntry>& bindings() const { return m_bindings; }
@@ -105,6 +119,9 @@ void ConfigBinder::bind(std::string_view yamlPath,
     entry.description = description;
     entry.defaultValue = ConfigValue(defaultValue);
     entry.typeName = typeNameFor<T>();
+    entry.keyId = tryKeyIdForPath(yamlPath);
+    entry.displayName = deriveDisplayName(yamlPath);
+    entry.moduleTag = deriveModuleTag(yamlPath);
     if (range.min != 0.0 || range.max != 0.0) {
         entry.range = range;
     }
@@ -133,6 +150,9 @@ void ConfigBinder::bindEnum(std::string_view yamlPath,
     entry.description = description;
     entry.defaultValue = ConfigValue(std::string{}); // 枚举存为 string
     entry.typeName = "enum";
+    entry.keyId = tryKeyIdForPath(yamlPath);
+    entry.displayName = deriveDisplayName(yamlPath);
+    entry.moduleTag = deriveModuleTag(yamlPath);
 
     for (const auto& [val, name] : enumMapping) {
         const auto intValue = static_cast<int>(val);
