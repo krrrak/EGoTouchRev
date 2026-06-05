@@ -17,6 +17,11 @@
 #include <string>
 #include <vector>
 
+namespace Config {
+class ConfigBinder;
+class ConfigStore;
+}
+
 namespace Solvers {
 
 enum class StylusProtocolHint : uint8_t {
@@ -43,6 +48,9 @@ public:
     std::vector<ConfigParam> GetConfigSchema() const override;
     void SaveConfig(std::ostream& out) const override;
     void LoadConfig(const std::string& key, const std::string& value) override;
+
+    void registerBindings(Config::ConfigBinder& binder);
+    void applyConfig(const Config::ConfigStore& store);
 
     void SetBtMcuPressure(uint16_t pressure);
     void SetBtMcuPressurePacket(const std::array<uint16_t, 4>& pressure,

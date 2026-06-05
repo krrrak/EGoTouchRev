@@ -1,6 +1,8 @@
 #include "TouchPipeline.h"
 #include "TouchPipelineConfigKeys.h"
 #include "ConfigParse.h"
+#include "config/ConfigBinder.h"
+#include "config/ConfigStore.h"
 
 #include <algorithm>
 #include <array>
@@ -420,6 +422,55 @@ void WriteConfigLine(std::ostream& out, std::string_view key, const TValue& valu
 } // namespace
 
 namespace Solvers {
+
+void TouchPipeline::registerBindings(Config::ConfigBinder& binder) {
+    using Config::ConfigRange;
+
+    binder.bind<int32_t>("touch.signal_cond.baseline_bg_alpha_shift",
+                         m_baseline.m_backgroundAlphaShift,
+                         3,
+                         ConfigRange{0, 15});
+    binder.bind<int32_t>("touch.signal_cond.baseline_bg_max_step",
+                         m_baseline.m_backgroundMaxStep,
+                         512,
+                         ConfigRange{1, 2048});
+    binder.bind<int32_t>("touch.signal_cond.baseline_no_finger_alpha_shift",
+                         m_baseline.m_noFingerAlphaShift,
+                         3,
+                         ConfigRange{0, 15});
+    binder.bind<int32_t>("touch.signal_cond.baseline_no_finger_max_step",
+                         m_baseline.m_noFingerMaxStep,
+                         512,
+                         ConfigRange{1, 2048});
+    binder.bind<int32_t>("touch.signal_cond.baseline_recovery_alpha_shift",
+                         m_baseline.m_recoveryAlphaShift,
+                         2,
+                         ConfigRange{0, 15});
+    binder.bind<int32_t>("touch.signal_cond.baseline_recovery_max_frames",
+                         m_baseline.m_recoveryMaxFrames,
+                         30,
+                         ConfigRange{1, 120});
+    binder.bind<int32_t>("touch.signal_cond.baseline_recovery_max_step",
+                         m_baseline.m_recoveryMaxStep,
+                         256,
+                         ConfigRange{1, 2048});
+
+    binder.bind<bool>("touch.frame_parser.enabled",
+                      m_frameParser.m_enabled,
+                      true);
+}
+
+void TouchPipeline::applyConfig(const Config::ConfigStore& store) {
+    m_baseline.m_backgroundAlphaShift = store.getOr<int32_t>("touch.signal_cond.baseline_bg_alpha_shift", 3);
+    m_baseline.m_backgroundMaxStep = store.getOr<int32_t>("touch.signal_cond.baseline_bg_max_step", 512);
+    m_baseline.m_noFingerAlphaShift = store.getOr<int32_t>("touch.signal_cond.baseline_no_finger_alpha_shift", 3);
+    m_baseline.m_noFingerMaxStep = store.getOr<int32_t>("touch.signal_cond.baseline_no_finger_max_step", 512);
+    m_baseline.m_recoveryAlphaShift = store.getOr<int32_t>("touch.signal_cond.baseline_recovery_alpha_shift", 2);
+    m_baseline.m_recoveryMaxFrames = store.getOr<int32_t>("touch.signal_cond.baseline_recovery_max_frames", 30);
+    m_baseline.m_recoveryMaxStep = store.getOr<int32_t>("touch.signal_cond.baseline_recovery_max_step", 256);
+
+    m_frameParser.m_enabled = store.getOr<bool>("touch.frame_parser.enabled", true);
+}
 
 // ══════════════════════════════════════════════════════════════════════
 // Process — linear orchestration of all 6 phases

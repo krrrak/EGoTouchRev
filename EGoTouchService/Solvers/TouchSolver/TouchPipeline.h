@@ -10,6 +10,8 @@
 #include "SolverTypes.h"
 #include "ConfigSchema.h"
 
+#include <cstdint>
+
 // ── Phase 1: Frame Parsing ──
 #include "MasterFrameParser.hpp"
 
@@ -41,6 +43,11 @@
 #include <array>
 #include <iosfwd>    // std::ostream 前向声明
 
+namespace Config {
+class ConfigBinder;
+class ConfigStore;
+}
+
 namespace Solvers {
 
 class TouchPipeline {
@@ -63,6 +70,14 @@ public:
     std::vector<ConfigParam> GetConfigSchema() const;
     void SaveConfig(std::ostream& out) const;
     void LoadConfig(const std::string& key, const std::string& value);
+
+    // ========== Config-Binder 集成 ==========
+
+    /// 注册所有可配置键到 ConfigBinder（启动时一次性调用）
+    void registerBindings(Config::ConfigBinder& binder);
+
+    /// 从 ConfigStore 读取值并更新 Pipeline 成员（部分键变更时联动重置子模块）
+    void applyConfig(const Config::ConfigStore& store);
 
     // ── Thread-safe accessors for UI/IPC (guarded by mutex) ──
     std::vector<Touch::Peak> GetPeaks() const;
