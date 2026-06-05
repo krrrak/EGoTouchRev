@@ -9,29 +9,29 @@
 ## Phase 0: 依赖 + 基础组件
 
 ### 0.1 yaml-cpp 集成
-- [ ] 0.1.1 CMake FetchContent 引入 yaml-cpp
-- [ ] 0.1.2 在 arm64-Debug / arm64-Release / amd64-Debug 下编译通过
+- [x] 0.1.1 CMake FetchContent 引入 yaml-cpp
+- [~] 0.1.2 在 arm64-Debug / arm64-Release / amd64-Debug 下编译通过
 - [ ] 0.1.3 实测 arm64-Release 的二进制增量, 确认是否需切换到 nlohmann/json
 
 ### 0.2 ConfigValue 类型
-- [ ] 0.2.1 `Common/include/config/ConfigValue.h` — `std::variant<bool, int32_t, float, std::string>`
-- [ ] 0.2.2 `getValue<T>()` / `tryGetValue<T>()` 辅助函数
-- [ ] 0.2.3 `toString()` 序列化
+- [x] 0.2.1 `Common/include/config/ConfigValue.h` — `std::variant<bool, int32_t, float, std::string>`
+- [x] 0.2.2 `getValue<T>()` / `tryGetValue<T>()` 辅助函数
+- [x] 0.2.3 `toString()` 序列化
 - [ ] 0.2.4 单元测试: 各类型构造 / 访问 / 转换
 
 ### 0.3 YamlParser
-- [ ] 0.3.1 `Common/include/config/YamlParser.h` — `load(path)` / `save(path, node)`
-- [ ] 0.3.2 `Common/source/config/YamlParser.cpp` — yaml-cpp 封装
-- [ ] 0.3.3 错误处理: 文件不存在 / 格式错误 / 路径不可写
+- [x] 0.3.1 `Common/include/config/YamlParser.h` — `load(path)` / `save(path, node)`
+- [x] 0.3.2 `Common/source/config/YamlParser.cpp` — yaml-cpp 封装
+- [x] 0.3.3 错误处理: 文件不存在 / 格式错误 / 路径不可写
 - [ ] 0.3.4 单元测试: YAML round-trip
 
 ### 0.4 ConfigStore (基础)
-- [ ] 0.4.1 `Common/include/config/ConfigStore.h` — `get<T>(path)` / `set<T>(path, value)`
-- [ ] 0.4.2 `Common/source/config/ConfigStore.cpp` — 基于 hash map 的 flat key-value 存储
-- [ ] 0.4.3 `has(path)` / `allPaths()` 遍历接口
-- [ ] 0.4.4 `loadFromYaml(path)` — YAML 文件 → ConfigStore
-- [ ] 0.4.5 `saveToYaml(path)` — ConfigStore → YAML 文件 (保持结构)
-- [ ] 0.4.6 `mergePath()` — 点号分隔的 YAML 路径解析 (如 `touch.signal_cond.key`)
+- [x] 0.4.1 `Common/include/config/ConfigStore.h` — `get<T>(path)` / `set<T>(path, value)`
+- [x] 0.4.2 `Common/source/config/ConfigStore.cpp` — 基于 hash map 的 flat key-value 存储
+- [x] 0.4.3 `has(path)` / `allPaths()` 遍历接口
+- [x] 0.4.4 `loadFromYaml(path)` — YAML 文件 → ConfigStore
+- [x] 0.4.5 `saveToYaml(path)` — ConfigStore → YAML 文件 (保持结构)
+- [x] 0.4.6 merge 路径解析 — 点号分隔的 YAML 路径解析 (如 `touch.signal_cond.key`)
 - [ ] 0.4.7 单元测试: get/set round-trip / YAML 加载保存
 
 ---
@@ -173,7 +173,7 @@
 
 | Phase | 任务数 | 已完成 | 状态 |
 |-------|--------|--------|------|
-| Phase 0 | 13 | 0 | 待开始 |
+| Phase 0 | 13 | 11 | 进行中 |
 | Phase 1 | 16 | 0 | 待开始 |
 | Phase 2 | 26 | 0 | 待开始 |
 | Phase 3 | 14 | 0 | 待开始 |
@@ -188,4 +188,4 @@
 
 ---
 
-> 最后更新: 2026-06-05
+> 最后更新: 2026-06-05 (Phase 0 代码实现完成, 编译验证待跑)
