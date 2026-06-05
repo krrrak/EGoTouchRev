@@ -142,6 +142,8 @@ target_sources(Common PRIVATE
     "${COMMON_ROOT}/source/config/ConfigBinder.cpp"
     "${COMMON_ROOT}/source/config/SchemaValidator.cpp"
     "${COMMON_ROOT}/source/config/ConfigPath.cpp"
+    "${COMMON_ROOT}/source/config/ConfigTlv.cpp"
+    "${COMMON_ROOT}/source/config/ConfigKeyMap.cpp"
 )
 
 target_include_directories(Common PUBLIC
@@ -657,5 +659,6 @@ if (EGO_BUILD_TESTS)
         TIMEOUT 10
         WORKING_DIRECTORY "$<TARGET_FILE_DIR:ServiceHostLifecycleFakeIntegrationTest>")
 endif()
+
 
 
