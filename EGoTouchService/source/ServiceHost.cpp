@@ -14,8 +14,10 @@
 #include "GuiLogSink.h"
 #include "Logger.h"
 #include "Ipc/IpcProtocol.h"
+#include "config/ConfigBinder.h"
 #include "config/ConfigPath.h"
 #include "config/ConfigStore.h"
+#include "config/SchemaValidator.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -28,8 +30,11 @@
 #include <cwchar>
 #include <exception>
 #include <cwctype>
+#include <exception>
+#include <filesystem>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -131,6 +136,11 @@ struct ServiceHost::Impl {
     HANDLE m_logEvent = nullptr;
     HANDLE m_penEvent = nullptr;
 
+    std::optional<Config::ConfigPaths> m_configPaths;
+    Config::ConfigStore m_defaultConfigStore;
+    Config::ConfigStore m_configStore;
+    bool m_configLoaded = false;
+
     std::vector<Ipc::DebugFieldSchemaWire> m_debugSchema;
     uint16_t m_debugSchemaVersion = 0;
     uint32_t m_debugSchemaHash = 0;
@@ -159,6 +169,53 @@ constexpr uint8_t ToPersistedFieldBits() {
            Ipc::ToBits(Ipc::ServiceConfigFieldWire::StylusVhfEnabled) |
            Ipc::ToBits(Ipc::ServiceConfigFieldWire::PenButtonMode) |
            Ipc::ToBits(Ipc::ServiceConfigFieldWire::PenButtonRoute);
+}
+
+const char* ToConfigValue(PenButtonMode mode) {
+    switch (mode) {
+    case PenButtonMode::OemCustom: return "oem_custom";
+    case PenButtonMode::NativeBarrel: return "native_barrel";
+    case PenButtonMode::NativeEraser: return "native_eraser";
+    }
+    return "oem_custom";
+}
+
+const char* ToConfigValue(PenButtonRoute route) {
+    switch (route) {
+    case PenButtonRoute::VhfOnly: return "vhf_only";
+    case PenButtonRoute::Win32Only: return "win32_only";
+    case PenButtonRoute::VhfAndWin32: return "vhf_and_win32";
+    }
+    return "vhf_only";
+}
+
+void RegisterServiceConfigBindings(Config::ConfigBinder& binder,
+                                   ServiceConfigState& state) {
+    static const std::array<std::pair<ServiceMode, std::string>, 2> kModeMapping{{
+        {ServiceMode::Full, "full"},
+        {ServiceMode::TouchOnly, "touch_only"},
+    }};
+    static const std::array<std::pair<PenButtonMode, std::string>, 3> kPenButtonModeMapping{{
+        {PenButtonMode::OemCustom, "oem_custom"},
+        {PenButtonMode::NativeBarrel, "native_barrel"},
+        {PenButtonMode::NativeEraser, "native_eraser"},
+    }};
+    static const std::array<std::pair<PenButtonRoute, std::string>, 3> kPenButtonRouteMapping{{
+        {PenButtonRoute::VhfOnly, "vhf_only"},
+        {PenButtonRoute::Win32Only, "win32_only"},
+        {PenButtonRoute::VhfAndWin32, "vhf_and_win32"},
+    }};
+
+    binder.bindEnum("service.mode", &ServiceConfigState::mode, state,
+                    ServiceMode::Full, std::span<const std::pair<ServiceMode, std::string>>(kModeMapping), "Service runtime topology");
+    binder.bind("service.auto_mode", &ServiceConfigState::autoMode, state,
+                true, {}, "Enable automatic runtime start/init");
+    binder.bind("service.stylus_vhf_enabled", &ServiceConfigState::stylusVhfEnabled, state,
+                true, {}, "Enable stylus VHF output");
+    binder.bindEnum("service.pen_button_mode", &ServiceConfigState::penButtonMode, state,
+                    PenButtonMode::OemCustom, std::span<const std::pair<PenButtonMode, std::string>>(kPenButtonModeMapping), "Pen button semantic mode");
+    binder.bindEnum("service.pen_button_route", &ServiceConfigState::penButtonRoute, state,
+                    PenButtonRoute::VhfOnly, std::span<const std::pair<PenButtonRoute, std::string>>(kPenButtonRouteMapping), "Pen button injection route");
 }
 
 constexpr uint8_t ToWireServiceMode(ServiceMode mode) {
@@ -280,40 +337,6 @@ ServiceHost::~ServiceHost() {
 }
 
 // ── 模式解析 ──────────────────────────────────────────
-bool ServiceHost::LoadStartupConfig(const std::string& configPath) {
-    std::optional<std::string> overridePath;
-    if (!configPath.empty()) {
-        overridePath = configPath;
-    }
-    const auto paths = Config::resolve(overridePath);
-    if (!paths.has_value()) {
-        LOG_ERROR("Service", __func__, "Config", "Startup config was not found; service startup aborted.");
-        return false;
-    }
-
-    try {
-        Config::ConfigStore store;
-        store.loadFromYaml(paths->defaultConfig);
-        if (paths->overrideExists) {
-            Config::ConfigStore overrides;
-            overrides.loadFromYaml(paths->overrideConfig);
-            store.mergeFrom(overrides);
-        }
-
-        ApplyConfig(m_configState, store);
-        if (m_deviceRuntime) {
-            m_deviceRuntime->ApplyConfigStore(store);
-        }
-
-        LOG_INFO("Service", __func__, "Config", "Loaded startup config: default='{}' overrides='{}' overrideExists={}",
-                 paths->defaultConfig, paths->overrideConfig, paths->overrideExists);
-        return true;
-    } catch (const std::exception& ex) {
-        LOG_ERROR("Service", __func__, "Config", "Failed to load startup config: {}", ex.what());
-        return false;
-    }
-}
-
 void ServiceHost::ApplyServiceConfigToRuntime(const ServiceConfigState& config) {
     if (!m_deviceRuntime) return;
 
@@ -321,6 +344,116 @@ void ServiceHost::ApplyServiceConfigToRuntime(const ServiceConfigState& config) 
         config.autoMode, config.stylusVhfEnabled,
         config.penButtonMode, config.penButtonRoute,
         config.penButtonRouteExplicit);
+}
+
+bool ServiceHost::LoadStartupConfig(const std::string& configPath) {
+#if EGOTOUCH_CONFIG_ENABLED
+    try {
+        const auto paths = Config::resolve(configPath.empty()
+                                           ? std::nullopt
+                                           : std::optional<std::string>{configPath});
+        if (!paths.has_value()) {
+            return false;
+        }
+
+        Config::ConfigStore defaults;
+        defaults.loadFromYaml(paths->defaultConfig);
+
+        Config::ConfigStore merged = defaults;
+        if (paths->overrideExists) {
+            Config::ConfigStore overrides;
+            overrides.loadFromYaml(paths->overrideConfig);
+            merged.mergeFrom(overrides);
+        }
+
+        if (!ValidateStartupConfig(merged)) {
+            return false;
+        }
+
+        ServiceConfigState loaded = m_configState;
+        Config::ConfigBinder binder;
+        RegisterServiceConfigBindings(binder, loaded);
+        binder.apply(merged);
+        loaded.penButtonRouteExplicit = merged.has("service.pen_button_route");
+
+        m_configState = loaded;
+        m_impl->m_configPaths = *paths;
+        m_impl->m_defaultConfigStore = defaults;
+        m_impl->m_configStore = merged;
+        m_impl->m_configLoaded = true;
+        return true;
+    } catch (const std::exception& ex) {
+        LOG_ERROR("Service", __func__, "Config", "Failed to load startup config: {}", ex.what());
+        return false;
+    }
+#else
+    (void)configPath;
+    return true;
+#endif
+}
+
+bool ServiceHost::ValidateStartupConfig(const Config::ConfigStore& store) const {
+    ServiceConfigState schemaState{};
+    Config::ConfigBinder serviceBinder;
+    RegisterServiceConfigBindings(serviceBinder, schemaState);
+
+    auto serviceValidation = Config::SchemaValidator::validate(store, serviceBinder);
+    serviceValidation.logAll();
+    if (!serviceValidation.ok()) {
+        return false;
+    }
+
+    if (m_deviceRuntime) {
+        auto pipelineValidation = m_deviceRuntime->ValidateConfigStore(store);
+        pipelineValidation.logAll();
+        if (!pipelineValidation.ok()) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool ServiceHost::PersistServicePolicyConfig() {
+#if EGOTOUCH_CONFIG_ENABLED
+    if (!m_impl->m_configPaths.has_value()) {
+        LOG_ERROR("Service", __func__, "Config", "Cannot persist config before startup paths are resolved.");
+        return false;
+    }
+
+    try {
+        const auto& paths = *m_impl->m_configPaths;
+        Config::ConfigStore defaults;
+        defaults.loadFromYaml(paths.defaultConfig);
+
+        Config::ConfigStore current = defaults;
+        if (std::filesystem::exists(paths.overrideConfig)) {
+            Config::ConfigStore existingOverrides;
+            existingOverrides.loadFromYaml(paths.overrideConfig);
+            current.mergeFrom(existingOverrides);
+        }
+
+        // Current IPC ApplyConfigPatchRequestWire / App SaveConfig only carries
+        // service policy fields.  Do not imply or attempt pipeline runtime
+        // key/value persistence through this ABI.
+        current.set("service.mode", std::string(ServiceModeToConfig(m_configState.mode)));
+        current.set("service.auto_mode", m_configState.autoMode);
+        current.set("service.stylus_vhf_enabled", m_configState.stylusVhfEnabled);
+        current.set("service.pen_button_mode", std::string(ToConfigValue(m_configState.penButtonMode)));
+        current.set("service.pen_button_route", std::string(ToConfigValue(m_configState.penButtonRoute)));
+        current.saveOverrides(paths.overrideConfig, defaults);
+
+        m_impl->m_defaultConfigStore = defaults;
+        m_impl->m_configStore = current;
+        m_impl->m_configLoaded = true;
+        return true;
+    } catch (const std::exception& ex) {
+        LOG_ERROR("Service", __func__, "Config", "PersistConfig failed: {}", ex.what());
+        return false;
+    }
+#else
+    return false;
+#endif
 }
 
 ReloadServiceConfigResult ServiceHost::HandleReloadServiceConfig(
@@ -394,16 +527,19 @@ ReloadServiceConfigResult ServiceHost::HandleReloadServiceConfig(
 }
 
 bool ServiceHost::StartRuntimeAndPipeline(const std::string& configPath) {
+    (void)configPath;
     m_deviceRuntime = std::make_unique<DeviceRuntime>(
         kDevicePathMaster, kDevicePathSlave, kDevicePathInterrupt);
-    if (!LoadStartupConfig(configPath)) {
-        m_deviceRuntime.reset();
-        return false;
+
+    if (m_impl->m_configLoaded) {
+        if (!ValidateStartupConfig(m_impl->m_configStore)) {
+            LOG_ERROR("Service", __func__, "Boot", "Startup config validation failed; runtime start blocked.");
+            m_deviceRuntime.reset();
+            return false;
+        }
+        m_deviceRuntime->ApplyConfigStore(m_impl->m_configStore);
     }
 
-    m_runtimeMode = m_configState.mode;
-    LOG_INFO("Service", __func__, "Boot", "Service mode: {}, AutoMode: {}",
-             ServiceModeToConfig(m_configState.mode), m_configState.autoMode);
     ApplyServiceConfigToRuntime(m_configState);
     BuildDebugSchema();
 
@@ -511,6 +647,14 @@ void ServiceHost::StartPenSubsystem() {
 
 bool ServiceHost::Start() {
     const std::string configPath = GetConfigPath();
+    if (!LoadStartupConfig(configPath)) {
+        LOG_ERROR("Service", __func__, "Boot", "Startup config load/validation failed; service start blocked.");
+        return false;
+    }
+
+    m_runtimeMode = m_configState.mode;
+    LOG_INFO("Service", __func__, "Boot", "Service mode: {}, AutoMode: {}",
+             ServiceModeToConfig(m_configState.mode), m_configState.autoMode);
 
     if (!StartRuntimeAndPipeline(configPath)) {
         return false;
@@ -1030,12 +1174,18 @@ void ServiceHost::HandleIpcPersistConfig(Ipc::IpcResponse& resp) {
         return;
     }
 
+#ifdef _DEBUG
+    if (!PersistServicePolicyConfig()) {
+        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InternalError);
+        return;
+    }
+
     Ipc::PersistConfigResponseWire result{};
     result.persistedFields = ToPersistedFieldBits();
     std::memcpy(resp.data, &result, sizeof(result));
     resp.dataLen = static_cast<uint16_t>(sizeof(result));
     Ipc::MarkSuccess(resp);
-    LOG_INFO("Service", __func__, "IPC", "PersistConfig accepted; legacy INI persistence is disabled.");
+    LOG_INFO("Service", __func__, "IPC", "PersistConfig saved service policy fields to YAML overrides; pipeline runtime keys are outside the current IPC ABI.");
 #endif
 }
 

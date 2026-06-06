@@ -11,6 +11,10 @@
 
 class DeviceRuntime;
 
+namespace Config {
+class ConfigStore;
+}
+
 namespace Himax::Pen {
 struct PenPressureStats;
 }
@@ -70,6 +74,8 @@ private:
     bool LoadStartupConfig(const std::string& configPath);
     void ApplyServiceConfigToRuntime(const ServiceConfigState& config);
     ReloadServiceConfigResult HandleReloadServiceConfig(const ServiceConfigState& reloadedConfig);
+    bool ValidateStartupConfig(const Config::ConfigStore& store) const;
+    bool PersistServicePolicyConfig();
     bool StartRuntimeAndPipeline(const std::string& configPath);
     void StartSystemStateMonitor();
     void StartIpcSubsystem();
