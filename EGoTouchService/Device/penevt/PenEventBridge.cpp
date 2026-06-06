@@ -173,6 +173,17 @@ void PenEventBridge::ExecuteInitAction(PenUsbInitAction action) {
     }
 }
 
+bool PenEventBridge::SendQueryHardwareVersion() {
+    const auto query = BuildPenUsbFixedSizeCommand(PenUsbCommandId::QueryHardwareVersion);
+    if (!SendRawPacket(query)) {
+        LOG_WARN("PenEvent", __func__, "MCU", "Failed to send 0x0201 QueryHardwareVersion.");
+        return false;
+    }
+
+    LOG_INFO("PenEvent", __func__, "MCU", "Sent 0x0201 QueryHardwareVersion.");
+    return true;
+}
+
 bool PenEventBridge::SendQueryPenStatus() {
     const auto query = BuildPenUsbCommand(PenUsbCommandId::QueryPenStatus);
     if (!SendRawPacket(query)) {
@@ -232,6 +243,7 @@ void PenEventBridge::AdvanceSessionFromEvent(uint8_t eventCode) {
 // ── BtHidChannel hooks ────────────────────────────────────────────────────
 void PenEventBridge::OnConnected() {
     RunHandshake();
+    (void)SendQueryHardwareVersion();
 }
 
 void PenEventBridge::OnPacketReceived(const std::vector<uint8_t>& packet) {
@@ -289,6 +301,15 @@ void PenEventBridge::OnPacketReceived(const std::vector<uint8_t>& packet) {
                          "PenModule: model={} modelId=0x{:06X} protocol={} payloadLen={}",
                          modelInfo.name, modelInfo.modelId,
                          ToString(modelInfo.protocolHint), payloadLength);
+                break;
+            }
+            case PenUsbEventCode::PenHardwareVersion: {
+                auto hardwareVersion = FormatPenUsbAsciiPayload(parsed->payload);
+                ev.semantic.hasHardwareVersion = !hardwareVersion.empty();
+                ev.semantic.hardwareVersion = std::move(hardwareVersion);
+                LOG_INFO("PenEvent", __func__, "MCU",
+                         "PenHardwareVersion: version=\"{}\" payloadLen={}",
+                         ev.semantic.hardwareVersion, parsed->payload.size());
                 break;
             }
             case PenUsbEventCode::PenConnStatus:

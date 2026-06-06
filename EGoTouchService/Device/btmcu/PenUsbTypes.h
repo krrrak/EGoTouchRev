@@ -5,6 +5,7 @@
 #include <functional>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "PenModuleModelId.h"
@@ -14,6 +15,7 @@ namespace Himax::Pen {
 using NativeEventHandle = void*;
 
 enum class PenUsbCommandId : uint16_t {
+    QueryHardwareVersion = 0x0201,
     QueryPenStatus = 0x7101,
     QueryPenInfo = 0x7701,
     InitParamSet = 0x7D01,
@@ -62,6 +64,7 @@ constexpr int GetFactoryBtMcuAckCode(uint8_t eventCode) noexcept {
 
 enum class PenUsbEventCode : uint8_t {
     PenModule = 0x00,               // PenService PenModule / ModelId 上报
+    PenHardwareVersion = 0x02,      // PenService 硬件版本 ASCII 上报
     PenCurrentFunc = 0x2F,
     PenUnknown6F = 0x6F,            // 未确认事件，不自动 ACK
     PenAcStatus = 0x70,
@@ -191,6 +194,9 @@ struct PenSemanticState {
     PenModuleModel penModuleModel = PenModuleModel::Unknown;
     bool hasPenModuleProtocolHint = false;
     PenModuleProtocolHint penModuleProtocolHint = PenModuleProtocolHint::Auto;
+
+    bool hasHardwareVersion = false;
+    std::string hardwareVersion;
 
     bool hasCurrentMode = false;
     PenCurrentMode currentMode = PenCurrentMode::Unknown;

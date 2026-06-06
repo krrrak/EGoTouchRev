@@ -108,6 +108,8 @@ void ClearPenIdentityState(RuntimePenState &state) noexcept {
   state.hasPenModuleModelId = false;
   state.penModuleModelId = 0;
   state.penModuleModel = Himax::Pen::PenModuleModel::Unknown;
+  state.hasHardwareVersion = false;
+  state.hardwareVersion.clear();
 }
 
 Solvers::StylusProtocolHint ResolveProtocolHintFromPenModule(
@@ -848,6 +850,31 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
              ToString(nextProtocolHint), revision, changed ? " reset" : "");
 
     ApplyPenStateToStylusPipeline();
+    break;
+  }
+
+  case EC::PenHardwareVersion: {
+    if (!ev.semantic.hasHardwareVersion) {
+      LOG_WARN("Runtime", __func__, "MCU",
+               "PenHardwareVersion ignored because no valid version semantic was present.");
+      break;
+    }
+
+    std::string oldVersion;
+    std::string newVersion;
+    bool changed = false;
+    {
+      std::lock_guard<std::mutex> lk(m_penStateMu);
+      oldVersion = m_penState.hardwareVersion;
+      newVersion = ev.semantic.hardwareVersion;
+      changed = !m_penState.hasHardwareVersion || oldVersion != newVersion;
+      m_penState.hasHardwareVersion = true;
+      m_penState.hardwareVersion = newVersion;
+    }
+
+    LOG_INFO("Runtime", __func__, "MCU",
+             "PenHardwareVersion: \"{}\" -> \"{}\" payloadLen={}{}",
+             oldVersion, newVersion, ev.payload.size(), changed ? " changed" : "");
     break;
   }
 

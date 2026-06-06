@@ -114,6 +114,9 @@ struct RuntimePenState {
     uint32_t penModuleModelId = 0;
     Himax::Pen::PenModuleModel penModuleModel = Himax::Pen::PenModuleModel::Unknown;
 
+    bool hasHardwareVersion = false;
+    std::string hardwareVersion;
+
     bool hasCurrentMode = false;
     Himax::Pen::PenCurrentMode currentMode = Himax::Pen::PenCurrentMode::Unknown;
     uint8_t currentModeRaw = 0;

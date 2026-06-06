@@ -57,10 +57,6 @@ void PopulateServiceValues(Config::ConfigStore& store,
 } // namespace
 
 void ServiceProxy::InitConfigSchema() {
-#if !EGOTOUCH_CONFIG_ENABLED
-    return;
-#endif
-
     Config::ConfigBinder binder;
     m_pipeline.registerBindings(binder);
     m_stylusPipeline.registerBindings(binder);
@@ -84,10 +80,6 @@ void ServiceProxy::InitConfigSchema() {
 }
 
 void ServiceProxy::ApplyConfigStoreToLocalRuntime() {
-#if !EGOTOUCH_CONFIG_ENABLED
-    return;
-#endif
-
     m_pipeline.applyConfig(m_configStore);
     m_stylusPipeline.applyConfig(m_configStore);
 }

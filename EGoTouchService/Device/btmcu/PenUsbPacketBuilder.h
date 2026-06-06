@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -47,6 +48,43 @@ inline std::size_t EncodePenUsbType3Token(std::string_view token,
     return 2;
 }
 
+inline std::string FormatPenUsbAsciiPayload(std::span<const uint8_t> payload) {
+    std::size_t end = 0;
+    while (end < payload.size() && payload[end] != 0x00) {
+        ++end;
+    }
+    if (end == 0) {
+        return {};
+    }
+
+    std::string text;
+    text.reserve(end);
+    for (std::size_t i = 0; i < end; ++i) {
+        const uint8_t ch = payload[i];
+        if (ch >= 0x20 && ch <= 0x7E) {
+            text.push_back(static_cast<char>(ch));
+        }
+    }
+    if (!text.empty()) {
+        return text;
+    }
+
+    constexpr char kHex[] = "0123456789ABCDEF";
+    constexpr std::size_t kMaxHexBytes = 16;
+    const std::size_t hexBytes = end < kMaxHexBytes ? end : kMaxHexBytes;
+    std::string hex;
+    hex.reserve(hexBytes * 3);
+    for (std::size_t i = 0; i < hexBytes; ++i) {
+        if (!hex.empty()) {
+            hex.push_back(' ');
+        }
+        const uint8_t value = payload[i];
+        hex.push_back(kHex[(value >> 4) & 0x0F]);
+        hex.push_back(kHex[value & 0x0F]);
+    }
+    return hex;
+}
+
 inline std::vector<uint8_t> BuildPenUsbCommand(PenUsbCommandId commandId) {
     const auto id = static_cast<uint16_t>(commandId);
     return {
@@ -55,6 +93,12 @@ inline std::vector<uint8_t> BuildPenUsbCommand(PenUsbCommandId commandId) {
         static_cast<uint8_t>((id >> 8) & 0xFFu),
         0x11, 0x00,
     };
+}
+
+inline std::vector<uint8_t> BuildPenUsbFixedSizeCommand(PenUsbCommandId commandId) {
+    auto packet = BuildPenUsbCommand(commandId);
+    packet.resize(0x40, 0x00);
+    return packet;
 }
 
 inline std::vector<uint8_t> BuildPenUsbPayloadCommand(PenUsbCommandId commandId,

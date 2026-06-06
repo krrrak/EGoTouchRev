@@ -55,6 +55,7 @@ private:
     void ExecuteInitAction(PenUsbInitAction action);
     void AdvanceSessionFromEvent(uint8_t eventCode);
 
+    bool SendQueryHardwareVersion();
     bool SendQueryPenStatus();
     bool SendFirstMcuStatusQuery();
     bool SendSecondMcuStatusQuery();
