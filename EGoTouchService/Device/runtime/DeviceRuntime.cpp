@@ -215,7 +215,17 @@ bool DeviceRuntime::Start() {
   });
 
   if (m_running.load(std::memory_order_acquire)) {
-    return false;
+    const bool workerIsQuitting =
+        m_state.load(std::memory_order_acquire) == workerState::quit;
+    if (!workerIsQuitting || !m_thread.joinable() ||
+        m_thread.get_id() == std::this_thread::get_id()) {
+      return false;
+    }
+
+    m_lifecycleCv.wait(lifecycleLock, [this]() {
+      return !m_running.load(std::memory_order_acquire) &&
+             m_workerThreadId == std::thread::id{};
+    });
   }
 
   if (m_thread.joinable()) {
