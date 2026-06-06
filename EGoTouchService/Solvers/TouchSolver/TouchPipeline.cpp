@@ -553,8 +553,7 @@ void TouchPipeline::registerBindings(Config::ConfigBinder& binder) {
                 "Release-pending frames");
     binder.bind("touch.gesture.bypass_state_machine",
                 &Touch::TouchGestureStateMachine::m_bypassStateMachine, m_gesture,
-                false, {}, "Bypass gesture state machine");
-}
+                false, {}, "Bypass gesture state machine");}
 
 void TouchPipeline::applyConfig(const Config::ConfigStore& store) {
     m_frameParser.m_enabled = store.getOr<bool>("touch.frame_parser.enabled", true);
@@ -622,7 +621,11 @@ void TouchPipeline::applyConfig(const Config::ConfigStore& store) {
     m_edgeReject.m_enabled = store.getOr<bool>("touch.edge.reject_enabled", true);
     m_edgeReject.m_edgeMargin = store.getOr<int32_t>("touch.edge.reject_margin", 2);
 
+    const bool oldTrackerEnabled = m_tracker.m_enabled;
     m_tracker.m_enabled = store.getOr<bool>("touch.tracking.enabled", true);
+    if (m_tracker.m_enabled != oldTrackerEnabled) {
+        m_tracker.ClearLiveState();
+    }
     m_tracker.m_maxTouchCount = store.getOr<int32_t>("touch.tracking.max_touch_count", 20);
     m_tracker.m_maxTrackDistance = store.getOr<float>("touch.tracking.max_track_distance", 4.985f);
     m_tracker.m_alwaysMatchDistance = store.getOr<float>("touch.tracking.always_match_distance", 2.0f);
@@ -646,12 +649,15 @@ void TouchPipeline::applyConfig(const Config::ConfigStore& store) {
     m_coordFilter.m_beta = store.getOr<float>("touch.coord_filter.beta", 0.5f);
     m_coordFilter.m_dCutoff = store.getOr<float>("touch.coord_filter.d_cutoff", 1.0f);
 
+    const bool oldGestureEnabled = m_gesture.m_enabled;
     m_gesture.m_enabled = store.getOr<bool>("touch.gesture.enabled", true);
+    if (m_gesture.m_enabled != oldGestureEnabled) {
+        m_gesture.ClearLiveState();
+    }
     m_gesture.m_pressCandidateFrames = store.getOr<int32_t>("touch.gesture.press_candidate_frames", 1);
     m_gesture.m_dragThreshold = store.getOr<float>("touch.gesture.drag_threshold", 0.8f);
     m_gesture.m_longPressFrames = store.getOr<int32_t>("touch.gesture.long_press_frames", 46);
     m_gesture.m_releasePendingFrames = store.getOr<int32_t>("touch.gesture.release_pending_frames", 0);
-    m_gesture.m_bypassStateMachine = store.getOr<bool>("touch.gesture.bypass_state_machine", false);
-}
+    m_gesture.m_bypassStateMachine = store.getOr<bool>("touch.gesture.bypass_state_machine", false);}
 
 } // namespace Solvers

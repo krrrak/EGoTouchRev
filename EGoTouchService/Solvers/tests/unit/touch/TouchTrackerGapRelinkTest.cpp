@@ -242,6 +242,38 @@ void TestHiddenNonSilentContactDoesNotBecomeVisibleInGesture() {
             "previously visible contact should be released when the replacement contact is hidden");
 }
 
+void TestTrackerClearLiveStateKeepsIdSeed() {
+    TouchTracker tracker;
+
+    HeatmapFrame first;
+    first.touch.output.contacts.push_back(MakeGestureContact(0, 10.0f, 10.0f, TouchStateDown, true));
+    tracker.Process(first);
+    Require(tracker.HasLiveTracks(), "tracker should have live tracks after a contact");
+    Require(first.touch.output.contacts.size() == 1 && first.touch.output.contacts[0].id == 1,
+            "first allocated tracker id should be 1");
+
+    tracker.ClearLiveState();
+    Require(!tracker.HasLiveTracks(), "tracker clear should remove live tracks");
+
+    HeatmapFrame second;
+    second.touch.output.contacts.push_back(MakeGestureContact(0, 20.0f, 20.0f, TouchStateDown, true));
+    tracker.Process(second);
+    Require(second.touch.output.contacts.size() == 1 && second.touch.output.contacts[0].id == 2,
+            "tracker clear should preserve next id seed");
+}
+
+void TestGestureClearLiveState() {
+    TouchGestureStateMachine gesture;
+
+    HeatmapFrame down;
+    down.touch.output.contacts.push_back(MakeGestureContact(1, 10.0f, 10.0f, TouchStateDown, true));
+    gesture.Process(down);
+    Require(gesture.HasLiveState(), "gesture should have live state after a contact");
+
+    gesture.ClearLiveState();
+    Require(!gesture.HasLiveState(), "gesture clear should remove live slots");
+}
+
 void TestHiddenNewContactReportsDownWhenSuppressionEnds() {
     TouchGestureStateMachine gesture;
 
@@ -272,6 +304,8 @@ int main() {
         TestTwoFingerRelinkKeepsOtherFinger();
         TestAmbiguousSilentGapDoesNotHijackOldIds();
         TestHiddenNonSilentContactDoesNotBecomeVisibleInGesture();
+        TestTrackerClearLiveStateKeepsIdSeed();
+        TestGestureClearLiveState();
         TestHiddenNewContactReportsDownWhenSuppressionEnds();
         std::cout << "[TEST] TouchTracker silent-gap relink tests passed.\n";
         return 0;

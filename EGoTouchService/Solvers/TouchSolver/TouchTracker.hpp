@@ -59,6 +59,7 @@ public:
 
     inline bool Process(HeatmapFrame& frame);
     inline bool HasLiveTracks() const { return m_trackCount > 0; }
+    inline void ClearLiveState();
 
 private:
     static constexpr int kMaxTracks = 20;
@@ -136,6 +137,16 @@ private:
     inline bool ShouldStylusAftSuppress(const TouchContact& touch, int touchAge, float stylusX, float stylusY, int& outHoldFrames) const;
     inline void SolveAssignment(const float* cost, int n, int m, int* rowToCol) const;
 };
+
+inline void TouchTracker::ClearLiveState() {
+    for (auto& track : m_tracks) {
+        track = TrackState{};
+    }
+    m_trackCount = 0;
+    m_stylusFramesSinceActive = 1000000;
+    m_lastStylusX = 0.0f;
+    m_lastStylusY = 0.0f;
+}
 
 inline float TouchTracker::DistanceSq(float x1, float y1, float x2, float y2) {
     const float dx = x1 - x2;
