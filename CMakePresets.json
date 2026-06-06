@@ -30,6 +30,10 @@
         },
         "CMAKE_C_COMPILER_TARGET": "arm64-pc-windows-msvc",
         "CMAKE_CXX_COMPILER_TARGET": "arm64-pc-windows-msvc",
+        "EGOTOUCH_ENABLE_RUNTIME_CONFIG": {
+          "type": "BOOL",
+          "value": "ON"
+        },
         "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}"
       },
       "vendor": {
