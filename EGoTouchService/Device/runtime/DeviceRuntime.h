@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 
 #include <deque>
@@ -294,5 +295,8 @@ private:
 
     std::atomic<bool> m_running{false};
     std::atomic<bool> m_stopped{false};
+    mutable std::mutex m_lifecycleMu;
+    std::condition_variable m_lifecycleCv;
+    bool m_stopInProgress = false;
     std::thread m_thread;
 };

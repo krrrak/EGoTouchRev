@@ -31,6 +31,11 @@ ego_add_device_test(DevicePenPressurePacketParserTest Device.PenPressure.PacketP
     "Device;Device.Unit;Device.PenPressure;NoHardware" 10
     "${DEVICE_ROOT}/tests/btmcu/PenPressurePacketParserTest.cpp")
 
+ego_add_device_test(DevicePenUsbTransportWin32LifecycleTest Device.PenUsb.TransportWin32Lifecycle
+    "Device;Device.Unit;Device.PenUsb;Device.Win32;Timing;NoHardware" 10
+    "${DEVICE_ROOT}/tests/btmcu/PenUsbTransportWin32LifecycleTest.cpp")
+target_link_libraries(DevicePenUsbTransportWin32LifecycleTest PRIVATE Device Common)
+
 ego_add_device_test(DeviceVhfReporterStylusPacketTest Device.Vhf.StylusPacket
     "Device;Device.Unit;Device.Vhf;NoHardware" 10
     "${DEVICE_ROOT}/tests/vhf/VhfReporterStylusPacketTest.cpp")

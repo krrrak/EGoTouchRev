@@ -3,7 +3,9 @@
 
 #include <array>
 #include <atomic>
+#include <condition_variable>
 #include <exception>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
@@ -23,6 +25,9 @@ struct SystemStateMonitor::Impl {
     EventCallback callback;
     std::thread worker;
     std::atomic<bool> running{false};
+    std::mutex lifecycleMu;
+    std::condition_variable lifecycleCv;
+    bool joining = false;
     SystemStateEventType lastDisplayType = SystemStateEventType::Unknown;
     SystemStateEventType lastLidType = SystemStateEventType::Unknown;
     bool shutdownObserved = false;
@@ -333,9 +338,15 @@ void DispatchNormalizedBatch(
 
         RememberNormalizedEvent(impl, entry.event.type);
 
-        if (impl.callback) {
+        SystemStateMonitor::EventCallback callback;
+        {
+            std::lock_guard<std::mutex> lock(impl.lifecycleMu);
+            callback = impl.callback;
+        }
+
+        if (callback) {
             try {
-                impl.callback(entry.event);
+                callback(entry.event);
             } catch (const std::exception& ex) {
                 LOG_ERROR("Host", __func__, "Callback", "SystemStateMonitor callback threw std::exception: {}", ex.what());
             } catch (...) {
@@ -419,6 +430,8 @@ void WorkerLoop(ImplT& impl) {
 
 bool SystemStateMonitor::Start(EventCallback callback) {
     Impl& impl = *m_impl;
+    std::unique_lock<std::mutex> lifecycleLock(impl.lifecycleMu);
+    impl.lifecycleCv.wait(lifecycleLock, [&impl]() { return !impl.joining; });
 
     if (impl.running.load(std::memory_order_acquire)) {
         return false;
@@ -430,7 +443,12 @@ bool SystemStateMonitor::Start(EventCallback callback) {
             return false;
         }
 
+        impl.joining = true;
+        lifecycleLock.unlock();
         impl.worker.join();
+        lifecycleLock.lock();
+        impl.joining = false;
+        impl.lifecycleCv.notify_all();
         CloseEvents(impl);
         impl.callback = nullptr;
     }
@@ -448,6 +466,7 @@ bool SystemStateMonitor::Start(EventCallback callback) {
     }
 
     if (!OpenOrCreateEvents(impl)) {
+        lifecycleLock.unlock();
         Stop();
         return false;
     }
@@ -464,22 +483,40 @@ void SystemStateMonitor::Stop() {
     }
 
     Impl& impl = *m_impl;
+    std::unique_lock<std::mutex> lifecycleLock(impl.lifecycleMu);
     impl.running.store(false, std::memory_order_release);
 
     if (impl.stopEvent != nullptr) {
         SetEvent(impl.stopEvent);
     }
 
-    if (impl.worker.joinable()) {
-        if (impl.worker.get_id() == std::this_thread::get_id()) {
-            LOG_INFO("SystemStateMonitor", __func__, "Monitor",
-                     "Stop() called from callback; detaching worker thread.");
-            impl.worker.detach();
+    if (!impl.worker.joinable()) {
+        CloseEvents(impl);
+        impl.callback = nullptr;
+        return;
+    }
+
+    if (impl.worker.get_id() == std::this_thread::get_id()) {
+        LOG_INFO("SystemStateMonitor", __func__, "Monitor",
+                 "Stop() called from callback; stop requested, cleanup deferred.");
+        return;
+    }
+
+    while (impl.joining) {
+        impl.lifecycleCv.wait(lifecycleLock);
+        if (!impl.worker.joinable()) {
+            CloseEvents(impl);
+            impl.callback = nullptr;
             return;
         }
-
-        impl.worker.join();
     }
+
+    impl.joining = true;
+    lifecycleLock.unlock();
+    impl.worker.join();
+    lifecycleLock.lock();
+    impl.joining = false;
+    impl.lifecycleCv.notify_all();
 
     CloseEvents(impl);
     impl.callback = nullptr;

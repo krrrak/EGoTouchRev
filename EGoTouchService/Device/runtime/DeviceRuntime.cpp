@@ -209,8 +209,23 @@ DeviceRuntime::DeviceRuntime(const std::wstring &master,
 DeviceRuntime::~DeviceRuntime() { Stop(); }
 
 bool DeviceRuntime::Start() {
-  if (m_running.exchange(true))
+  std::unique_lock<std::mutex> lifecycleLock(m_lifecycleMu);
+  m_lifecycleCv.wait(lifecycleLock, [this]() { return !m_stopInProgress; });
+
+  if (m_running.load(std::memory_order_acquire)) {
     return false;
+  }
+
+  if (m_thread.joinable()) {
+    if (m_thread.get_id() == std::this_thread::get_id()) {
+      LOG_WARN("Runtime", __func__, "Thread",
+               "Start() called from worker thread while previous worker is joinable.");
+      return false;
+    }
+    m_thread.join();
+  }
+
+  m_running.store(true, std::memory_order_release);
   m_stopped.store(false, std::memory_order_release);
   m_stopReason.store(
       StopReason::None); // ← critical: clear stop reason for restart
@@ -229,14 +244,51 @@ bool DeviceRuntime::Start() {
 }
 
 void DeviceRuntime::Stop() {
-  if (m_stopped.exchange(true)) return;
-  m_stopReason.store(StopReason::Shutdown);
+  {
+    std::unique_lock<std::mutex> lifecycleLock(m_lifecycleMu);
+    if (m_stopInProgress) {
+      if (m_thread.joinable() &&
+          m_thread.get_id() == std::this_thread::get_id()) {
+        return;
+      }
+      m_lifecycleCv.wait(lifecycleLock,
+                         [this]() { return !m_stopInProgress; });
+      if (!m_running.load(std::memory_order_acquire) &&
+          !m_thread.joinable()) {
+        return;
+      }
+    }
+
+    if (!m_running.load(std::memory_order_acquire) && !m_thread.joinable()) {
+      m_stopped.store(true, std::memory_order_release);
+      m_stopReason.store(StopReason::Shutdown, std::memory_order_release);
+      SetState(workerState::quit);
+      m_lastNote = "Runtime stopped";
+      return;
+    }
+
+    m_stopInProgress = true;
+    m_stopped.store(true, std::memory_order_release);
+    m_stopReason.store(StopReason::Shutdown, std::memory_order_release);
+  }
+
   m_chip.CancelPendingFrameRead();
-  if (m_thread.joinable())
+
+  std::unique_lock<std::mutex> lifecycleLock(m_lifecycleMu);
+  if (m_thread.joinable()) {
+    if (m_thread.get_id() == std::this_thread::get_id()) {
+      m_stopInProgress = false;
+      m_lifecycleCv.notify_all();
+      return;
+    }
     m_thread.join();
-  m_running.store(false);
+  }
+  m_running.store(false, std::memory_order_release);
   SetState(workerState::quit);
   m_lastNote = "Runtime stopped";
+  m_stopInProgress = false;
+  lifecycleLock.unlock();
+  m_lifecycleCv.notify_all();
 }
 
 DeviceRuntime::StartRequestResult DeviceRuntime::RequestStart() {
@@ -247,11 +299,10 @@ DeviceRuntime::StartRequestResult DeviceRuntime::RequestStart() {
 }
 
 DeviceRuntime::StopRequestResult DeviceRuntime::RequestStop() {
-  if (!IsRunning()) {
-    return StopRequestResult::AlreadyStopped;
-  }
+  const bool wasRunning = IsRunning();
   Stop();
-  return StopRequestResult::Stopped;
+  return wasRunning ? StopRequestResult::Stopped
+                    : StopRequestResult::AlreadyStopped;
 }
 
 void DeviceRuntime::ApplyServicePolicy(bool autoMode, bool stylusVhfEnabled,

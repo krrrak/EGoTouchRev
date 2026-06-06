@@ -103,6 +103,51 @@ bool RunResumeWithoutSystemSuspendKeepsRecoverStateTest() {
     return true;
 }
 
+bool RunRestartAfterWorkerSelfExitTest() {
+    using namespace std::chrono_literals;
+
+    auto runtime = MakeRuntimeWithMissingHardware();
+    runtime.SetAutoMode(true);
+
+    if (!runtime.Start()) {
+        std::cerr << "[TEST] Failed to start runtime before self-exit restart test.\n";
+        return false;
+    }
+
+    if (!WaitForState(runtime, workerState::recover, 2s)) {
+        const auto snapshot = runtime.GetSnapshot();
+        runtime.Stop();
+        std::cerr << "[TEST] Runtime did not enter recover before self-exit restart test; state="
+                  << ToString(snapshot.state) << "\n";
+        return false;
+    }
+
+    runtime.IngestPolicyEvent(MakePolicyEvent(RuntimePolicyEvent::Type::Shutdown));
+    if (!WaitForState(runtime, workerState::quit, 2s)) {
+        const auto snapshot = runtime.GetSnapshot();
+        runtime.Stop();
+        std::cerr << "[TEST] Runtime did not self-exit after Shutdown event; state="
+                  << ToString(snapshot.state) << " running=" << runtime.IsRunning() << "\n";
+        return false;
+    }
+
+    if (!runtime.Start()) {
+        std::cerr << "[TEST] Restart failed after worker self-exit left joinable thread.\n";
+        return false;
+    }
+
+    if (!WaitForState(runtime, workerState::recover, 2s)) {
+        const auto snapshot = runtime.GetSnapshot();
+        runtime.Stop();
+        std::cerr << "[TEST] Restarted runtime did not re-enter recover; state="
+                  << ToString(snapshot.state) << "\n";
+        return false;
+    }
+
+    runtime.Stop();
+    return true;
+}
+
 } // namespace
 
 int main() {
@@ -112,6 +157,10 @@ int main() {
 
     if (!RunResumeWithoutSystemSuspendKeepsRecoverStateTest()) {
         return 2;
+    }
+
+    if (!RunRestartAfterWorkerSelfExitTest()) {
+        return 3;
     }
 
     std::cout << "[TEST] DeviceRuntime system power policy tests passed.\n";

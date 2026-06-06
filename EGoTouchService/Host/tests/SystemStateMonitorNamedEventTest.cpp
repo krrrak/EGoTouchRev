@@ -589,10 +589,85 @@ bool RunCallbackReentrantStopTest() {
     ResetAllNamedEventsBestEffort(event_names.List());
 
     if (monitor.IsRunning()) {
-        std::cerr << "[TEST] Monitor still running after reentrant Stop test.\n";
+        std::cerr << "[TEST] Monitor still running after external Stop following reentrant Stop.\n";
         return false;
     }
 
+    if (!monitor.Start([&](const Host::SystemStateEvent&) {
+            callback_count.fetch_add(1, std::memory_order_acq_rel);
+            cv.notify_all();
+        })) {
+        std::cerr << "[TEST] Monitor restart failed after reentrant Stop cleanup.\n";
+        return false;
+    }
+
+    std::this_thread::sleep_for(kWorkerWarmup);
+    const int count_before_restart_signal = callback_count.load(std::memory_order_acquire);
+    if (!Host::SystemStateMonitor::SignalNamedEvent(Host::SystemStateNamedEventId::MonitorLidOn, event_names.List())) {
+        monitor.Stop();
+        std::cerr << "[TEST] Failed signal after reentrant Stop restart.\n";
+        return false;
+    }
+
+    {
+        std::unique_lock<std::mutex> lock(mu);
+        const bool callback_observed = cv.wait_for(lock, kCallbackTimeout, [&] {
+            return callback_count.load(std::memory_order_acquire) > count_before_restart_signal;
+        });
+        if (!callback_observed) {
+            monitor.Stop();
+            std::cerr << "[TEST] Timeout waiting for callback after reentrant Stop restart.\n";
+            return false;
+        }
+    }
+
+    monitor.Stop();
+    ResetAllNamedEventsBestEffort(event_names.List());
+    return true;
+}
+
+bool RunCallbackStopThenDestructorTest() {
+    using namespace std::chrono_literals;
+
+    TestEventNames event_names(L"CallbackStopThenDestructor");
+    ResetAllNamedEventsBestEffort(event_names.List());
+
+    std::atomic<int> callback_count{0};
+    std::mutex mu;
+    std::condition_variable cv;
+
+    {
+        Host::SystemStateMonitor monitor(event_names.List());
+        const bool started = monitor.Start([&](const Host::SystemStateEvent&) {
+            callback_count.fetch_add(1, std::memory_order_acq_rel);
+            monitor.Stop();
+            cv.notify_all();
+        });
+
+        if (!started) {
+            std::cerr << "[TEST] SystemStateMonitor start failed in reentrant Stop destructor test.\n";
+            return false;
+        }
+
+        std::this_thread::sleep_for(kWorkerWarmup);
+        if (!Host::SystemStateMonitor::SignalNamedEvent(Host::SystemStateNamedEventId::MonitorPowerOff, event_names.List())) {
+            monitor.Stop();
+            std::cerr << "[TEST] Failed signal in reentrant Stop destructor test.\n";
+            return false;
+        }
+
+        std::unique_lock<std::mutex> lock(mu);
+        const bool callback_observed = cv.wait_for(lock, kCallbackTimeout, [&] {
+            return callback_count.load(std::memory_order_acquire) >= 1;
+        });
+        if (!callback_observed) {
+            monitor.Stop();
+            std::cerr << "[TEST] Timeout waiting for callback in reentrant Stop destructor test.\n";
+            return false;
+        }
+    }
+
+    ResetAllNamedEventsBestEffort(event_names.List());
     return true;
 }
 
@@ -625,6 +700,10 @@ int main() {
 
     if (!RunCallbackReentrantStopTest()) {
         return 7;
+    }
+
+    if (!RunCallbackStopThenDestructorTest()) {
+        return 8;
     }
 
     std::cout << "[TEST] SystemStateMonitor named-event tests passed.\n";
