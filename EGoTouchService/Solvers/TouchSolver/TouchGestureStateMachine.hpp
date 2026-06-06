@@ -44,7 +44,10 @@ public:
     int   m_releasePendingFrames = 0;
     bool  m_bypassStateMachine = false;
 
-    TouchGestureStateMachine() { for (auto& s : m_slots) s.Reset(); }
+    TouchGestureStateMachine() { ClearLiveState(); }
+    inline void ClearLiveState() {
+        for (auto& slot : m_slots) slot.Reset();
+    }
     inline bool HasLiveState() const {
         for (const auto& slot : m_slots) {
             if (slot.phase != GesturePhase::Idle || slot.upEmitted) {

@@ -265,6 +265,12 @@ void TouchPipeline::registerBindings(Config::ConfigBinder& binder) {
     binder.bind("touch.frame_parser.enabled",
                 &Touch::MasterFrameParser::m_enabled, m_frameParser,
                 true, {}, "Frame Parser enable switch");
+    binder.bind("touch.tracking.enabled",
+                &Touch::TouchTracker::m_enabled, m_tracker,
+                true, {}, "Touch tracker enable switch");
+    binder.bind("touch.gesture.enabled",
+                &Touch::TouchGestureStateMachine::m_enabled, m_gesture,
+                true, {}, "Touch gesture state machine enable switch");
 }
 
 void TouchPipeline::applyConfig(const Config::ConfigStore& store) {
@@ -277,6 +283,20 @@ void TouchPipeline::applyConfig(const Config::ConfigStore& store) {
     m_baseline.m_recoveryMaxStep = store.getOr<int32_t>("touch.signal_cond.baseline_recovery_max_step", 256);
 
     m_frameParser.m_enabled = store.getOr<bool>("touch.frame_parser.enabled", true);
+
+    const bool oldTrackerEnabled = m_tracker.m_enabled;
+    const bool trackerEnabled = store.getOr<bool>("touch.tracking.enabled", true);
+    m_tracker.m_enabled = trackerEnabled;
+    if (trackerEnabled != oldTrackerEnabled) {
+        m_tracker.ClearLiveState();
+    }
+
+    const bool oldGestureEnabled = m_gesture.m_enabled;
+    const bool gestureEnabled = store.getOr<bool>("touch.gesture.enabled", true);
+    m_gesture.m_enabled = gestureEnabled;
+    if (gestureEnabled != oldGestureEnabled) {
+        m_gesture.ClearLiveState();
+    }
 }
 
 } // namespace Solvers
