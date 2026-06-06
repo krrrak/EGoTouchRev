@@ -279,6 +279,30 @@ void PenEventBridge::OnPacketReceived(const std::vector<uint8_t>& packet) {
 
         if (!ev.payload.empty()) {
             switch (ev.code) {
+            case PenUsbEventCode::PenModule: {
+                const uint8_t payloadLength = packet[7];
+                auto modelId = TryParsePenModuleModelId(parsed->payload, payloadLength);
+                if (!modelId) {
+                    LOG_WARN("PenEvent", __func__, "MCU",
+                             "PenModule ignored: invalid payloadLen={} available={}.",
+                             payloadLength, parsed->payload.size());
+                    break;
+                }
+
+                const auto modelInfo = ResolvePenModuleModel(*modelId);
+                ev.semantic.hasPenModuleModelId = true;
+                ev.semantic.penModuleModelId = *modelId;
+                ev.semantic.penModuleModel = modelInfo.model;
+                ev.semantic.hasPenModuleProtocolHint =
+                    modelInfo.protocolHint != PenModuleProtocolHint::Auto;
+                ev.semantic.penModuleProtocolHint = modelInfo.protocolHint;
+
+                LOG_INFO("PenEvent", __func__, "MCU",
+                         "PenModule: model={} modelId=0x{:06X} protocol={} payloadLen={}",
+                         modelInfo.name, modelInfo.modelId,
+                         ToString(modelInfo.protocolHint), payloadLength);
+                break;
+            }
             case PenUsbEventCode::PenConnStatus:
                 ev.semantic.hasConnection = true;
                 ev.semantic.connected = (ev.payload[0] != 0);

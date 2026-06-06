@@ -23,6 +23,10 @@ ego_add_device_test(DevicePenFactoryStatusFlagsTest Device.PenUsb.FactoryStatusF
     "Device;Device.Unit;Device.PenUsb;NoHardware" 10
     "${DEVICE_ROOT}/tests/btmcu/PenFactoryStatusFlagsTest.cpp")
 
+ego_add_device_test(DevicePenModuleModelIdTest Device.PenUsb.PenModuleModelId
+    "Device;Device.Unit;Device.PenUsb;NoHardware" 10
+    "${DEVICE_ROOT}/tests/btmcu/PenModuleModelIdTest.cpp")
+
 ego_add_device_test(DevicePenPressurePacketParserTest Device.PenPressure.PacketParser
     "Device;Device.Unit;Device.PenPressure;NoHardware" 10
     "${DEVICE_ROOT}/tests/btmcu/PenPressurePacketParserTest.cpp")

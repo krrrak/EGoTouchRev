@@ -90,6 +90,7 @@ void TestFactoryAckTable() {
     Require(GetFactoryBtMcuAckCode(0x7B) == 0x0A, "0x7B should ACK 0x0A");
     Require(GetFactoryBtMcuAckCode(0x7C) == 0x0C, "0x7C should ACK 0x0C");
     Require(GetFactoryBtMcuAckCode(0x7F) == 0x09, "0x7F should ACK 9");
+    Require(GetFactoryBtMcuAckCode(0x00) == -1, "PenModule 0x00 should not be ACKed without factory evidence");
     Require(GetFactoryBtMcuAckCode(0x6F) == -1, "0x6F should not be ACKed without factory evidence");
 }
 
