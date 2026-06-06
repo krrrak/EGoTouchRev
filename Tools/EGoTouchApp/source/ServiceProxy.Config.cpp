@@ -5,14 +5,17 @@
 #include "config/ConfigBinder.h"
 #include "config/ConfigKeyMap.h"
 #include "config/ConfigPath.h"
+#include "config/ConfigTlv.h"
 #include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <cstring>
+#include <cstdint>
 #include <exception>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -94,10 +97,7 @@ bool ServiceModeFullFromConfig(const Config::ConfigStore& store, bool fallback) 
     if (store.has("service.mode")) {
         const auto value = store.get<Config::ConfigValue>("service.mode");
         if (const auto* text = std::get_if<std::string>(&value)) {
-            std::string normalized = *text;
-            std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char ch) {
-                return static_cast<char>(std::tolower(ch));
-            });
+            const auto normalized = NormalizeConfigToken(*text);
             if (normalized == "full") return true;
             if (normalized == "touch_only") return false;
         }
@@ -120,6 +120,29 @@ Config::ConfigValue ToConfigValue(PenButtonRoute value) {
 
 void SetValue(Config::ConfigStore& store, std::string_view path, Config::ConfigValue value) {
     store.set<Config::ConfigValue>(path, std::move(value));
+}
+
+Config::ConfigValueType ValueTypeFor(const Config::ConfigValue& value) {
+    return std::visit([](const auto& v) {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T, bool>) {
+            return Config::ConfigValueType::Bool;
+        } else if constexpr (std::is_same_v<T, int32_t>) {
+            return Config::ConfigValueType::Int32;
+        } else if constexpr (std::is_same_v<T, float>) {
+            return Config::ConfigValueType::Float;
+        } else {
+            return Config::ConfigValueType::String;
+        }
+    }, value);
+}
+
+Config::ConfigTlvEntry BuildTlvEntry(Config::ConfigKeyId keyId, const Config::ConfigValue& value) {
+    return Config::ConfigTlvEntry{
+        .keyId = keyId,
+        .valueType = ValueTypeFor(value),
+        .stringValue = Config::toString(value),
+    };
 }
 
 void PopulateServiceDefaults(Config::ConfigStore& store) {
@@ -181,6 +204,7 @@ void ServiceProxy::InitConfigSchema() {
     Config::ConfigBinder binder;
     m_pipeline.registerBindings(binder);
     m_stylusPipeline.registerBindings(binder);
+    Config::registerRuntimeKeyMappings(binder);
 
     m_configDefaults = Config::ConfigStore{};
     PopulateServiceDefaults(m_configDefaults);
@@ -241,64 +265,101 @@ std::vector<std::string> ServiceProxy::GetConfigModuleTags() const {
     return tags;
 }
 
-void ServiceProxy::SaveConfig() {
-#ifndef _DEBUG
-    static std::atomic_bool loggedReleaseNoOp{false};
-    if (!loggedReleaseNoOp.exchange(true, std::memory_order_relaxed)) {
-        LOG_WARN("App", __func__, "Config", "Release builds read YAML only at Service startup; live config mutation is not supported.");
+void ServiceProxy::MarkConfigPathsDirty(const std::vector<std::string>& paths) {
+    for (const auto& path : paths) {
+        m_dirtyConfigPaths.insert(path);
     }
-    return;
-#else
-    if (!IsLiveControlAllowed() || !m_client.IsConnected()) return;
+}
 
-    Ipc::ApplyConfigPatchRequestWire patch{};
-    patch.fieldMask = Ipc::ToBits(Ipc::ServiceConfigFieldWire::Mode) |
-                      Ipc::ToBits(Ipc::ServiceConfigFieldWire::AutoMode) |
-                      Ipc::ToBits(Ipc::ServiceConfigFieldWire::StylusVhfEnabled) |
-                      Ipc::ToBits(Ipc::ServiceConfigFieldWire::PenButtonMode) |
-                      Ipc::ToBits(Ipc::ServiceConfigFieldWire::PenButtonRoute);
-    patch.desiredMode = static_cast<uint8_t>(
-        m_srvDesiredModeFull.load(std::memory_order_relaxed)
-            ? Ipc::ServiceModeWire::Full
-            : Ipc::ServiceModeWire::TouchOnly);
-    patch.autoMode = m_srvAutoMode.load(std::memory_order_relaxed) ? 1 : 0;
-    patch.stylusVhfEnabled = m_srvStylusVhfEnabled.load(std::memory_order_relaxed) ? 1 : 0;
-    patch.penButtonMode = static_cast<uint8_t>(m_srvPenButtonMode.load(std::memory_order_relaxed));
-    patch.penButtonRoute = static_cast<uint8_t>(m_srvPenButtonRoute.load(std::memory_order_relaxed));
+bool ServiceProxy::ApplyConfigStoreGlobally() {
+#if !EGOTOUCH_CONFIG_ENABLED
+    return false;
+#endif
+    if (!IsLiveControlAllowed() || !m_client.IsConnected()) {
+        LOG_WARN("App", __func__, "IPC", "Global config apply skipped; live control is not allowed or IPC is disconnected.");
+        return false;
+    }
 
-    const auto applyResp = m_client.ApplyConfigPatch(patch);
-    if (!applyResp.success) {
-        LOG_WARN("App", __func__, "IPC", "ApplyConfigPatch failed with status={}", static_cast<unsigned int>(applyResp.status));
-        return;
+    Config::ConfigPatchTlv patch{};
+    size_t skippedKeys = 0;
+    std::vector<std::string> dirtyPaths(m_dirtyConfigPaths.begin(), m_dirtyConfigPaths.end());
+    std::sort(dirtyPaths.begin(), dirtyPaths.end());
+    for (const auto& path : dirtyPaths) {
+        auto keyId = Config::tryKeyIdForPath(path);
+        if (!keyId.has_value() || !m_configStore.has(path)) {
+            ++skippedKeys;
+            continue;
+        }
+
+        const Config::ConfigValue value = m_configStore.get<Config::ConfigValue>(path);
+        patch.entries.push_back(BuildTlvEntry(*keyId, value));
+    }
+
+    if (patch.entries.empty()) {
+        LOG_WARN("App", __func__, "Config", "Global config apply produced no TLV entries; skippedKeys={}", skippedKeys);
+        return false;
+    }
+
+    std::vector<uint8_t> payload;
+    try {
+        payload = Config::serializePatch(patch);
+    } catch (const std::exception& ex) {
+        LOG_WARN("App", __func__, "Config", "Failed to serialize global config patch: {}", ex.what());
+        return false;
+    }
+
+    if (payload.size() > Ipc::kConfigTlvMaxPayloadBytes) {
+        LOG_WARN("App", __func__, "IPC", "Global config patch too large: {} bytes", payload.size());
+        return false;
+    }
+
+    static std::atomic<uint16_t> nextSession{1};
+    uint16_t sessionId = nextSession.fetch_add(1, std::memory_order_relaxed);
+    if (sessionId == 0) {
+        sessionId = nextSession.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    size_t offset = 0;
+    Ipc::IpcResponse applyResp{};
+    while (offset < payload.size()) {
+        const size_t take = std::min<size_t>(Ipc::kConfigTlvChunkPayloadBytes, payload.size() - offset);
+        Ipc::ConfigTlvChunkRequestWire chunk{};
+        chunk.sessionId = sessionId;
+        chunk.totalLen = static_cast<uint16_t>(payload.size());
+        chunk.offset = static_cast<uint16_t>(offset);
+        chunk.chunkLen = static_cast<uint16_t>(take);
+        chunk.flags = 0;
+        if (offset == 0) {
+            chunk.flags |= Ipc::kConfigTlvChunkFirst;
+        }
+        if (offset + take == payload.size()) {
+            chunk.flags |= Ipc::kConfigTlvChunkLast;
+        }
+        std::memcpy(chunk.bytes, payload.data() + offset, take);
+
+        applyResp = m_client.ApplyConfigTlvChunk(chunk);
+        if (!applyResp.success) {
+            LOG_WARN("App", __func__, "IPC", "ApplyConfigTlvChunk failed with status={} offset={}", static_cast<unsigned int>(applyResp.status), offset);
+            return false;
+        }
+        offset += take;
     }
 
     const auto persistResp = m_client.PersistConfig();
     if (!persistResp.success) {
         LOG_WARN("App", __func__, "IPC", "PersistConfig failed with status={}", static_cast<unsigned int>(persistResp.status));
-        return;
+        return false;
     }
 
-    const auto snapshotResp = m_client.GetConfigSnapshot();
-    if (snapshotResp.success && snapshotResp.dataLen >= sizeof(Ipc::ConfigSnapshotWire)) {
-        Ipc::ConfigSnapshotWire snapshot{};
-        std::memcpy(&snapshot, snapshotResp.data, sizeof(snapshot));
-        m_srvDesiredModeFull.store(snapshot.desiredMode == static_cast<uint8_t>(Ipc::ServiceModeWire::Full), std::memory_order_relaxed);
-        m_srvActiveModeFull.store(snapshot.activeMode == static_cast<uint8_t>(Ipc::ServiceModeWire::Full), std::memory_order_relaxed);
-        m_srvAutoMode.store(snapshot.autoMode != 0, std::memory_order_relaxed);
-        m_srvStylusVhfEnabled.store(snapshot.stylusVhfEnabled != 0, std::memory_order_relaxed);
-        m_srvPenButtonMode.store(static_cast<PenButtonMode>(snapshot.penButtonMode), std::memory_order_relaxed);
-        m_srvPenButtonRoute.store(static_cast<PenButtonRoute>(snapshot.penButtonRoute), std::memory_order_relaxed);
-        PopulateServiceValues(
-            m_configStore,
-            m_srvDesiredModeFull.load(std::memory_order_relaxed),
-            m_srvAutoMode.load(std::memory_order_relaxed),
-            m_srvStylusVhfEnabled.load(std::memory_order_relaxed),
-            m_srvPenButtonMode.load(std::memory_order_relaxed),
-            m_srvPenButtonRoute.load(std::memory_order_relaxed));
-    }
+    RefreshConfigSnapshot();
+    ApplyConfigStoreToLocalRuntime();
+    m_dirtyConfigPaths.clear();
+    LOG_INFO("App", __func__, "IPC", "Global config applied entries={} skippedKeys={} payloadBytes={}", patch.entries.size(), skippedKeys, payload.size());
+    return true;
+}
 
-    LOG_INFO("App", __func__, "IPC", "Config patch persisted through service IPC; local INI persistence is disabled.");
-#endif
+void ServiceProxy::SaveConfig() {
+    (void)ApplyConfigStoreGlobally();
 }
 
 void ServiceProxy::RefreshConfigSnapshot() {
@@ -336,30 +397,35 @@ void ServiceProxy::SetSrvModeFull(bool full) {
     if (!IsLiveControlAllowed()) return;
     m_srvDesiredModeFull.store(full, std::memory_order_relaxed);
     SetValue(m_configStore, "service.mode", ToConfigValue(ToServiceModeConfig(full)));
+    m_dirtyConfigPaths.insert("service.mode");
 }
 
 void ServiceProxy::SetSrvStylusVhfEnabled(bool enabled) {
     if (!IsLiveControlAllowed()) return;
     m_srvStylusVhfEnabled.store(enabled, std::memory_order_relaxed);
     SetValue(m_configStore, "service.stylus_vhf_enabled", ToConfigValue(enabled));
+    m_dirtyConfigPaths.insert("service.stylus_vhf_enabled");
 }
 
 void ServiceProxy::SetSrvAutoMode(bool enabled) {
     if (!IsLiveControlAllowed()) return;
     m_srvAutoMode.store(enabled, std::memory_order_relaxed);
     SetValue(m_configStore, "service.auto_mode", ToConfigValue(enabled));
+    m_dirtyConfigPaths.insert("service.auto_mode");
 }
 
 void ServiceProxy::SetPenButtonMode(PenButtonMode m) {
     if (!IsLiveControlAllowed()) return;
     m_srvPenButtonMode.store(m, std::memory_order_relaxed);
     SetValue(m_configStore, "service.pen_button_mode", ToConfigValue(m));
+    m_dirtyConfigPaths.insert("service.pen_button_mode");
 }
 
 void ServiceProxy::SetPenButtonRoute(PenButtonRoute r) {
     if (!IsLiveControlAllowed()) return;
     m_srvPenButtonRoute.store(r, std::memory_order_relaxed);
     SetValue(m_configStore, "service.pen_button_route", ToConfigValue(r));
+    m_dirtyConfigPaths.insert("service.pen_button_route");
 }
 
 // ── MasterParser-only mode (local) ──

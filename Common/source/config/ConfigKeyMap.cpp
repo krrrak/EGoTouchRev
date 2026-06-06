@@ -8,6 +8,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace Config {
 namespace {
@@ -123,6 +124,22 @@ void ensureStaticMapsInitialized()
     (void)initialized;
 }
 
+bool startsWith(std::string_view value, std::string_view prefix)
+{
+    return value.size() >= prefix.size() && value.substr(0, prefix.size()) == prefix;
+}
+
+uint16_t nextAvailableId(uint16_t startInclusive, uint16_t endExclusive)
+{
+    auto& idToPath = mutableKeyIdToPath();
+    for (uint16_t raw = startInclusive; raw < endExclusive; ++raw) {
+        if (!idToPath.contains(static_cast<ConfigKeyId>(raw))) {
+            return raw;
+        }
+    }
+    return endExclusive;
+}
+
 } // namespace
 
 const std::unordered_map<ConfigKeyId, std::string>& keyIdToPath()
@@ -151,6 +168,46 @@ void registerKeyMapping(ConfigKeyId id, std::string_view yamlPath)
     std::string path{yamlPath};
     idToPath[id] = path;
     pathToId[std::move(path)] = id;
+}
+
+void registerRuntimeKeyMappings(const ConfigBinder& binder)
+{
+    ensureStaticMapsInitialized();
+
+    std::vector<std::string> missingTouchPaths;
+    std::vector<std::string> missingStylusPaths;
+    const auto snapshot = binder.snapshot();
+    for (const auto& entry : snapshot.entries) {
+        if (tryKeyIdForPath(entry.yamlPath).has_value()) {
+            continue;
+        }
+        if (startsWith(entry.yamlPath, "touch.")) {
+            missingTouchPaths.push_back(entry.yamlPath);
+        } else if (startsWith(entry.yamlPath, "stylus.")) {
+            missingStylusPaths.push_back(entry.yamlPath);
+        }
+    }
+
+    std::ranges::sort(missingTouchPaths);
+    std::ranges::sort(missingStylusPaths);
+
+    uint16_t nextTouch = nextAvailableId(0x0100, 0x0200);
+    for (const auto& path : missingTouchPaths) {
+        if (nextTouch >= 0x0200) {
+            break;
+        }
+        registerKeyMapping(static_cast<ConfigKeyId>(nextTouch++), path);
+        nextTouch = nextAvailableId(nextTouch, 0x0200);
+    }
+
+    uint16_t nextStylus = nextAvailableId(0x0200, static_cast<uint16_t>(ConfigKeyId::MaxKeyId));
+    for (const auto& path : missingStylusPaths) {
+        if (nextStylus >= static_cast<uint16_t>(ConfigKeyId::MaxKeyId)) {
+            break;
+        }
+        registerKeyMapping(static_cast<ConfigKeyId>(nextStylus++), path);
+        nextStylus = nextAvailableId(nextStylus, static_cast<uint16_t>(ConfigKeyId::MaxKeyId));
+    }
 }
 
 std::optional<std::string_view> tryPathForKeyId(ConfigKeyId id)

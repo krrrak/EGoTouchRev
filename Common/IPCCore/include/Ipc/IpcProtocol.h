@@ -36,6 +36,7 @@ enum class IpcCommand : uint8_t {
     GetConfigSnapshot = 42,
     ApplyConfigPatch  = 43,
     PersistConfig     = 44,
+    ApplyConfigTlvChunk = 45,
     // Logs
     GetLogs        = 50,  // App requests recent log lines from Service
     // PenBridge (BT MCU)
@@ -130,6 +131,22 @@ struct PersistConfigResponseWire {
     uint16_t wireVersion = kIpcProtocolVersion;
     uint8_t persistedFields = 0;
     uint8_t _reserved0 = 0;
+};
+
+constexpr uint8_t kConfigTlvChunkFirst = 1u << 0;
+constexpr uint8_t kConfigTlvChunkLast = 1u << 1;
+constexpr uint16_t kConfigTlvChunkPayloadBytes = 244;
+constexpr uint16_t kConfigTlvMaxPayloadBytes = 64 * 1024 - 1;
+
+struct ConfigTlvChunkRequestWire {
+    uint16_t wireVersion = kIpcProtocolVersion;
+    uint16_t sessionId = 0;
+    uint16_t totalLen = 0;
+    uint16_t offset = 0;
+    uint16_t chunkLen = 0;
+    uint8_t flags = 0;
+    uint8_t _reserved0 = 0;
+    uint8_t bytes[kConfigTlvChunkPayloadBytes]{};
 };
 
 enum class DebugValueType : uint8_t {
@@ -296,5 +313,7 @@ static_assert(sizeof(IpcRequest) == 260,
     "IpcRequest size changed");
 static_assert(sizeof(IpcResponse) == 4100,
     "IpcResponse size changed");
+static_assert(sizeof(ConfigTlvChunkRequestWire) <= 256,
+    "Config TLV chunk must fit in IpcRequest::param");
 
 } // namespace Ipc

@@ -78,7 +78,20 @@ std::optional<ConfigPaths> resolve(const std::optional<std::string>& cliOverride
         return paths;
     }
 
-    // 4. 启动失败
+    // 4. ./config/ current working directory (service console/dev runs)
+    defaultDir = fs::current_path() / "config";
+    defaultYaml = defaultDir / "default.yaml";
+    if (fs::exists(defaultYaml)) {
+        ConfigPaths paths;
+        paths.baseDir = defaultDir.string();
+        paths.defaultConfig = defaultYaml.string();
+        paths.overrideConfig = (defaultDir / "overrides.yaml").string();
+        paths.overrideExists = fs::exists(paths.overrideConfig);
+        LOG_INFO("Config", __func__, "Path", "Using config dir (cwd-relative): {}", paths.baseDir);
+        return paths;
+    }
+
+    // 5. 启动失败
     LOG_ERROR("Config", __func__, "Path", "Cannot find config/default.yaml in any search path");
     return std::nullopt;
 }

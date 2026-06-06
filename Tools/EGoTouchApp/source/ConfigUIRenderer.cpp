@@ -12,9 +12,16 @@ namespace App {
 void ConfigUIRenderer::RenderConfigStore(
     const Config::ConfigSchemaSnapshot& schema,
     Config::ConfigStore& values,
-    const std::string& sectionName) {
+    const std::string& sectionName,
+    std::vector<std::string>* changedPaths) {
 
     (void)sectionName;
+
+    auto recordChange = [changedPaths](const std::string& path) {
+        if (changedPaths) {
+            changedPaths->push_back(path);
+        }
+    };
 
     for (const auto& entry : schema.entries) {
         Config::ConfigValue currentValue;
@@ -34,6 +41,7 @@ void ConfigUIRenderer::RenderConfigStore(
                 bool val = Config::tryGetValue<bool>(currentValue).value_or(false);
                 if (ImGui::Checkbox(label.c_str(), &val)) {
                     values.set<bool>(entry.yamlPath, val);
+                    recordChange(entry.yamlPath);
                 }
                 break;
             }
@@ -45,9 +53,11 @@ void ConfigUIRenderer::RenderConfigStore(
                 if (hasRange) {
                     if (ImGui::SliderInt(label.c_str(), &val, minV, maxV)) {
                         values.set<int32_t>(entry.yamlPath, static_cast<int32_t>(val));
+                        recordChange(entry.yamlPath);
                     }
                 } else if (ImGui::InputInt(label.c_str(), &val)) {
                     values.set<int32_t>(entry.yamlPath, static_cast<int32_t>(val));
+                    recordChange(entry.yamlPath);
                 }
                 break;
             }
@@ -59,9 +69,11 @@ void ConfigUIRenderer::RenderConfigStore(
                 if (hasRange) {
                     if (ImGui::SliderFloat(label.c_str(), &val, minF, maxF)) {
                         values.set<float>(entry.yamlPath, val);
+                        recordChange(entry.yamlPath);
                     }
                 } else if (ImGui::InputFloat(label.c_str(), &val)) {
                     values.set<float>(entry.yamlPath, val);
+                    recordChange(entry.yamlPath);
                 }
                 break;
             }
@@ -78,6 +90,7 @@ void ConfigUIRenderer::RenderConfigStore(
                 if (!items.empty() && ImGui::Combo(label.c_str(), &selectedIdx, items.data(), static_cast<int>(items.size()))) {
                     if (selectedIdx >= 0 && selectedIdx < static_cast<int>(entry.enumMapping.size())) {
                         values.set<std::string>(entry.yamlPath, entry.enumMapping[selectedIdx].second);
+                        recordChange(entry.yamlPath);
                     }
                 }
                 break;
@@ -90,6 +103,7 @@ void ConfigUIRenderer::RenderConfigStore(
                 std::memcpy(buf, strVal.data(), copyLen);
                 if (ImGui::InputText(label.c_str(), buf, sizeof(buf))) {
                     values.set<std::string>(entry.yamlPath, std::string(buf));
+                    recordChange(entry.yamlPath);
                 }
                 break;
             }
@@ -104,7 +118,8 @@ void ConfigUIRenderer::RenderConfigStore(
 void ConfigUIRenderer::RenderConfigStoreByModule(
     const Config::ConfigSchemaSnapshot& schema,
     Config::ConfigStore& values,
-    const std::string& moduleTag) {
+    const std::string& moduleTag,
+    std::vector<std::string>* changedPaths) {
 
     Config::ConfigSchemaSnapshot filtered;
     for (const auto& entry : schema.entries) {
@@ -113,7 +128,7 @@ void ConfigUIRenderer::RenderConfigStoreByModule(
         }
     }
 
-    RenderConfigStore(filtered, values, moduleTag);
+    RenderConfigStore(filtered, values, moduleTag, changedPaths);
 }
 
 std::vector<std::string> ConfigUIRenderer::CollectModuleTags(

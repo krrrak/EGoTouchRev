@@ -241,6 +241,11 @@ void DiagnosticsWorkbench::DrawTouchPipelineConfigPanel() {
         return;
     }
 
+#if !EGOTOUCH_CONFIG_ENABLED
+    ImGui::TextColored(WarnColor(), "Runtime config apply is disabled in this build (EGOTOUCH_CONFIG_ENABLED=0).");
+    ImGui::TextWrapped("Touch pipeline parameters remain editable in the app-local ConfigStore, but Apply Global is disabled and cannot update Service/YAML.");
+#endif
+
     const auto& schema = m_proxy->GetConfigSchemaSnapshot();
     const auto modules = CollectModuleTagsWithPrefix(schema, "Touch /");
     if (modules.empty()) {
@@ -252,7 +257,7 @@ void DiagnosticsWorkbench::DrawTouchPipelineConfigPanel() {
     m_touchConfigModuleIndex = std::clamp(m_touchConfigModuleIndex, 0, moduleCount - 1);
     const bool masterParserOnly = m_proxy->IsMasterParserOnlyMode();
 
-    ImGui::TextWrapped("Edit touch pipeline parameters by processing stage. Apply updates only the app-local preview pipeline; it does not live-apply the Service-side pipeline.");
+    ImGui::TextWrapped("Edit touch pipeline parameters by processing stage. Apply Global sends the ConfigStore to the Service, live-applies the Service pipeline, and persists YAML overrides.");
     if (masterParserOnly) {
         ImGui::TextColored(WarnColor(), "Master Parser Only is enabled. Pipeline configuration controls are disabled.");
     }
@@ -284,16 +289,26 @@ void DiagnosticsWorkbench::DrawTouchPipelineConfigPanel() {
         if (masterParserOnly) {
             ImGui::BeginDisabled();
         }
-        ConfigUIRenderer::RenderConfigStoreByModule(schema, m_proxy->GetConfigStore(), activeModule);
+        std::vector<std::string> changedPaths;
+        ConfigUIRenderer::RenderConfigStoreByModule(schema, m_proxy->GetConfigStore(), activeModule, &changedPaths);
+        m_proxy->MarkConfigPathsDirty(changedPaths);
         if (masterParserOnly) {
             ImGui::EndDisabled();
         }
 
-        if (ImGui::Button("Apply App-local Preview")) {
-            m_proxy->ApplyConfigStoreToLocalRuntime();
+#if !EGOTOUCH_CONFIG_ENABLED
+        ImGui::BeginDisabled();
+        ImGui::Button("Apply Global");
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::TextDisabled("Apply disabled; global Service/YAML apply is unavailable.");
+#else
+        if (ImGui::Button("Apply Global")) {
+            m_proxy->ApplyConfigStoreGlobally();
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("Service pipeline is not changed.");
+        ImGui::TextDisabled("Applies to Service and saves YAML overrides.");
+#endif
 
         ImGui::EndTable();
     }
@@ -537,7 +552,12 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
         }
 
         if (ImGui::BeginTabItem("Config")) {
-            ImGui::TextWrapped("Edit stylus pipeline parameters by module. Apply updates only the app-local preview pipeline; it does not live-apply the Service-side pipeline.");
+#if !EGOTOUCH_CONFIG_ENABLED
+            ImGui::TextColored(WarnColor(), "Runtime config apply is disabled in this build (EGOTOUCH_CONFIG_ENABLED=0).");
+            ImGui::TextWrapped("Stylus pipeline parameters remain editable in the app-local ConfigStore, but Apply Global is disabled and cannot update Service/YAML.");
+#else
+            ImGui::TextWrapped("Edit stylus pipeline parameters by module. Apply Global sends the ConfigStore to the Service, live-applies the Service pipeline, and persists YAML overrides.");
+#endif
             const auto& schema = m_proxy->GetConfigSchemaSnapshot();
             const auto modules = CollectModuleTagsWithPrefix(schema, "Stylus /");
             if (modules.empty()) {
@@ -545,12 +565,22 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
             } else if (ImGui::BeginTabBar("StylusConfigTabs")) {
                 for (const auto& module : modules) {
                     if (ImGui::BeginTabItem(ModuleDisplayName(module))) {
-                        ConfigUIRenderer::RenderConfigStoreByModule(schema, m_proxy->GetConfigStore(), module);
-                        if (ImGui::Button("Apply App-local Preview")) {
-                            m_proxy->ApplyConfigStoreToLocalRuntime();
+                        std::vector<std::string> changedPaths;
+                        ConfigUIRenderer::RenderConfigStoreByModule(schema, m_proxy->GetConfigStore(), module, &changedPaths);
+                        m_proxy->MarkConfigPathsDirty(changedPaths);
+#if !EGOTOUCH_CONFIG_ENABLED
+                        ImGui::BeginDisabled();
+                        ImGui::Button("Apply Global");
+                        ImGui::EndDisabled();
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("Apply disabled; global Service/YAML apply is unavailable.");
+#else
+                        if (ImGui::Button("Apply Global")) {
+                            m_proxy->ApplyConfigStoreGlobally();
                         }
                         ImGui::SameLine();
-                        ImGui::TextDisabled("Service pipeline is not changed.");
+                        ImGui::TextDisabled("Applies to Service and saves YAML overrides.");
+#endif
                         ImGui::EndTabItem();
                     }
                 }

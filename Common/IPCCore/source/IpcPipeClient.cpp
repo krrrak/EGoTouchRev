@@ -149,6 +149,14 @@ IpcResponse IpcPipeClient::ApplyConfigPatch(const ApplyConfigPatchRequestWire& p
     return Send(req);
 }
 
+IpcResponse IpcPipeClient::ApplyConfigTlvChunk(const ConfigTlvChunkRequestWire& chunk) {
+    IpcRequest req{};
+    req.command = IpcCommand::ApplyConfigTlvChunk;
+    req.paramLen = static_cast<uint16_t>(sizeof(chunk));
+    std::memcpy(req.param, &chunk, sizeof(chunk));
+    return Send(req);
+}
+
 IpcResponse IpcPipeClient::PersistConfig() {
     IpcRequest req{}; req.command = IpcCommand::PersistConfig;
     return Send(req);

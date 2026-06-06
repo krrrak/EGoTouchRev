@@ -23,6 +23,7 @@
 #include <optional>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace App {
@@ -94,6 +95,8 @@ public:
 
     // Config sync
     void SaveConfig();
+    bool ApplyConfigStoreGlobally();
+    void MarkConfigPathsDirty(const std::vector<std::string>& paths);
     void RefreshConfigSnapshot();
     // Applies ConfigStore edits to the app-local preview pipelines only.
     // Does not live-apply Service-side pipelines; no-op when runtime config is disabled.
@@ -171,6 +174,7 @@ private:
     Config::ConfigSchemaSnapshot m_configSchema;
     Config::ConfigStore m_configStore;
     Config::ConfigStore m_configDefaults;
+    std::unordered_set<std::string> m_dirtyConfigPaths;
 
     // Latest frame snapshot for GUI
     std::mutex m_frameMutex;

@@ -22,6 +22,9 @@ const std::unordered_map<std::string, ConfigKeyId>& pathToKeyId();
 // 注册映射（由 ConfigBinder 的 bind() 自动调用）
 void registerKeyMapping(ConfigKeyId id, std::string_view yamlPath);
 
+// 为 binder 中尚未静态映射的 runtime key 分配确定性 keyId。
+void registerRuntimeKeyMappings(const ConfigBinder& binder);
+
 // 静态查找 keyId → path (需要先填充映射表)
 std::optional<std::string_view> tryPathForKeyId(ConfigKeyId id);
 

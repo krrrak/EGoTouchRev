@@ -341,7 +341,11 @@ void DeviceRuntime::ApplyConfigStore(const Config::ConfigStore& store) {
   m_vhfReporter.SetStylusPacketSensorRows(m_stylusPipeline.GetPacketSensorRows());
   m_vhfReporter.SetStylusPacketSensorCols(m_stylusPipeline.GetPacketSensorCols());
   m_vhfReporter.SetStylusPacketEmitWhenInvalid(m_stylusPipeline.GetEmitPacketWhenInvalid());
-  LOG_INFO("Runtime", __func__, "Config", "Applied startup config to touch/stylus pipelines.");
+  LOG_INFO("Runtime", __func__, "Config", "Applied ConfigStore to touch/stylus pipelines.");
+}
+
+void DeviceRuntime::ApplyPipelineConfig(const Config::ConfigStore& store) {
+  ApplyConfigStore(store);
 }
 
 bool DeviceRuntime::IsShutdownRequested() const {

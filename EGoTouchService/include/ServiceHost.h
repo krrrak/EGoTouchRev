@@ -71,7 +71,9 @@ private:
                                    bool& valid);
     void BuildDebugSchema();
 
-    bool LoadStartupConfig(const std::string& configPath);
+    bool InitializeConfigStores(const std::string& configPath);
+    ServiceConfigState ReadServiceConfigStateFromStore() const;
+    void WriteServiceConfigStateToStore(const ServiceConfigState& config);
     void ApplyServiceConfigToRuntime(const ServiceConfigState& config);
     ReloadServiceConfigResult HandleReloadServiceConfig(const ServiceConfigState& reloadedConfig);
     bool ValidateStartupConfig(const Config::ConfigStore& store) const;
@@ -90,6 +92,7 @@ private:
     void HandleIpcExitDebugMode(Ipc::IpcResponse& resp);
     void HandleIpcGetConfigSnapshot(Ipc::IpcResponse& resp);
     void HandleIpcApplyConfigPatch(const Ipc::IpcRequest& req, Ipc::IpcResponse& resp);
+    void HandleIpcApplyConfigTlvChunk(const Ipc::IpcRequest& req, Ipc::IpcResponse& resp);
     void HandleIpcPersistConfig(Ipc::IpcResponse& resp);
     void HandleIpcReloadConfig(Ipc::IpcResponse& resp);
     void HandleIpcSaveConfig(Ipc::IpcResponse& resp);

@@ -37,6 +37,7 @@ public:
     IpcResponse SaveConfig();
     IpcResponse GetConfigSnapshot();
     IpcResponse ApplyConfigPatch(const ApplyConfigPatchRequestWire& patch);
+    IpcResponse ApplyConfigTlvChunk(const ConfigTlvChunkRequestWire& chunk);
     IpcResponse PersistConfig();
 
 private:

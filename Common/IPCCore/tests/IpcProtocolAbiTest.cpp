@@ -38,6 +38,7 @@ int main() {
     Require(U(IpcCommand::GetConfigSnapshot) == 42, "GetConfigSnapshot command value remains stable");
     Require(U(IpcCommand::ApplyConfigPatch) == 43, "ApplyConfigPatch command value remains stable");
     Require(U(IpcCommand::PersistConfig) == 44, "PersistConfig command value remains stable");
+    Require(U(IpcCommand::ApplyConfigTlvChunk) == 45, "ApplyConfigTlvChunk command value remains stable");
     Require(U(IpcCommand::GetDebugSchema) == 61, "GetDebugSchema command value remains stable");
     Require(U(IpcCommand::SetMasterParserOnly) == 64, "SetMasterParserOnly command value remains stable");
     Require(U(IpcCommand::GetPenIdentityStatus) == 65, "GetPenIdentityStatus command value remains stable");
@@ -74,6 +75,11 @@ int main() {
     Require(patch.wireVersion == kIpcProtocolVersion, "ApplyConfigPatchRequestWire version defaults to protocol version");
     Require(patch.fieldMask == 0, "ApplyConfigPatchRequestWire field mask defaults empty");
     Require(patch.desiredMode == U(ServiceModeWire::Full), "ApplyConfigPatchRequestWire desired mode defaults to Full");
+
+    ConfigTlvChunkRequestWire chunk{};
+    Require(sizeof(ConfigTlvChunkRequestWire) <= 256, "ConfigTlvChunkRequestWire fits in request param");
+    Require(chunk.wireVersion == kIpcProtocolVersion, "ConfigTlvChunkRequestWire version defaults to protocol version");
+    Require(kConfigTlvChunkPayloadBytes == 244, "Config TLV chunk payload size remains stable");
 
     PenIdentityStatusWire penIdentity{};
     Require(sizeof(PenIdentityStatusWire) == 140, "PenIdentityStatusWire layout remains fixed");

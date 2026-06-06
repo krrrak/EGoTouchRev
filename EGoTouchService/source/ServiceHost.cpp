@@ -15,8 +15,10 @@
 #include "Logger.h"
 #include "Ipc/IpcProtocol.h"
 #include "config/ConfigBinder.h"
+#include "config/ConfigKeyMap.h"
 #include "config/ConfigPath.h"
 #include "config/ConfigStore.h"
+#include "config/ConfigTlv.h"
 #include "config/SchemaValidator.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -26,6 +28,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <cwchar>
 #include <exception>
@@ -35,6 +38,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -136,17 +140,23 @@ struct ServiceHost::Impl {
     HANDLE m_logEvent = nullptr;
     HANDLE m_penEvent = nullptr;
 
-    std::optional<Config::ConfigPaths> m_configPaths;
-    Config::ConfigStore m_defaultConfigStore;
-    Config::ConfigStore m_configStore;
-    bool m_configLoaded = false;
-
     std::vector<Ipc::DebugFieldSchemaWire> m_debugSchema;
     uint16_t m_debugSchemaVersion = 0;
     uint32_t m_debugSchemaHash = 0;
     std::mutex m_debugFrameMutex;
     Solvers::HeatmapFrame m_latestDebugFrame;
     bool m_hasLatestDebugFrame = false;
+
+    std::mutex m_configMutex;
+    Config::ConfigStore m_configDefaults;
+    Config::ConfigStore m_configStore;
+    Config::ConfigSchemaSnapshot m_configSchema;
+    std::optional<Config::ConfigPaths> m_configPaths;
+    bool m_penButtonRouteExplicit = false;
+    uint16_t m_pendingConfigTlvSessionId = 0;
+    uint16_t m_pendingConfigTlvTotalLen = 0;
+    uint16_t m_pendingConfigTlvReceived = 0;
+    std::vector<uint8_t> m_pendingConfigTlvPayload;
 };
 
 // ── 设备路径 ──
@@ -267,6 +277,158 @@ bool TryParseWireServiceMode(uint8_t wireValue, ServiceMode& out) {
     }
 }
 
+ServiceMode ParseServiceMode(std::string_view value) {
+    return value == "touch_only" ? ServiceMode::TouchOnly : ServiceMode::Full;
+}
+
+PenButtonMode ParsePenButtonMode(std::string_view value) {
+    if (value == "native_barrel" || value == "Native Barrel") return PenButtonMode::NativeBarrel;
+    if (value == "native_eraser" || value == "Native Eraser") return PenButtonMode::NativeEraser;
+    return PenButtonMode::OemCustom;
+}
+
+const char* PenButtonModeToConfig(PenButtonMode value) {
+    switch (value) {
+    case PenButtonMode::OemCustom: return "oem_custom";
+    case PenButtonMode::NativeBarrel: return "native_barrel";
+    case PenButtonMode::NativeEraser: return "native_eraser";
+    default: return "oem_custom";
+    }
+}
+
+PenButtonRoute ParsePenButtonRoute(std::string_view value) {
+    if (value == "win32_only" || value == "Win32 Only") return PenButtonRoute::Win32Only;
+    if (value == "vhf_and_win32" || value == "VHF + Win32") return PenButtonRoute::VhfAndWin32;
+    return PenButtonRoute::VhfOnly;
+}
+
+const char* PenButtonRouteToConfig(PenButtonRoute value) {
+    switch (value) {
+    case PenButtonRoute::VhfOnly: return "vhf_only";
+    case PenButtonRoute::Win32Only: return "win32_only";
+    case PenButtonRoute::VhfAndWin32: return "vhf_and_win32";
+    default: return "vhf_only";
+    }
+}
+
+Config::ConfigValue ConfigValueFromTlvEntry(const Config::ConfigTlvEntry& entry, bool& ok) {
+    ok = true;
+    try {
+        switch (entry.valueType) {
+        case Config::ConfigValueType::Bool:
+            if (entry.stringValue == "true" || entry.stringValue == "1") {
+                return Config::ConfigValue(true);
+            }
+            if (entry.stringValue == "false" || entry.stringValue == "0") {
+                return Config::ConfigValue(false);
+            }
+            ok = false;
+            return Config::ConfigValue(false);
+        case Config::ConfigValueType::Int32: {
+            size_t pos = 0;
+            const int parsed = std::stoi(entry.stringValue, &pos);
+            if (pos != entry.stringValue.size()) {
+                ok = false;
+                return Config::ConfigValue(int32_t{0});
+            }
+            return Config::ConfigValue(static_cast<int32_t>(parsed));
+        }
+        case Config::ConfigValueType::Float: {
+            size_t pos = 0;
+            const float parsed = std::stof(entry.stringValue, &pos);
+            if (pos != entry.stringValue.size() || !std::isfinite(parsed)) {
+                ok = false;
+                return Config::ConfigValue(0.0f);
+            }
+            return Config::ConfigValue(parsed);
+        }
+        case Config::ConfigValueType::String:
+            return Config::ConfigValue(entry.stringValue);
+        case Config::ConfigValueType::Null:
+        default:
+            ok = false;
+            return Config::ConfigValue(std::string{});
+        }
+    } catch (const std::exception&) {
+        ok = false;
+        return Config::ConfigValue(std::string{});
+    }
+}
+
+constexpr std::array<std::string_view, 4> kStylusIirCoefficientPaths{
+    "stylus.sp.iir_coef_low_in_band",
+    "stylus.sp.iir_coef_high_in_band",
+    "stylus.sp.iir_coef_low_edge",
+    "stylus.sp.iir_coef_high_edge",
+};
+
+bool StylusIirCoefficientsWithinMax(const Config::ConfigStore& store) {
+    const int32_t maxCoef = store.getOr<int32_t>("stylus.sp.iir_max_coef", 32);
+    if (maxCoef < 1) {
+        return false;
+    }
+
+    for (const auto path : kStylusIirCoefficientPaths) {
+        const int32_t coef = store.getOr<int32_t>(path, 0);
+        if (coef < 0 || coef > maxCoef) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void ClampStylusIirCoefficients(Config::ConfigStore& store) {
+    const int32_t maxCoef = std::clamp(store.getOr<int32_t>("stylus.sp.iir_max_coef", 32), int32_t{1}, int32_t{255});
+    store.set<int32_t>("stylus.sp.iir_max_coef", maxCoef);
+    for (const auto path : kStylusIirCoefficientPaths) {
+        if (store.has(path)) {
+            store.set<int32_t>(path, std::clamp(store.get<int32_t>(path), int32_t{0}, maxCoef));
+        }
+    }
+}
+
+bool ConfigValueAllowedBySchema(std::string_view path,
+                                const Config::ConfigValue& value,
+                                const Config::ConfigSchemaSnapshot& schema) {
+    if (path == "service.mode") {
+        const auto str = Config::tryGetValue<std::string>(value);
+        return str.has_value() && (*str == "full" || *str == "touch_only");
+    }
+    if (path == "service.pen_button_mode") {
+        const auto str = Config::tryGetValue<std::string>(value);
+        return str.has_value() && (*str == "oem_custom" || *str == "native_barrel" || *str == "native_eraser");
+    }
+    if (path == "service.pen_button_route") {
+        const auto str = Config::tryGetValue<std::string>(value);
+        return str.has_value() && (*str == "vhf_only" || *str == "win32_only" || *str == "vhf_and_win32");
+    }
+
+    const auto it = std::find_if(schema.entries.begin(), schema.entries.end(),
+        [path](const Config::ConfigSchemaEntry& entry) { return entry.yamlPath == path; });
+    if (it == schema.entries.end()) {
+        return false;
+    }
+
+    switch (it->uiType) {
+    case Config::ConfigUiType::Bool:
+        return Config::tryGetValue<bool>(value).has_value();
+    case Config::ConfigUiType::Int32: {
+        const auto v = Config::tryGetValue<int32_t>(value);
+        if (!v.has_value()) return false;
+        return !it->range.has_value() || (*v >= it->range->min && *v <= it->range->max);
+    }
+    case Config::ConfigUiType::Float: {
+        const auto v = Config::tryGetValue<float>(value);
+        if (!v.has_value()) return false;
+        return !it->range.has_value() || (*v >= it->range->min && *v <= it->range->max);
+    }
+    case Config::ConfigUiType::Enum:
+    case Config::ConfigUiType::String:
+        return Config::tryGetValue<std::string>(value).has_value();
+    }
+    return false;
+}
+
 uint64_t EncodeU32(uint32_t value) {
     return static_cast<uint64_t>(value);
 }
@@ -336,6 +498,113 @@ ServiceHost::~ServiceHost() {
     Stop();
 }
 
+bool ServiceHost::InitializeConfigStores(const std::string& configPath) {
+    Config::ConfigBinder binder;
+    Solvers::TouchPipeline touchDefaults;
+    Solvers::StylusPipeline stylusDefaults;
+    touchDefaults.registerBindings(binder);
+    stylusDefaults.registerBindings(binder);
+    Config::registerRuntimeKeyMappings(binder);
+
+    Config::ConfigStore defaults;
+    defaults.set<std::string>("service.mode", "full");
+    defaults.set<bool>("service.auto_mode", true);
+    defaults.set<bool>("service.stylus_vhf_enabled", true);
+    defaults.set<std::string>("service.pen_button_mode", "oem_custom");
+    defaults.set<std::string>("service.pen_button_route", "vhf_only");
+    binder.writeDefaults(defaults);
+
+    std::optional<std::string> cliConfigPath;
+    if (!configPath.empty()) {
+        cliConfigPath = configPath;
+    }
+    auto paths = Config::resolve(cliConfigPath);
+#if EGOTOUCH_CONFIG_ENABLED
+    if (!paths.has_value()) {
+        LOG_ERROR("Service", __func__, "Config", "config/default.yaml was not resolved; startup blocked.");
+        return false;
+    }
+#endif
+    if (paths.has_value()) {
+        try {
+            Config::ConfigStore yamlDefaults;
+            yamlDefaults.loadFromYaml(paths->defaultConfig);
+            defaults.mergeFrom(yamlDefaults);
+        } catch (const std::exception& ex) {
+            LOG_WARN("Service", __func__, "Config", "Failed to load default config '{}': {}", paths->defaultConfig, ex.what());
+        }
+    }
+
+    Config::ConfigStore current;
+    current.mergeFrom(defaults);
+    bool penButtonRouteExplicit = false;
+    if (paths.has_value() && paths->overrideExists) {
+        try {
+            Config::ConfigStore overrides;
+            overrides.loadFromYaml(paths->overrideConfig);
+            penButtonRouteExplicit = overrides.has("service.pen_button_route");
+            current.mergeFrom(overrides);
+        } catch (const std::exception& ex) {
+            LOG_WARN("Service", __func__, "Config", "Failed to load override config '{}': {}", paths->overrideConfig, ex.what());
+        }
+    }
+
+    if (!ValidateStartupConfig(current)) {
+        LOG_ERROR("Service", __func__, "Config", "Startup config schema validation failed; startup blocked.");
+        return false;
+    }
+
+    auto schema = Config::BuildMergedSchema(defaults, binder);
+    for (const auto& path : current.allPaths()) {
+        const auto value = current.get<Config::ConfigValue>(path);
+        if (!ConfigValueAllowedBySchema(path, value, schema) && defaults.has(path)) {
+            current.set<Config::ConfigValue>(path, defaults.get<Config::ConfigValue>(path));
+            LOG_WARN("Service", __func__, "Config", "Invalid config value at '{}'; restored default.", path);
+        }
+    }
+    if (!StylusIirCoefficientsWithinMax(current)) {
+        ClampStylusIirCoefficients(current);
+        LOG_WARN("Service", __func__, "Config", "Invalid stylus IIR coefficient/max relationship; clamped coefficients to max.");
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(m_impl->m_configMutex);
+        m_impl->m_configDefaults = std::move(defaults);
+        m_impl->m_configStore = std::move(current);
+        m_impl->m_configSchema = std::move(schema);
+        m_impl->m_configPaths = std::move(paths);
+        m_impl->m_penButtonRouteExplicit = penButtonRouteExplicit;
+    }
+
+    m_configState = ReadServiceConfigStateFromStore();
+    WriteServiceConfigStateToStore(m_configState);
+    return true;
+}
+
+ServiceConfigState ServiceHost::ReadServiceConfigStateFromStore() const {
+    std::lock_guard<std::mutex> lk(m_impl->m_configMutex);
+    const auto& store = m_impl->m_configStore;
+
+    ServiceConfigState state{};
+    state.mode = ParseServiceMode(store.getOr<std::string>("service.mode", "full"));
+    state.autoMode = store.getOr<bool>("service.auto_mode", true);
+    state.stylusVhfEnabled = store.getOr<bool>("service.stylus_vhf_enabled", true);
+    state.penButtonMode = ParsePenButtonMode(store.getOr<std::string>("service.pen_button_mode", "oem_custom"));
+    state.penButtonRoute = ParsePenButtonRoute(store.getOr<std::string>("service.pen_button_route", "vhf_only"));
+    state.penButtonRouteExplicit = m_impl->m_penButtonRouteExplicit;
+    return state;
+}
+
+void ServiceHost::WriteServiceConfigStateToStore(const ServiceConfigState& config) {
+    std::lock_guard<std::mutex> lk(m_impl->m_configMutex);
+    m_impl->m_configStore.set<std::string>("service.mode", ServiceModeToConfig(config.mode));
+    m_impl->m_configStore.set<bool>("service.auto_mode", config.autoMode);
+    m_impl->m_configStore.set<bool>("service.stylus_vhf_enabled", config.stylusVhfEnabled);
+    m_impl->m_configStore.set<std::string>("service.pen_button_mode", PenButtonModeToConfig(config.penButtonMode));
+    m_impl->m_configStore.set<std::string>("service.pen_button_route", PenButtonRouteToConfig(config.penButtonRoute));
+    m_impl->m_penButtonRouteExplicit = config.penButtonRouteExplicit;
+}
+
 // ── 模式解析 ──────────────────────────────────────────
 void ServiceHost::ApplyServiceConfigToRuntime(const ServiceConfigState& config) {
     if (!m_deviceRuntime) return;
@@ -344,52 +613,6 @@ void ServiceHost::ApplyServiceConfigToRuntime(const ServiceConfigState& config) 
         config.autoMode, config.stylusVhfEnabled,
         config.penButtonMode, config.penButtonRoute,
         config.penButtonRouteExplicit);
-}
-
-bool ServiceHost::LoadStartupConfig(const std::string& configPath) {
-#if EGOTOUCH_CONFIG_ENABLED
-    try {
-        const auto paths = Config::resolve(configPath.empty()
-                                           ? std::nullopt
-                                           : std::optional<std::string>{configPath});
-        if (!paths.has_value()) {
-            return false;
-        }
-
-        Config::ConfigStore defaults;
-        defaults.loadFromYaml(paths->defaultConfig);
-
-        Config::ConfigStore merged = defaults;
-        if (paths->overrideExists) {
-            Config::ConfigStore overrides;
-            overrides.loadFromYaml(paths->overrideConfig);
-            merged.mergeFrom(overrides);
-        }
-
-        if (!ValidateStartupConfig(merged)) {
-            return false;
-        }
-
-        ServiceConfigState loaded = m_configState;
-        Config::ConfigBinder binder;
-        RegisterServiceConfigBindings(binder, loaded);
-        binder.apply(merged);
-        loaded.penButtonRouteExplicit = merged.has("service.pen_button_route");
-
-        m_configState = loaded;
-        m_impl->m_configPaths = *paths;
-        m_impl->m_defaultConfigStore = defaults;
-        m_impl->m_configStore = merged;
-        m_impl->m_configLoaded = true;
-        return true;
-    } catch (const std::exception& ex) {
-        LOG_ERROR("Service", __func__, "Config", "Failed to load startup config: {}", ex.what());
-        return false;
-    }
-#else
-    (void)configPath;
-    return true;
-#endif
 }
 
 bool ServiceHost::ValidateStartupConfig(const Config::ConfigStore& store) const {
@@ -416,36 +639,23 @@ bool ServiceHost::ValidateStartupConfig(const Config::ConfigStore& store) const 
 
 bool ServiceHost::PersistServicePolicyConfig() {
 #if EGOTOUCH_CONFIG_ENABLED
+    std::lock_guard<std::mutex> lk(m_impl->m_configMutex);
     if (!m_impl->m_configPaths.has_value()) {
         LOG_ERROR("Service", __func__, "Config", "Cannot persist config before startup paths are resolved.");
         return false;
     }
 
     try {
-        const auto& paths = *m_impl->m_configPaths;
-        Config::ConfigStore defaults;
-        defaults.loadFromYaml(paths.defaultConfig);
-
-        Config::ConfigStore current = defaults;
-        if (std::filesystem::exists(paths.overrideConfig)) {
-            Config::ConfigStore existingOverrides;
-            existingOverrides.loadFromYaml(paths.overrideConfig);
-            current.mergeFrom(existingOverrides);
-        }
-
-        // Current IPC ApplyConfigPatchRequestWire / App SaveConfig only carries
-        // service policy fields.  Do not imply or attempt pipeline runtime
-        // key/value persistence through this ABI.
-        current.set("service.mode", std::string(ServiceModeToConfig(m_configState.mode)));
-        current.set("service.auto_mode", m_configState.autoMode);
-        current.set("service.stylus_vhf_enabled", m_configState.stylusVhfEnabled);
-        current.set("service.pen_button_mode", std::string(ToConfigValue(m_configState.penButtonMode)));
-        current.set("service.pen_button_route", std::string(ToConfigValue(m_configState.penButtonRoute)));
-        current.saveOverrides(paths.overrideConfig, defaults);
-
-        m_impl->m_defaultConfigStore = defaults;
-        m_impl->m_configStore = current;
-        m_impl->m_configLoaded = true;
+        // Current PersistConfig response/ABI advertises only service policy fields.
+        // Preserve any already-live pipeline runtime values in m_configStore, but
+        // only force service policy mirrors here; TLV-applied pipeline keys are not
+        // reported as persisted fields by this IPC ABI.
+        m_impl->m_configStore.set("service.mode", std::string(ServiceModeToConfig(m_configState.mode)));
+        m_impl->m_configStore.set("service.auto_mode", m_configState.autoMode);
+        m_impl->m_configStore.set("service.stylus_vhf_enabled", m_configState.stylusVhfEnabled);
+        m_impl->m_configStore.set("service.pen_button_mode", std::string(ToConfigValue(m_configState.penButtonMode)));
+        m_impl->m_configStore.set("service.pen_button_route", std::string(ToConfigValue(m_configState.penButtonRoute)));
+        m_impl->m_configStore.saveOverrides(m_impl->m_configPaths->overrideConfig, m_impl->m_configDefaults);
         return true;
     } catch (const std::exception& ex) {
         LOG_ERROR("Service", __func__, "Config", "PersistConfig failed: {}", ex.what());
@@ -531,14 +741,17 @@ bool ServiceHost::StartRuntimeAndPipeline(const std::string& configPath) {
     m_deviceRuntime = std::make_unique<DeviceRuntime>(
         kDevicePathMaster, kDevicePathSlave, kDevicePathInterrupt);
 
-    if (m_impl->m_configLoaded) {
-        if (!ValidateStartupConfig(m_impl->m_configStore)) {
-            LOG_ERROR("Service", __func__, "Boot", "Startup config validation failed; runtime start blocked.");
-            m_deviceRuntime.reset();
-            return false;
-        }
-        m_deviceRuntime->ApplyConfigStore(m_impl->m_configStore);
+    Config::ConfigStore startupConfig;
+    {
+        std::lock_guard<std::mutex> lk(m_impl->m_configMutex);
+        startupConfig = m_impl->m_configStore;
     }
+    if (!ValidateStartupConfig(startupConfig)) {
+        LOG_ERROR("Service", __func__, "Boot", "Startup config validation failed; runtime start blocked.");
+        m_deviceRuntime.reset();
+        return false;
+    }
+    m_deviceRuntime->ApplyConfigStore(startupConfig);
 
     ApplyServiceConfigToRuntime(m_configState);
     BuildDebugSchema();
@@ -647,7 +860,7 @@ void ServiceHost::StartPenSubsystem() {
 
 bool ServiceHost::Start() {
     const std::string configPath = GetConfigPath();
-    if (!LoadStartupConfig(configPath)) {
+    if (!InitializeConfigStores(configPath)) {
         LOG_ERROR("Service", __func__, "Boot", "Startup config load/validation failed; service start blocked.");
         return false;
     }
@@ -1151,6 +1364,7 @@ void ServiceHost::HandleIpcApplyConfigPatch(const Ipc::IpcRequest& req, Ipc::Ipc
     }
 
     const auto reloadState = HandleReloadServiceConfig(desired);
+    WriteServiceConfigStateToStore(m_configState);
 
     Ipc::ConfigMutationResultWire result{};
     result.changedFields = reloadState.changedFields;
@@ -1161,6 +1375,139 @@ void ServiceHost::HandleIpcApplyConfigPatch(const Ipc::IpcRequest& req, Ipc::Ipc
     resp.dataLen = static_cast<uint16_t>(sizeof(result));
     Ipc::MarkSuccess(resp);
 #endif
+}
+
+void ServiceHost::HandleIpcApplyConfigTlvChunk(const Ipc::IpcRequest& req, Ipc::IpcResponse& resp) {
+    if (!m_deviceRuntime) {
+        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidState);
+        return;
+    }
+    if (req.paramLen < sizeof(Ipc::ConfigTlvChunkRequestWire)) {
+        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidRequest);
+        return;
+    }
+
+    Ipc::ConfigTlvChunkRequestWire chunk{};
+    std::memcpy(&chunk, req.param, sizeof(chunk));
+    if (chunk.wireVersion != Ipc::kIpcProtocolVersion ||
+        chunk.totalLen == 0 || chunk.totalLen > Ipc::kConfigTlvMaxPayloadBytes ||
+        chunk.chunkLen > Ipc::kConfigTlvChunkPayloadBytes ||
+        static_cast<uint32_t>(chunk.offset) + chunk.chunkLen > chunk.totalLen) {
+        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidRequest);
+        return;
+    }
+
+    std::vector<uint8_t> payload;
+    {
+        std::lock_guard<std::mutex> lk(m_impl->m_configMutex);
+        const bool first = (chunk.flags & Ipc::kConfigTlvChunkFirst) != 0;
+        if (first) {
+            m_impl->m_pendingConfigTlvSessionId = chunk.sessionId;
+            m_impl->m_pendingConfigTlvTotalLen = chunk.totalLen;
+            m_impl->m_pendingConfigTlvReceived = 0;
+            m_impl->m_pendingConfigTlvPayload.assign(chunk.totalLen, uint8_t{0});
+        }
+
+        if (m_impl->m_pendingConfigTlvSessionId != chunk.sessionId ||
+            m_impl->m_pendingConfigTlvTotalLen != chunk.totalLen ||
+            m_impl->m_pendingConfigTlvPayload.size() != chunk.totalLen ||
+            chunk.offset != m_impl->m_pendingConfigTlvReceived) {
+            Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidRequest);
+            return;
+        }
+
+        std::memcpy(m_impl->m_pendingConfigTlvPayload.data() + chunk.offset, chunk.bytes, chunk.chunkLen);
+        m_impl->m_pendingConfigTlvReceived = static_cast<uint16_t>(m_impl->m_pendingConfigTlvReceived + chunk.chunkLen);
+        if ((chunk.flags & Ipc::kConfigTlvChunkLast) == 0) {
+            Ipc::MarkSuccess(resp);
+            return;
+        }
+
+        if (m_impl->m_pendingConfigTlvReceived != m_impl->m_pendingConfigTlvTotalLen) {
+            Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidRequest);
+            return;
+        }
+
+        payload = m_impl->m_pendingConfigTlvPayload;
+        m_impl->m_pendingConfigTlvPayload.clear();
+        m_impl->m_pendingConfigTlvSessionId = 0;
+        m_impl->m_pendingConfigTlvTotalLen = 0;
+        m_impl->m_pendingConfigTlvReceived = 0;
+    }
+
+    const auto patch = Config::deserializePatch(payload.data(), payload.size());
+    if (patch.entries.empty()) {
+        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidRequest);
+        return;
+    }
+
+    size_t changedCount = 0;
+    bool penButtonRouteTouched = false;
+    ServiceConfigState desired{};
+    {
+        std::lock_guard<std::mutex> lk(m_impl->m_configMutex);
+        Config::ConfigStore candidate = m_impl->m_configStore;
+        for (const auto& entry : patch.entries) {
+            const auto path = Config::tryPathForKeyId(entry.keyId);
+            if (!path.has_value()) {
+                Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidRequest);
+                return;
+            }
+
+            bool valueOk = false;
+            const Config::ConfigValue value = ConfigValueFromTlvEntry(entry, valueOk);
+            if (!valueOk) {
+                Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidRequest);
+                return;
+            }
+
+            const std::string pathString(*path);
+            if (pathString == "service.pen_button_route") {
+                penButtonRouteTouched = true;
+            }
+            if (!ConfigValueAllowedBySchema(pathString, value, m_impl->m_configSchema)) {
+                Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidRequest);
+                return;
+            }
+
+            const bool changed = !candidate.has(pathString) ||
+                candidate.get<Config::ConfigValue>(pathString) != value;
+            candidate.set<Config::ConfigValue>(pathString, value);
+            if (changed) {
+                ++changedCount;
+            }
+        }
+
+        if (!StylusIirCoefficientsWithinMax(candidate)) {
+            Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidRequest);
+            return;
+        }
+
+        desired.mode = ParseServiceMode(candidate.getOr<std::string>("service.mode", "full"));
+        desired.autoMode = candidate.getOr<bool>("service.auto_mode", true);
+        desired.stylusVhfEnabled = candidate.getOr<bool>("service.stylus_vhf_enabled", true);
+        desired.penButtonMode = ParsePenButtonMode(candidate.getOr<std::string>("service.pen_button_mode", "oem_custom"));
+        desired.penButtonRoute = ParsePenButtonRoute(candidate.getOr<std::string>("service.pen_button_route", "vhf_only"));
+        desired.penButtonRouteExplicit = m_impl->m_penButtonRouteExplicit || penButtonRouteTouched;
+        m_impl->m_configStore = std::move(candidate);
+        m_impl->m_penButtonRouteExplicit = desired.penButtonRouteExplicit;
+    }
+
+    const auto reloadState = HandleReloadServiceConfig(desired);
+    WriteServiceConfigStateToStore(m_configState);
+    {
+        std::lock_guard<std::mutex> lk(m_impl->m_configMutex);
+        m_deviceRuntime->ApplyPipelineConfig(m_impl->m_configStore);
+    }
+
+    Ipc::ConfigMutationResultWire result{};
+    result.changedFields = reloadState.changedFields;
+    result.appliedFields = reloadState.appliedFields;
+    result.restartRequiredFields = reloadState.restartRequiredFields;
+    std::memcpy(resp.data, &result, sizeof(result));
+    resp.dataLen = static_cast<uint16_t>(sizeof(result));
+    Ipc::MarkSuccess(resp);
+    LOG_INFO("Service", __func__, "Config", "Applied global config TLV entries={} changed={}", patch.entries.size(), changedCount);
 }
 
 void ServiceHost::HandleIpcPersistConfig(Ipc::IpcResponse& resp) {
@@ -1460,6 +1807,10 @@ Ipc::IpcResponse ServiceHost::HandleIpcCommand(const Ipc::IpcRequest& req) {
 
     case Ipc::IpcCommand::ApplyConfigPatch:
         HandleIpcApplyConfigPatch(req, resp);
+        break;
+
+    case Ipc::IpcCommand::ApplyConfigTlvChunk:
+        HandleIpcApplyConfigTlvChunk(req, resp);
         break;
 
     case Ipc::IpcCommand::PersistConfig:
