@@ -4,7 +4,6 @@
 
 
 #include <chrono>
-#include <cstdio>
 #include <format>
 #include <mutex>
 #include <string>
@@ -819,8 +818,8 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
     }
     if (oldFlags != newFlags) {
       LOG_INFO("Runtime", __func__, "MCU",
-               "{} flags: 0x{:04X} -> 0x{:04X} (payload=0x{:02X})",
-               FactoryStatusEventName(ev.code), oldFlags, newFlags, payload0);
+               "{} flags: 0x{:04X} -> 0x{:04X}.",
+               FactoryStatusEventName(ev.code), oldFlags, newFlags);
     }
   }
 
@@ -927,15 +926,8 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
   }
 
   case EC::PenFreqJump: {
-    std::string hexDump;
-    for (size_t i = 0; i < ev.payload.size(); ++i) {
-      char buf[8];
-      snprintf(buf, sizeof(buf), "%02X ", ev.payload[i]);
-      hexDump += buf;
-    }
     LOG_INFO("Runtime", __func__, "MCU",
-             "PenFreqJump ignored (payload[{}]: {})", ev.payload.size(),
-             hexDump);
+             "PenFreqJump ignored: payloadLen={}", ev.payload.size());
     break;
   }
 
@@ -1034,8 +1026,8 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
   case EC::PenTouchMode:
   case EC::PenGlobalPreventMode:
   case EC::PenHolster:
-    LOG_INFO("Runtime", __func__, "MCU", "{}: payload=0x{:02X} flags updated.",
-             FactoryStatusEventName(ev.code), payload0);
+    LOG_INFO("Runtime", __func__, "MCU", "{} flags updated.",
+             FactoryStatusEventName(ev.code));
     break;
 
   case EC::PenGlobalAnnotation:

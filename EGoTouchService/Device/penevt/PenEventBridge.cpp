@@ -6,10 +6,8 @@
 #include <SetupAPI.h>
 #include <hidsdi.h>
 
-#include <algorithm>
 #include <chrono>
 #include <cstdint>
-#include <cstdio>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -123,11 +121,8 @@ bool PenEventBridge::SendScanMode(uint8_t freq1, uint8_t freq2, uint8_t mode) {
     }
 
     LOG_INFO("PenEvent", __func__, "MCU",
-             "SetScanMode sent: freq1=0x{:02X}, freq2=0x{:02X}, mode={}"
-             " → payload=[{:02X} {:02X} {:02X} {:02X} {:02X} {:02X}]",
-             freq1, freq2, mode,
-             payload[0], payload[1], payload[2],
-             payload[3], payload[4], payload[5]);
+             "SetScanMode sent: freq1=0x{:02X}, freq2=0x{:02X}, mode={} payloadLen={}",
+             freq1, freq2, mode, payload.size());
     return true;
 }
 
@@ -240,24 +235,17 @@ void PenEventBridge::OnConnected() {
 }
 
 void PenEventBridge::OnPacketReceived(const std::vector<uint8_t>& packet) {
-    std::string hexDump;
-    size_t dumpLen = std::min(packet.size(), size_t(16));
-    for (size_t i = 0; i < dumpLen; ++i) {
-        char buf[8];
-        snprintf(buf, sizeof(buf), "%02X ", packet[i]);
-        hexDump += buf;
-    }
-
     auto parsed = TryParsePenUsbEventFrame(std::span<const uint8_t>(packet.data(), packet.size()));
     if (!parsed) {
         LOG_WARN("PenEvent", __func__, "MCU",
-                 "Dropping invalid RX [{}B]: {}", packet.size(), hexDump);
+                 "Dropping invalid RX packet: size={}B.", packet.size());
         return;
     }
 
     const uint8_t eventCode = parsed->eventCode;
     LOG_INFO("PenEvent", __func__, "MCU",
-             "RX [{}B]: {}", packet.size(), hexDump);
+             "RX packet: size={}B eventCode=0x{:02X} payloadLen={}",
+             packet.size(), eventCode, parsed->payload.size());
 
     int ackCode = GetAckCode(eventCode);
     if (ackCode >= 0) {
