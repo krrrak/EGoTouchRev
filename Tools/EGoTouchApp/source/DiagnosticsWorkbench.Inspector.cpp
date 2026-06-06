@@ -565,7 +565,6 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
                 }
                 ImGui::EndTabBar();
             }
-#endif
             ImGui::EndTabItem();
         }
 
