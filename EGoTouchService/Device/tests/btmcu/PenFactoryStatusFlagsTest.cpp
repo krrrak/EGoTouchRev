@@ -67,7 +67,8 @@ void TestAffectedEventTable() {
                 "status-affecting factory event should be marked affected");
     }
 
-    const std::array<EC, 7> unaffected{
+    const std::array<EC, 8> unaffected{
+        EC::PenModule,
         EC::PenCurrentFunc,
         EC::PenUnknown6F,
         EC::PenScreenStatus,

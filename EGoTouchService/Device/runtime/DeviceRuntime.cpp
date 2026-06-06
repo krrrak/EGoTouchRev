@@ -105,6 +105,22 @@ void ClearPenIdentityState(RuntimePenState &state) noexcept {
   state.hasStylusId = false;
   state.stylusId = 0;
   state.protocolHint = Solvers::StylusProtocolHint::Auto;
+  state.protocolHintFromPenModule = false;
+  state.hasPenModuleModelId = false;
+  state.penModuleModelId = 0;
+  state.penModuleModel = Himax::Pen::PenModuleModel::Unknown;
+}
+
+Solvers::StylusProtocolHint ResolveProtocolHintFromPenModule(
+    Himax::Pen::PenModuleProtocolHint hint) noexcept {
+  switch (hint) {
+  case Himax::Pen::PenModuleProtocolHint::Hpp2:
+    return Solvers::StylusProtocolHint::Hpp2;
+  case Himax::Pen::PenModuleProtocolHint::Hpp3:
+    return Solvers::StylusProtocolHint::Hpp3;
+  default:
+    return Solvers::StylusProtocolHint::Auto;
+  }
 }
 
 const char *ToString(Solvers::StylusProtocolHint hint) noexcept {
@@ -810,6 +826,60 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
 
   switch (ev.code) {
 
+  case EC::PenModule: {
+    if (!ev.semantic.hasPenModuleModelId) {
+      LOG_WARN("Runtime", __func__, "MCU",
+               "PenModule ignored because no valid ModelId semantic was present.");
+      break;
+    }
+
+    const uint32_t modelId = ev.semantic.penModuleModelId;
+    const auto moduleModel = ev.semantic.penModuleModel;
+    const bool hasModuleHint = ev.semantic.hasPenModuleProtocolHint;
+    const auto moduleProtocolHint = hasModuleHint
+                                        ? ResolveProtocolHintFromPenModule(
+                                              ev.semantic.penModuleProtocolHint)
+                                        : Solvers::StylusProtocolHint::Auto;
+
+    bool changed = false;
+    Solvers::StylusProtocolHint oldProtocolHint = Solvers::StylusProtocolHint::Auto;
+    Solvers::StylusProtocolHint nextProtocolHint = moduleProtocolHint;
+    uint32_t revision = 0;
+    {
+      std::lock_guard<std::mutex> lk(m_penStateMu);
+      oldProtocolHint = m_penState.protocolHint;
+
+      const bool nextFromPenModule = hasModuleHint;
+      if (!hasModuleHint && m_penState.hasStylusId) {
+        nextProtocolHint = ResolveProtocolHintFromStylusId(m_penState.stylusId);
+      }
+
+      changed = !m_penState.hasPenModuleModelId ||
+                m_penState.penModuleModelId != modelId ||
+                m_penState.penModuleModel != moduleModel ||
+                m_penState.protocolHintFromPenModule != nextFromPenModule ||
+                oldProtocolHint != nextProtocolHint;
+      if (changed) {
+        ++m_penState.penRevision;
+      }
+
+      m_penState.hasPenModuleModelId = true;
+      m_penState.penModuleModelId = modelId;
+      m_penState.penModuleModel = moduleModel;
+      m_penState.protocolHintFromPenModule = nextFromPenModule;
+      m_penState.protocolHint = nextProtocolHint;
+      revision = m_penState.penRevision;
+    }
+
+    LOG_INFO("Runtime", __func__, "MCU",
+             "PenModule: model={} modelId=0x{:06X} protocol {} -> {} revision={}{}",
+             Himax::Pen::ToString(moduleModel), modelId, ToString(oldProtocolHint),
+             ToString(nextProtocolHint), revision, changed ? " reset" : "");
+
+    ApplyPenStateToStylusPipeline();
+    break;
+  }
+
   case EC::PenConnStatus: {
     bool connected = false;
     uint32_t revision = 0;
@@ -831,7 +901,7 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
 
       if (!connected) {
         ClearPenIdentityState(m_penState);
-      } else if (m_penState.hasStylusId) {
+      } else if (!m_penState.protocolHintFromPenModule && m_penState.hasStylusId) {
         m_penState.protocolHint = ResolveProtocolHintFromStylusId(m_penState.stylusId);
       }
       revision = m_penState.penRevision;
@@ -873,33 +943,43 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
     const bool hasStylusId = ev.semantic.hasStylusId;
     const uint8_t commandPenType = hasStylusId ? ev.semantic.stylusId : payload0;
     const uint8_t stateStylusId = hasStylusId ? commandPenType : 0;
-    const auto protocolHint = ResolveProtocolHintFromStylusId(stateStylusId);
+    const auto fallbackProtocolHint = ResolveProtocolHintFromStylusId(stateStylusId);
 
     bool changed = false;
+    bool protocolFromPenModule = false;
     uint8_t oldPenType = 0;
     Solvers::StylusProtocolHint oldProtocolHint = Solvers::StylusProtocolHint::Auto;
+    Solvers::StylusProtocolHint effectiveProtocolHint = fallbackProtocolHint;
     uint32_t revision = 0;
     {
       std::lock_guard<std::mutex> lk(m_penStateMu);
+      protocolFromPenModule = m_penState.protocolHintFromPenModule;
       oldPenType = m_penState.stylusId;
       oldProtocolHint = m_penState.protocolHint;
+      effectiveProtocolHint = protocolFromPenModule
+                                  ? oldProtocolHint
+                                  : fallbackProtocolHint;
       changed = m_penState.hasStylusId != hasStylusId ||
                 m_penState.stylusId != stateStylusId ||
-                oldProtocolHint != protocolHint;
+                (!protocolFromPenModule && oldProtocolHint != fallbackProtocolHint);
 
       if (changed) {
         ++m_penState.penRevision;
       }
       m_penState.hasStylusId = hasStylusId;
       m_penState.stylusId = stateStylusId;
-      m_penState.protocolHint = protocolHint;
+      if (!protocolFromPenModule) {
+        m_penState.protocolHint = fallbackProtocolHint;
+      }
       revision = m_penState.penRevision;
     }
 
     LOG_INFO("Runtime", __func__, "MCU",
-             "PenTypeInfo: pen_type {} -> {} (param={}), protocol {} -> {}, revision={}{}",
+             "PenTypeInfo: pen_type {} -> {} (param={}), protocol {} -> {}{} revision={}{}",
              oldPenType, stateStylusId, commandPenType, ToString(oldProtocolHint),
-             ToString(protocolHint), revision, changed ? " reset" : "");
+             ToString(effectiveProtocolHint),
+             protocolFromPenModule ? " (PenModule override)" : "", revision,
+             changed ? " reset" : "");
 
     ApplyPenStateToStylusPipeline();
 

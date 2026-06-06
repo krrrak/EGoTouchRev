@@ -108,7 +108,12 @@ struct RuntimePenState {
     uint8_t stylusId = 0;
 
     Solvers::StylusProtocolHint protocolHint = Solvers::StylusProtocolHint::Auto;
+    bool protocolHintFromPenModule = false;
     uint32_t penRevision = 0;
+
+    bool hasPenModuleModelId = false;
+    uint32_t penModuleModelId = 0;
+    Himax::Pen::PenModuleModel penModuleModel = Himax::Pen::PenModuleModel::Unknown;
 
     bool hasCurrentMode = false;
     Himax::Pen::PenCurrentMode currentMode = Himax::Pen::PenCurrentMode::Unknown;
