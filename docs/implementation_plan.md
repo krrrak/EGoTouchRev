@@ -2,7 +2,7 @@
 
 > 日期: 2026-06-05 | 策略: 完全重构, 不兼容旧格式 | 原则: 配置文件是唯一权威数据源
 
-> 当前实现进度: 截至 2026-06-08，P1-3 Catalog 策略字段、P1-4 `IConfigTarget` registry、P1-5 runtime-derived `default.yaml` drift check、P1-6 v3 Patch/Persist result 已合入。当前架构仍是 v3 过渡态：Catalog/Snapshot/Patch/Persist v3 IPC 已落地，ConfigRuntime 已通过 target validate/rollback/action plan 管理 live patch 与 restart-required staged patch；App `ConfigDraft`、legacy fixed ABI cleanup、build macro cleanup、packaging/e2e 仍待完成。
+> 当前实现进度: 截至 2026-06-08，P1-3 Catalog 策略字段、P1-4 `IConfigTarget` registry、P1-5 runtime-derived `default.yaml` drift check、P1-6 v3 Patch/Persist result 已合入并通过 review。当前架构仍是 v3 过渡态：Catalog/Snapshot/Patch/Persist v3 IPC 已落地，ConfigRuntime 已通过 target validate/rollback/action plan 管理 live patch 与 restart-required staged patch；App `ConfigDraft`、legacy fixed ABI cleanup、build macro cleanup、packaging/e2e 仍待完成。
 
 ---
 
@@ -703,11 +703,19 @@ EGoTouchRev-2.0.0/
 
 ### 后续实施编排 Gate
 
-后续工作按接口/协议优先原则推进。每个实现 agent 返回后必须经过 review agent 审查；review 通过时只输出文档摘要，文档由主 agent 更新。
+后续工作按接口/协议优先原则推进。
 
-#### Step 1: P1-6 Final Review/Fix
+编排硬约束:
 
-- Task: 冻结并验收 `ApplyConfigPatchV3` / `PersistConfigV3` 接口语义，完成当前 v3 Patch/Persist dirty diff 的 final review/fix；明确 result wire 对 `Ok`、`NoChanges`、`Rejected`、`VersionMismatch`、malformed/internal error 的返回规则；明确 `RestartRequired` staged patch + persist 行为；明确 persist 对 `UserOverride` / `RuntimeOnly` / `GeneratedDefault` / `Deprecated` 的保存或 skip 语义。
+- 所有 subagent prompt 必须明确要求使用 `gpt-5.5 xhigh`；如环境不支持显式指定模型，也要在 prompt 中写明该要求。
+- 任务审查 agent 负责先确立接口/协议 gate、修改边界、串行/并行关系；review agent 只负责实现返回后的代码审查与验收。
+- 每个实现 agent 返回后必须经过 review agent 审查；review 不通过则回到同一 impl/fix agent 修正并复审，直到通过。
+- review 通过时必须输出 `Accepted Change Summary for Docs`；文档由主 agent 更新，subagent 不写 docs。
+
+#### Step 1: P1-6 Final Review/Fix (已完成)
+
+- Status: 已完成并通过 review；`ctest --preset arm64-Debug --output-on-failure` 40/40 passed。full build 仅因运行中的 `EGoTouchService.exe` 锁定输出 exe 受阻，相关 target build 与 ctest 已通过。
+- Task: 冻结并验收 `ApplyConfigPatchV3` / `PersistConfigV3` 接口语义，完成当前 v3 Patch/Persist dirty diff 的 final review/fix；明确 result wire 对 `Ok`、`NoChanges`、`Rejected`、`VersionMismatch` 的返回规则；明确 malformed/internal error 走 IPC failure 而不是 semantic result wire；明确 `RestartRequired` staged patch + persist 行为；明确 persist 对 `UserOverride` / `RuntimeOnly` / `GeneratedDefault` / `Deprecated` 的保存或 skip 语义。
 - Write scope: `Common/IPCCore/include/Ipc/IpcProtocol.h`, `Common/IPCCore/include/Ipc/IpcPipeClient.h`, `Common/IPCCore/source/IpcPipeClient.cpp`, `Common/IPCCore/source/IpcPipeServer.cpp`, `Common/IPCCore/tests/IpcProtocolAbiTest.cpp`, `EGoTouchService/include/ConfigRuntime.h`, `EGoTouchService/source/ConfigRuntime.cpp`, `EGoTouchService/include/ServiceHost.h`, `EGoTouchService/source/ServiceHost.cpp`, `EGoTouchService/tests/unit/ConfigRuntimeTest.cpp`, `Tools/EGoTouchApp/include/ServiceProxy.h`, `Tools/EGoTouchApp/source/ServiceProxy.Config.cpp`, `Tools/EGoTouchApp/tests/ServiceProxyCatalogSchemaTest.cpp`.
 - Forbidden scope: 不做 `ConfigDraft` 结构化重构；不删除 legacy fixed ABI；不清理 build macro；不修改 docs。
 - Expected behavior: 合法 v3 patch 的 schema/target/policy 拒绝通过 IPC success + result wire `Rejected` 返回；malformed request wire 才走 IPC failure；`VersionMismatch` 触发 App refresh/retry 且 retry response 也校验 `wireVersion`；`RestartRequired` key 可 staged/persist 但不触发 live apply action；persist 只保存允许持久化的 key 并统计 skip；target validate 失败不 commit runtime store。
@@ -722,7 +730,7 @@ EGoTouchRev-2.0.0/
 - Task: 先确立 App 侧 `ConfigDraft` 状态模型，再实施；拆分 Service catalog cache、Service snapshot cache、editable draft、dirty baseline、apply state、persist state；UI/ServiceProxy 不再把 `m_configStore` 同时当 snapshot、draft、local preview、apply input。
 - Write scope: `Tools/EGoTouchApp/include/ServiceProxy.h`, `Tools/EGoTouchApp/source/ServiceProxy.Config.cpp`, `Tools/EGoTouchApp/source/DiagnosticsWorkbench.Inspector.cpp`, `Tools/EGoTouchApp/source/ConfigUIRenderer.cpp`, `Tools/EGoTouchApp/tests/ServiceProxyCatalogSchemaTest.cpp`, 可新增 App draft tests。
 - Forbidden scope: 不修改 IPC wire layout；不删除 Service/Common legacy fixed ABI；不清理 `EGOTOUCH_CONFIG_ENABLED`；不修改 docs。
-- Expected behavior: Refresh snapshot 不覆盖 dirty draft；apply+persist 成功后清除对应 dirty key；apply 成功但 persist 失败后 dirty key 保留为 live-applied/unpersisted；apply rejected 后 failed key 保留 dirty 并显示错误状态；VersionMismatch 后 refresh snapshot 并用当前 dirty draft rebase 构造 patch；RestartRequired key 显示 staged/restart-required 而非 live-applied；offline/local fallback 仍可初始化本地 schema/default draft。
+- Expected behavior: Refresh snapshot 不覆盖 dirty draft；apply+persist 成功后清除对应 dirty key；apply 成功但 persist 失败后 dirty key 保留为 live-applied/unpersisted；apply rejected 后 failed key 保留 dirty 并显示错误状态；VersionMismatch 后 refresh snapshot 并用当前 dirty draft rebase 构造 patch；RestartRequired key 显示 staged/restart-required 而非 live-applied；offline/local fallback 仍可初始化本地 schema/default draft；connected mode 只消费 Service v3 catalog/snapshot。
 - Acceptance: App draft tests 覆盖 snapshot refresh does not clobber dirty draft、apply ok + persist fail keeps dirty、rejected key remains dirty with error、VersionMismatch rebase uses refreshed baseline、RestartRequired staged state；`git diff --check`; `cmake --build --preset arm64-Debug`; `ctest --preset arm64-Debug --output-on-failure`。
 - Agent orchestration: 串行，1 个 impl agent -> 1 个 review agent 循环；review 通过时输出 `Accepted Change Summary for Docs`。
 - Dependencies: 必须在 P1-6 result wire 稳定后开始。

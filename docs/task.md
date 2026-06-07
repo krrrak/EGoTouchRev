@@ -24,6 +24,7 @@
 ## 后续执行 Gate
 
 > 每个 impl agent 返回后必须由 review agent 审查；未通过则回同一 impl/fix agent 修正。review 通过时只输出文档摘要，文档由主 agent 更新。
+> 所有 subagent prompt 必须明确要求 `gpt-5.5 xhigh`。任务审查 agent 负责先定义接口/协议 gate、修改边界、串行/并行关系；review agent 负责实现后的验收。
 
 | Gate | 状态 | 任务内容 | 修改范围 | 预期行为 | 验收方式 | 并行规则 |
 |------|------|----------|----------|----------|----------|----------|
@@ -34,6 +35,78 @@
 | Step 5 build macro cleanup | [ ] 待开始 | 清理 `EGOTOUCH_CONFIG_ENABLED` / `EGOTOUCH_ENABLE_RUNTIME_CONFIG` 双路径 | CMake/presets, SolverBuildConfig, guarded Service/App/Solver code | runtime config 成为唯一主路径；disabled runtime UI/branches 移除或降为兼容 shim | grep macros; arm64-Debug/Release/amd64-Debug configure/build gates | 默认串行 |
 | Step 6 packaging/e2e verification | [ ] 待开始 | 验证 build output config、startup、connected edit/apply/persist、restart persistence | 优先只读；必要时补 e2e tests/scripts | `config/default.yaml` 随 exe；overrides 仅保存差异且可重启保持 | ctest; preset builds; config copy/install check; persist/restart evidence | 可并行只读验证 |
 | Step 7 final docs/API sync | [ ] 待开始 | 同步实施文档、任务清单、IPC/API 文档 | docs only | 文档与代码、grep、测试证据一致；legacy 主路径描述删除或标历史 | docs diff-check; task checklist audit | 仅主 agent 写 docs |
+
+### Gate 明细 (Tesla 输出)
+
+#### Step 1: P1-6 Final Review/Fix
+
+- 状态: 已完成并通过 review。`ApplyConfigPatchV3=48` / `PersistConfigV3=49` 已落地；`ctest --preset arm64-Debug --output-on-failure` 40/40 passed。full build 仅因运行中 `EGoTouchService.exe` 锁定输出 exe 受阻。
+- 任务内容: 冻结并验收 v3 patch/persist 接口语义；明确 semantic reject、malformed/internal error、VersionMismatch、RestartRequired staged、persist policy skip 行为。
+- 修改范围: Common IPC wire/client/server、`ConfigRuntime`、`ServiceHost`、App `ServiceProxy`、ABI/runtime/App tests。
+- 禁止范围: 不做 `ConfigDraft` 结构化重构；不删除 legacy fixed ABI；不清理 build macro；不让 subagent 修改 docs。
+- 预期行为: 合法 v3 patch 的 schema/target/policy 拒绝通过 IPC success + result wire `Rejected` 返回；malformed request 才 IPC failure；`VersionMismatch` 触发 App refresh/retry 且 retry response 校验 `wireVersion`；`RestartRequired` key 可 staged/persist 但不 live apply；persist 只保存允许持久化的 key 并统计 skip；target validate 失败不 commit runtime store。
+- 验收方式: `git diff --check`；`cmake --preset arm64-Debug`；`cmake --build --preset arm64-Debug`，若 exe lock 阻断则记录进程证据并构建相关 test targets；`ctest --preset arm64-Debug --output-on-failure`；测试覆盖 rejected result propagation、retry invalid wireVersion、VersionMismatch rebase、RestartRequired staged、persist skip count。
+- 编排规则: 已串行完成；1 个 impl/fix agent -> 1 个 review agent；review 通过时输出 `Accepted Change Summary for Docs`。
+
+#### Step 2: P1-7 ConfigDraft
+
+- 状态: 待开始，下一步串行 gate。
+- 任务内容: 先确立 App 侧 `ConfigDraft` 状态模型，再实施；拆分 Service catalog cache、Service snapshot cache、editable draft、dirty baseline、apply state、persist state；UI/ServiceProxy 不再把 `m_configStore` 同时当 snapshot、draft、local preview、apply input。
+- 修改范围: `Tools/EGoTouchApp/include/ServiceProxy.h`、`Tools/EGoTouchApp/source/ServiceProxy.Config.cpp`、`Tools/EGoTouchApp/source/DiagnosticsWorkbench.Inspector.cpp`、`Tools/EGoTouchApp/source/ConfigUIRenderer.cpp`、`Tools/EGoTouchApp/tests/ServiceProxyCatalogSchemaTest.cpp`，可新增 App draft tests。
+- 禁止范围: 不修改 IPC wire layout；不删除 Service/Common legacy fixed ABI；不清理 `EGOTOUCH_CONFIG_ENABLED`；不让 subagent 修改 docs。
+- 预期行为: Refresh snapshot 不覆盖 dirty draft；apply+persist 成功后清除对应 dirty key；apply 成功但 persist 失败后 dirty key 保留为 live-applied/unpersisted；apply rejected 后 failed key 保留 dirty 并显示错误状态；VersionMismatch 后 refresh snapshot，再用当前 dirty draft rebase 构造 patch；RestartRequired key 显示 staged/restart-required，不显示为 live-applied；offline/local fallback 仍能初始化本地 schema/default draft；connected mode 只消费 Service v3 catalog/snapshot。
+- 验收方式: App draft tests 覆盖 snapshot refresh does not clobber dirty draft、apply ok + persist fail keeps dirty、rejected key remains dirty with error、VersionMismatch rebase uses refreshed baseline、RestartRequired staged state；`git diff --check`；`cmake --build --preset arm64-Debug`；`ctest --preset arm64-Debug --output-on-failure`。
+- 编排规则: 串行；不可与任何 App cleanup 并行；可并行派只读 audit agent 列 UI 写入点但不得写代码。review 重点确认 `ConfigDraft` 是真实分离，而不是重命名 `m_configStore`。
+
+#### Step 3: P2 Common/Service Legacy IPC Cleanup
+
+- 状态: 待开始，必须在 P1-7 后。
+- 任务内容: 删除或隔离 Service/Common 侧 legacy fixed ABI 主路径；connected config IPC 主路径只保留 v3 catalog/snapshot/patch/persist；旧 `ConfigSnapshotWire` / `ApplyConfigPatchRequestWire` / legacy handler 不再作为 Service 主路径存在。
+- 修改范围: `Common/IPCCore/include/Ipc/IpcProtocol.h`、`Common/IPCCore/include/Ipc/IpcPipeClient.h`、`Common/IPCCore/source/IpcPipeClient.cpp`、`Common/IPCCore/source/IpcPipeServer.cpp`、`Common/IPCCore/tests/IpcProtocolAbiTest.cpp`、`EGoTouchService/include/ServiceHost.h`、`EGoTouchService/source/ServiceHost.cpp`，以及必要 Service IPC tests。
+- 禁止范围: 不修改 App draft 状态模型；不删除 offline/local YAML fallback；不清理 build macro；不让 subagent 修改 docs。
+- 预期行为: Service 不再处理 connected legacy fixed config snapshot/apply command；IPC ABI tests 更新为 v3 canonical path；旧 command 值如需保留 tombstone，必须明确 unsupported；v3 `GetConfigCatalogV3` / `GetConfigSnapshotV3` / `ApplyConfigPatchV3` / `PersistConfigV3` 仍通过。
+- 验收方式: `git grep` `ConfigSnapshotWire`、`ApplyConfigPatchRequestWire`、`HandleIpcGetConfigSnapshot` 和 legacy config apply handler，结果只允许 docs、历史注释或明确 tombstone tests；`git diff --check`；`cmake --build --preset arm64-Debug`；`ctest --preset arm64-Debug --output-on-failure`。
+- 编排规则: 可与 Step 4 并行但必须分 worktree；`IpcProtocol.h`、`ServiceHost.cpp` 本步骤独占，App cleanup agent 不得写。review 重点确认未误删 v3 paging 或 v3 patch/persist。
+
+#### Step 4: P2 App Connected Legacy Cleanup + Offline Fallback Preservation
+
+- 状态: 待开始，必须在 P1-7 后。
+- 任务内容: 清理 App connected mode 中遗留的 legacy merge/apply/helper 路径；保留 Service 不可用/离线场景的本地 binder/YAML fallback；明确 connected 与 offline 两种模式的入口和边界。
+- 修改范围: `Tools/EGoTouchApp/include/ServiceProxy.h`、`Tools/EGoTouchApp/source/ServiceProxy.Config.cpp`、`Tools/EGoTouchApp/source/DiagnosticsWorkbench.Inspector.cpp`、`Tools/EGoTouchApp/tests/ServiceProxyConfigMergeTest.cpp`、`Tools/EGoTouchApp/tests/ServiceProxyCatalogSchemaTest.cpp`，以及 App-local fallback tests。
+- 禁止范围: 不写 `IpcProtocol.h`；不写 `ServiceHost.cpp`；不改 Runtime target logic；不清理 build macro；不让 subagent 修改 docs。
+- 预期行为: connected mode apply/save 只走 v3 patch/persist；connected mode snapshot/catalog 只走 v3；legacy INI merge helpers 若只服务旧 connected path，应删除；offline/local fallback 仍可加载 local schema/default store，UI 可离线展示/编辑本地配置；offline fallback 不得在 connected v3 fetch 失败时伪装成 Service snapshot fallback，除非明确处于 disconnected/offline mode。
+- 验收方式: `git grep` connected legacy helper symbols，确认只剩 offline fallback 或删除；App tests 覆盖 connected does not call legacy snapshot/apply、offline fallback still initializes schema/store、v3 fetch failure in connected mode does not silently replace Service state with legacy snapshot；`git diff --check`；`cmake --build --preset arm64-Debug`；`ctest --preset arm64-Debug --output-on-failure`。
+- 编排规则: 可与 Step 3 并行，独立 worktree；不可与 Step 2 并行。review 重点确认 connected/offline 边界清楚且未破坏本地 fallback。
+
+#### Step 5: EGOTOUCH_CONFIG_ENABLED / Build Macro Cleanup
+
+- 状态: 待开始，必须在 P2 legacy cleanup 后。
+- 任务内容: 清理 `EGOTOUCH_ENABLE_RUNTIME_CONFIG` / `EGOTOUCH_CONFIG_ENABLED` 双路径；让 runtime config 成为唯一主路径，删除 UI/Service/Solvers 中 disabled runtime config 分支或收敛为测试专用。
+- 修改范围: `CMakeLists.txt`、`CMakePresets.json`、`EGoTouchService/Solvers/SolverBuildConfig.h`、`EGoTouchService/Solvers/tests/CMakeLists.txt`、`EGoTouchService/source/ConfigRuntime.cpp`、`EGoTouchService/source/ServiceHost.cpp`、`Tools/EGoTouchApp/source/DiagnosticsWorkbench.Inspector.cpp`，以及相关 tests。
+- 禁止范围: 不修改 IPC wire layout；不重新设计 ConfigDraft；不删除 offline fallback；不让 subagent 修改 docs。
+- 预期行为: 默认构建不再依赖 runtime config off/on 分叉；App 不再显示 runtime config disabled 的产品路径 UI；Solver/Service/App 测试仍能构建；CMake preset 中相关 option 被删除或降级为无害兼容项。
+- 验收方式: `git grep EGOTOUCH_CONFIG_ENABLED`；`git grep EGOTOUCH_ENABLE_RUNTIME_CONFIG`，只允许文档、历史说明或明确兼容 shim；`cmake --preset arm64-Debug`；`cmake --preset arm64-Release`；`cmake --preset amd64-Debug`；至少 arm64-Debug full build + ctest，其他 preset 至少 configure + core targets build。
+- 编排规则: 默认串行，`CMakeLists.txt` 必须独占或严格分区；不可与 Step 3/4 并行。review 重点确认 build matrix 行为没有被意外改变。
+
+#### Step 6: Packaging/E2E Verification
+
+- 状态: 待开始，必须在 Step 5 后。
+- 任务内容: 验证最终强约束链路：Catalog/default.yaml、Service startup、App connected v3 edit/apply/persist、restart 后保持配置；验证 config 文件复制/安装。
+- 修改范围: 优先只读验证；如必须补测试，可写 CMake packaging tests、integration/e2e test scripts、existing test registration。
+- 禁止范围: 不做大范围功能重构；不改 IPC 协议；不改 Draft 模型；不让 subagent 修改 docs，验证摘要交给主 agent。
+- 预期行为: build output 目录存在 `config/default.yaml`；首次启动加载 default.yaml 且 schema validation 通过；App connected mode 获取 catalog/snapshot；修改 live key 后 apply 生效；修改 restart-required key 后 staged/persist，不 live apply；`overrides.yaml` 只保存与 default 不同且允许 persist 的 key；Service restart 后 default + overrides 合并，配置保持。
+- 验收方式: `ctest --preset arm64-Debug --output-on-failure`；`cmake --build --preset arm64-Debug`；`cmake --build --preset arm64-Release` 或至少核心 targets；`cmake --build --preset amd64-Debug` 或至少核心 targets；验证 build output `.exe` 同目录下有 `config/default.yaml`；有可复现命令或测试记录证明 persist/restart 行为。
+- 编排规则: 可派多个只读 verification agents 并行；若需要写测试，必须先停下并由主 agent 分配单一写入 owner。review 重点确认验证覆盖实际目标，而不只是跑单测。
+
+#### Step 7: Final Docs/API Sync
+
+- 状态: 待开始；每个代码阶段 review 通过后可增量同步一次，最终 sync 必须在 Step 6 后。
+- 任务内容: 主 agent 根据所有通过 review 的 `Accepted Change Summary for Docs` 更新文档；同步 `docs/implementation_plan.md`、`docs/task.md`、必要的 `docs/api/ipc_protocol.md` / config framework API docs。
+- 修改范围: `docs/implementation_plan.md`、`docs/task.md`、`docs/api/ipc_protocol.md`、`docs/api/config_framework_api.md`，需要时更新 architecture docs 中过时的 legacy 描述。
+- 禁止范围: 不改源码；不让 subagent 写 docs。
+- 预期行为: 当前进度准确标记 P1-6、P1-7、P2 cleanup、macro cleanup、packaging/e2e 状态；API docs 反映 v3 canonical IPC，不再把旧 fixed ABI 描述为主路径；明确 offline fallback 保留边界；明确 default.yaml drift check 和 generator/check 现状。
+- 验收方式: `git diff --check docs/implementation_plan.md docs/task.md docs/api/ipc_protocol.md docs/api/config_framework_api.md`；文档中旧 legacy 主路径描述被替换或标注为历史/删除；task checklist 与实际 grep/test 结果一致。
+- 编排规则: docs 写入不并行，由主 agent 独占；可派只读 docs audit agent，但不得修改文件。review 重点确认文档不超前声明未验证完成。
 
 ---
 
