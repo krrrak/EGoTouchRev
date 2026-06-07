@@ -598,6 +598,8 @@ bool ServiceProxy::ApplyConfigV3CatalogBytes(const uint8_t* data, size_t size) {
         const auto payload = Config::deserializeConfigV3Catalog(data, size);
         Config::ConfigCatalog catalog(payload.entries);
         m_configSchema = Config::BuildSchemaSnapshot(catalog);
+        m_configV3CatalogSchemaVersion = payload.schemaVersion;
+        m_configV3CatalogSnapshotVersion = payload.snapshotVersion;
         for (const auto& entry : payload.entries) {
             if (!entry.path.empty()) {
                 m_configDefaults.set<Config::ConfigValue>(entry.path, entry.defaultValue);
@@ -643,6 +645,8 @@ bool ServiceProxy::ApplyConfigV3SnapshotBytes(const uint8_t* data, size_t size) 
             m_configStore.set<Config::ConfigValue>(schemaEntry.yamlPath, *normalizedValue);
             ++applied;
         }
+        m_configV3SnapshotSchemaVersion = payload.schemaVersion;
+        m_configV3SnapshotVersion = payload.snapshotVersion;
         SyncServiceMirrorsFromStore(
             m_configStore,
             m_srvDesiredModeFull,
@@ -669,6 +673,15 @@ bool ServiceProxy::ApplyConfigV3SnapshotBytesForTest(const uint8_t* data, size_t
     return ApplyConfigV3SnapshotBytes(data, size);
 }
 
+ConfigV3BaselineVersions ServiceProxy::GetConfigV3BaselineVersionsForTest() const {
+    return ConfigV3BaselineVersions{
+        .catalogSchemaVersion = m_configV3CatalogSchemaVersion,
+        .catalogSnapshotVersion = m_configV3CatalogSnapshotVersion,
+        .snapshotSchemaVersion = m_configV3SnapshotSchemaVersion,
+        .snapshotVersion = m_configV3SnapshotVersion,
+    };
+}
+
 bool ServiceProxy::RefreshConfigCatalogV3() {
     if (!m_client.IsConnected()) return false;
     const auto bytes = FetchConfigV3Bytes(Ipc::ConfigV3PayloadKind::Catalog);
@@ -683,33 +696,8 @@ bool ServiceProxy::RefreshConfigSnapshotV3() {
 
 void ServiceProxy::RefreshConfigSnapshot() {
     if (!m_client.IsConnected()) return;
-    if (RefreshConfigSnapshotV3()) return;
-
-    const auto resp = m_client.GetConfigSnapshot();
-    if (resp.success && resp.dataLen >= sizeof(Ipc::ConfigSnapshotWire)) {
-        Ipc::ConfigSnapshotWire snapshot{};
-        std::memcpy(&snapshot, resp.data, sizeof(snapshot));
-        m_srvDesiredModeFull.store(
-            snapshot.desiredMode == static_cast<uint8_t>(Ipc::ServiceModeWire::Full),
-            std::memory_order_relaxed);
-        m_srvActiveModeFull.store(
-            snapshot.activeMode == static_cast<uint8_t>(Ipc::ServiceModeWire::Full),
-            std::memory_order_relaxed);
-        m_srvAutoMode.store(snapshot.autoMode != 0, std::memory_order_relaxed);
-        m_srvStylusVhfEnabled.store(snapshot.stylusVhfEnabled != 0, std::memory_order_relaxed);
-        m_srvPenButtonMode.store(
-            static_cast<PenButtonMode>(snapshot.penButtonMode),
-            std::memory_order_relaxed);
-        m_srvPenButtonRoute.store(
-            static_cast<PenButtonRoute>(snapshot.penButtonRoute),
-            std::memory_order_relaxed);
-        PopulateServiceValues(
-            m_configStore,
-            m_srvDesiredModeFull.load(std::memory_order_relaxed),
-            m_srvAutoMode.load(std::memory_order_relaxed),
-            m_srvStylusVhfEnabled.load(std::memory_order_relaxed),
-            m_srvPenButtonMode.load(std::memory_order_relaxed),
-            m_srvPenButtonRoute.load(std::memory_order_relaxed));
+    if (!RefreshConfigSnapshotV3()) {
+        LOG_WARN("App", __func__, "Config", "Config v3 snapshot unavailable; keeping current app-local config store.");
     }
 }
 

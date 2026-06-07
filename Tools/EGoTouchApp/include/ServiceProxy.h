@@ -54,6 +54,13 @@ struct ApplyConfigResult {
     Ipc::IpcStatusCode persistStatus = Ipc::IpcStatusCode::InternalError;
 };
 
+struct ConfigV3BaselineVersions {
+    uint32_t catalogSchemaVersion = 0;
+    uint32_t catalogSnapshotVersion = 0;
+    uint32_t snapshotSchemaVersion = 0;
+    uint32_t snapshotVersion = 0;
+};
+
 class ServiceProxy {
 public:
     ServiceProxy();
@@ -119,6 +126,7 @@ public:
     void RefreshConfigSnapshot();
     bool ApplyConfigV3CatalogBytesForTest(const uint8_t* data, size_t size);
     bool ApplyConfigV3SnapshotBytesForTest(const uint8_t* data, size_t size);
+    ConfigV3BaselineVersions GetConfigV3BaselineVersionsForTest() const;
     // Applies ConfigStore edits to the app-local preview pipelines only.
     // Does not live-apply Service-side pipelines; no-op when runtime config is disabled.
     void ApplyConfigStoreToLocalRuntime();
@@ -203,6 +211,10 @@ private:
     Config::ConfigSchemaSnapshot m_configSchema;
     Config::ConfigStore m_configStore;
     Config::ConfigStore m_configDefaults;
+    uint32_t m_configV3CatalogSchemaVersion = 0;
+    uint32_t m_configV3CatalogSnapshotVersion = 0;
+    uint32_t m_configV3SnapshotSchemaVersion = 0;
+    uint32_t m_configV3SnapshotVersion = 0;
     std::unordered_set<std::string> m_dirtyConfigPaths;
     std::atomic<ApplyConfigStatus> m_lastApplyConfigStatus{ApplyConfigStatus::NotAttempted};
     std::atomic<bool> m_lastApplyConfigLiveApplied{false};

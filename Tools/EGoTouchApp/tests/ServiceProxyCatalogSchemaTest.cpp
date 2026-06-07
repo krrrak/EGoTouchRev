@@ -124,6 +124,20 @@ void TestV3CatalogPayloadAppliesSchemaAndDefaults() {
     RequireLiveMappedEntry(schema, "touch.signal_cond.baseline_no_finger_max_step");
     RequireLiveMappedEntry(schema, "stylus.sp.bt_freq_shift_debounce_frames");
     Require(proxy.GetConfigStore().has("service.mode"), "local fallback store should remain populated");
+    const auto versions = proxy.GetConfigV3BaselineVersionsForTest();
+    Require(versions.catalogSchemaVersion == 10, "v3 catalog schemaVersion should be recorded");
+    Require(versions.catalogSnapshotVersion == 20, "v3 catalog snapshotVersion should be recorded");
+}
+
+void TestLocalFallbackInitializesSchemaAndDefaultStore() {
+    App::ServiceProxy proxy;
+    Require(!proxy.GetConfigSchemaSnapshot().entries.empty(), "local fallback schema should initialize without Service connection");
+    Require(proxy.GetConfigStore().has("service.mode"), "local fallback default store should contain service.mode");
+    Require(proxy.GetConfigStore().has("touch.signal_cond.baseline_no_finger_max_step"),
+            "local fallback default store should contain touch catalog key");
+    const auto versions = proxy.GetConfigV3BaselineVersionsForTest();
+    Require(versions.catalogSchemaVersion == 0, "local fallback should not claim a v3 catalog baseline");
+    Require(versions.snapshotVersion == 0, "local fallback should not claim a v3 snapshot baseline");
 }
 
 void TestV3SnapshotPayloadWritesConfigStore() {
@@ -145,6 +159,9 @@ void TestV3SnapshotPayloadWritesConfigStore() {
             "v3 snapshot should write string enum value to ConfigStore");
     Require(proxy.GetConfigStore().getOr<bool>("service.auto_mode", true) == false,
             "v3 snapshot should write bool value to ConfigStore");
+    const auto versions = proxy.GetConfigV3BaselineVersionsForTest();
+    Require(versions.snapshotSchemaVersion == 10, "v3 snapshot schemaVersion should be recorded");
+    Require(versions.snapshotVersion == 21, "v3 snapshotVersion should be recorded");
 }
 
 void TestV3SnapshotPreservesDirtyPath() {
@@ -211,10 +228,16 @@ void TestInvalidV3PayloadDoesNotClearSchemaOrStore() {
             "invalid v3 catalog should fail");
     Require(proxy.GetConfigSchemaSnapshot().entries.size() == beforeEntries,
             "failed v3 catalog should not clear schema");
+    const auto beforeVersions = proxy.GetConfigV3BaselineVersionsForTest();
     Require(!proxy.ApplyConfigV3SnapshotBytesForTest(invalid.data(), invalid.size()),
             "invalid v3 snapshot should fail");
     Require(proxy.GetConfigStore().getOr<std::string>("service.mode", "") == "full",
             "failed v3 snapshot should not clear store");
+    const auto afterVersions = proxy.GetConfigV3BaselineVersionsForTest();
+    Require(afterVersions.snapshotSchemaVersion == beforeVersions.snapshotSchemaVersion,
+            "failed v3 snapshot should not change recorded schemaVersion");
+    Require(afterVersions.snapshotVersion == beforeVersions.snapshotVersion,
+            "failed v3 snapshot should not change recorded snapshotVersion");
 }
 
 } // namespace
@@ -225,6 +248,7 @@ int main() {
         TestDirtyPathKeyIdsRemainStable();
         TestDefaultYamlContainsCatalogBackedKeys();
         TestV3CatalogPayloadAppliesSchemaAndDefaults();
+        TestLocalFallbackInitializesSchemaAndDefaultStore();
         TestV3SnapshotPayloadWritesConfigStore();
         TestV3SnapshotPreservesDirtyPath();
         TestV3SnapshotSkipsUnknownKeyId();
