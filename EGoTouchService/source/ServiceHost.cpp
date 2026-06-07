@@ -1320,11 +1320,23 @@ void ServiceHost::HandleIpcApplyConfigTlvChunk(const Ipc::IpcRequest& req, Ipc::
         return;
     }
 
-    const auto reloadState = HandleReloadServiceConfig(apply.desiredServiceConfig);
-    m_configRuntime.WriteServiceState(m_configState);
-    // ConfigRuntime releases its internal mutex before returning pipelineConfig.
-    // Keep DeviceRuntime calls outside the config lock to preserve the original no-callback-under-lock boundary.
-    m_deviceRuntime->ApplyPipelineConfig(apply.pipelineConfig);
+    ReloadServiceConfigResult reloadState{};
+    for (const auto& action : apply.applyActions) {
+        switch (action.kind) {
+        case ConfigApplyActionKind::ServicePolicy: {
+            const auto serviceReload = HandleReloadServiceConfig(action.serviceConfig);
+            m_configRuntime.WriteServiceState(m_configState);
+            reloadState.changedFields |= serviceReload.changedFields;
+            reloadState.appliedFields |= serviceReload.appliedFields;
+            reloadState.restartRequiredFields |= serviceReload.restartRequiredFields;
+            break;
+        }
+        case ConfigApplyActionKind::PipelineRuntime:
+            // ConfigRuntime returns only an apply plan; DeviceRuntime calls stay outside the config lock.
+            m_deviceRuntime->ApplyPipelineConfig(action.configStore);
+            break;
+        }
+    }
 
     Ipc::ConfigMutationResultWire result{};
     result.changedFields = reloadState.changedFields;

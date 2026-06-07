@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ConfigTarget.h"
 #include "ServiceConfigCore.h"
 #include "Ipc/IpcProtocol.h"
 #include "config/ConfigPath.h"
@@ -11,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -29,6 +31,8 @@ public:
         size_t changedCount = 0;
         ServiceConfigState desiredServiceConfig{};
         Config::ConfigStore pipelineConfig{};
+        std::vector<ConfigTargetResult> targetResults;
+        std::vector<ConfigApplyAction> applyActions;
     };
 
     struct ConfigV3Blob {
@@ -38,6 +42,9 @@ public:
         uint32_t checksum = 0;
     };
 
+    ConfigRuntime();
+
+    void RegisterConfigTarget(std::unique_ptr<IConfigTarget> target);
     bool Initialize(const std::string& configPath, const StartupValidator& validateStartupConfig);
     ConfigV3Blob BuildCatalogV3Blob() const;
     ConfigV3Blob BuildSnapshotV3Blob() const;
@@ -52,6 +59,7 @@ private:
     ServiceConfigState ReadServiceConfigStateFromStoreLocked() const;
     void WriteServiceConfigStateToStoreLocked(const ServiceConfigState& config);
     bool ApplyCompletedTlvPayloadLocked(const std::vector<uint8_t>& payload, TlvApplyResult& result);
+    void RegisterDefaultConfigTargets();
 
     // Lock boundary: ConfigRuntime owns config store/schema/paths/TLV session state.
     // Callers must not invoke DeviceRuntime or IPC callbacks while m_mutex is held.
@@ -65,6 +73,7 @@ private:
     uint16_t m_pendingTlvTotalLen = 0;
     uint16_t m_pendingTlvReceived = 0;
     std::vector<uint8_t> m_pendingTlvPayload;
+    std::vector<std::unique_ptr<IConfigTarget>> m_targets;
 };
 
 } // namespace Service

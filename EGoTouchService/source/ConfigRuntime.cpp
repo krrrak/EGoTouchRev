@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstring>
 #include <exception>
+#include <memory>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -134,7 +135,106 @@ bool ConfigValueAllowedBySchema(std::string_view path,
     return false;
 }
 
+ConfigTargetResult MakeTargetResult(std::string_view targetName, ConfigApplyPhase phase, bool ok, std::string message = {}) {
+    ConfigTargetResult result{};
+    result.targetName = std::string(targetName);
+    result.phase = phase;
+    result.ok = ok;
+    result.message = std::move(message);
+    return result;
+}
+
+class ServicePolicyTarget final : public IConfigTarget {
+public:
+    std::string_view name() const noexcept override { return "ServicePolicyTarget"; }
+
+    bool isInterested(const ConfigChangeSet& changeSet) const override {
+        return changeSet.containsPrefix("service.");
+    }
+
+    ConfigTargetResult validateConfig(const Config::ConfigStore& candidate,
+                                      const ConfigChangeSet& changeSet) const override {
+        if (changeSet.containsPath("service.mode")) {
+            return MakeTargetResult(name(), ConfigApplyPhase::Live, false, "service.mode requires service restart");
+        }
+        if (candidate.has("service.mode")) {
+            const auto mode = candidate.get<Config::ConfigValue>("service.mode");
+            const auto str = Config::tryGetValue<std::string>(mode);
+            if (!str.has_value() || (*str != "full" && *str != "touch_only")) {
+                return MakeTargetResult(name(), ConfigApplyPhase::Live, false, "invalid service.mode");
+            }
+        }
+        if (candidate.has("service.pen_button_mode") &&
+            !ParsePenButtonModeValue(candidate.get<Config::ConfigValue>("service.pen_button_mode")).has_value()) {
+            return MakeTargetResult(name(), ConfigApplyPhase::Live, false, "invalid service.pen_button_mode");
+        }
+        if (candidate.has("service.pen_button_route") &&
+            !ParsePenButtonRouteValue(candidate.get<Config::ConfigValue>("service.pen_button_route")).has_value()) {
+            return MakeTargetResult(name(), ConfigApplyPhase::Live, false, "invalid service.pen_button_route");
+        }
+        return MakeTargetResult(name(), ConfigApplyPhase::Live, true);
+    }
+
+    ConfigTargetResult applyConfig(const Config::ConfigStore&,
+                                   const ConfigChangeSet& changeSet,
+                                   ConfigApplyPhase phase) const override {
+        auto result = MakeTargetResult(name(), phase, true);
+        if (!changeSet.empty()) {
+            ConfigApplyAction action{};
+            action.kind = ConfigApplyActionKind::ServicePolicy;
+            action.targetName = std::string(name());
+            result.actions.push_back(std::move(action));
+        }
+        return result;
+    }
+};
+
+class PipelineConfigTarget final : public IConfigTarget {
+public:
+    std::string_view name() const noexcept override { return "PipelineConfigTarget"; }
+
+    bool isInterested(const ConfigChangeSet& changeSet) const override {
+        return changeSet.containsPrefix("touch.") || changeSet.containsPrefix("stylus.");
+    }
+
+    ConfigTargetResult validateConfig(const Config::ConfigStore& candidate,
+                                      const ConfigChangeSet& changeSet) const override {
+        if (changeSet.containsPrefix("stylus.") && !StylusIirCoefficientsWithinMax(candidate)) {
+            return MakeTargetResult(name(), ConfigApplyPhase::Live, false, "invalid stylus IIR coefficient/max relationship");
+        }
+        return MakeTargetResult(name(), ConfigApplyPhase::Live, true);
+    }
+
+    ConfigTargetResult applyConfig(const Config::ConfigStore&,
+                                   const ConfigChangeSet& changeSet,
+                                   ConfigApplyPhase phase) const override {
+        auto result = MakeTargetResult(name(), phase, true);
+        if (!changeSet.empty()) {
+            ConfigApplyAction action{};
+            action.kind = ConfigApplyActionKind::PipelineRuntime;
+            action.targetName = std::string(name());
+            result.actions.push_back(std::move(action));
+        }
+        return result;
+    }
+};
+
 } // namespace
+
+ConfigRuntime::ConfigRuntime() {
+    RegisterDefaultConfigTargets();
+}
+
+void ConfigRuntime::RegisterConfigTarget(std::unique_ptr<IConfigTarget> target) {
+    if (!target) return;
+    std::lock_guard<std::mutex> lk(m_mutex);
+    m_targets.push_back(std::move(target));
+}
+
+void ConfigRuntime::RegisterDefaultConfigTargets() {
+    m_targets.push_back(std::make_unique<ServicePolicyTarget>());
+    m_targets.push_back(std::make_unique<PipelineConfigTarget>());
+}
 
 bool ConfigRuntime::Initialize(const std::string& configPath, const StartupValidator& validateStartupConfig) {
     Config::ConfigBinder binder;
@@ -408,6 +508,8 @@ bool ConfigRuntime::ApplyCompletedTlvPayloadLocked(const std::vector<uint8_t>& p
     const auto& patch = parseResult.patch;
     bool penButtonRouteTouched = false;
     Config::ConfigStore candidate = m_store;
+    ConfigChangeSet changeSet{};
+    changeSet.entryCount = patch.entries.size();
     for (const auto& entry : patch.entries) {
         const auto path = Config::tryPathForKeyId(entry.keyId);
         if (!path.has_value()) { result.status = Ipc::IpcStatusCode::InvalidRequest; return false; }
@@ -417,11 +519,35 @@ bool ConfigRuntime::ApplyCompletedTlvPayloadLocked(const std::vector<uint8_t>& p
         const std::string pathString(*path);
         if (pathString == "service.pen_button_route") penButtonRouteTouched = true;
         if (!ConfigValueAllowedBySchema(pathString, value, m_schema, true)) { result.status = Ipc::IpcStatusCode::InvalidRequest; return false; }
-        const bool changed = !candidate.has(pathString) || candidate.get<Config::ConfigValue>(pathString) != value;
+        const bool hadPreviousValue = candidate.has(pathString);
+        const Config::ConfigValue previousValue = hadPreviousValue
+            ? candidate.get<Config::ConfigValue>(pathString)
+            : Config::ConfigValue(std::string{});
+        const bool changed = !hadPreviousValue || previousValue != value;
         candidate.set<Config::ConfigValue>(pathString, value);
-        if (changed) ++result.changedCount;
+        if (changed) {
+            ConfigChange change{};
+            change.path = pathString;
+            change.keyId = entry.keyId;
+            change.previousValue = previousValue;
+            change.newValue = value;
+            change.hadPreviousValue = hadPreviousValue;
+            changeSet.changes.push_back(std::move(change));
+        }
     }
-    if (!StylusIirCoefficientsWithinMax(candidate)) { result.status = Ipc::IpcStatusCode::InvalidRequest; return false; }
+    result.changedCount = changeSet.changedCount();
+
+    for (const auto& target : m_targets) {
+        if (!target->isInterested(changeSet)) continue;
+        auto validation = target->validateConfig(candidate, changeSet);
+        result.targetResults.push_back(validation);
+        if (!validation.ok) {
+            result.status = Ipc::IpcStatusCode::InvalidRequest;
+            LOG_WARN("Service", __func__, "Config", "Rejected config TLV patch by {}: {}",
+                     validation.targetName, validation.message);
+            return false;
+        }
+    }
 
     result.desiredServiceConfig = ReadServiceConfigStateFromStoreLocked();
     result.desiredServiceConfig.penButtonRouteExplicit = m_penButtonRouteExplicit;
@@ -430,6 +556,20 @@ bool ConfigRuntime::ApplyCompletedTlvPayloadLocked(const std::vector<uint8_t>& p
     m_store = candidate;
     m_penButtonRouteExplicit = result.desiredServiceConfig.penButtonRouteExplicit;
     result.pipelineConfig = m_store;
+
+    for (const auto& target : m_targets) {
+        if (!target->isInterested(changeSet)) continue;
+        auto applyResult = target->applyConfig(m_store, changeSet, ConfigApplyPhase::Live);
+        for (auto& action : applyResult.actions) {
+            if (action.kind == ConfigApplyActionKind::ServicePolicy) {
+                action.serviceConfig = result.desiredServiceConfig;
+            } else if (action.kind == ConfigApplyActionKind::PipelineRuntime) {
+                action.configStore = m_store;
+            }
+            result.applyActions.push_back(action);
+        }
+        result.targetResults.push_back(std::move(applyResult));
+    }
     result.entryCount = patch.entries.size();
     result.status = Ipc::IpcStatusCode::Ok;
     return true;
