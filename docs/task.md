@@ -1,8 +1,11 @@
 # Config 重构任务清单
 
-> 基于: [implementation_plan.md](implementation_plan.md) | 原则: 完全重构, 不兼容旧格式
+> 基于: [implementation_plan.md](implementation_plan.md) | 当前权威进度见: [config_v3_full_upgrade_plan.md](artifacts/config_v3_full_upgrade_plan.md)  
+> 原则: 分阶段迁移到 Config v3；最终删除 legacy fixed ABI fallback，本地 fallback 保留为 Service 不可用/离线场景
 
 状态: `[ ]` 待开始 `[~]` 进行中 `[x]` 已完成 `[-]` 已取消
+
+> 进度说明：本文档是早期 YAML/ConfigStore/Binder/TLV 迁移任务清单，保留历史拆分。P0 与 P1-1 的最新状态以 [config_v3_full_upgrade_plan.md](artifacts/config_v3_full_upgrade_plan.md) 为准。
 
 ---
 
@@ -130,19 +133,22 @@
 - [ ] 3.1.6 单元测试: TLV round-trip / 未知 keyId 跳过 / 版本不匹配检测
 
 ### 3.2 Service 侧 IPC Handler
-- [ ] 3.2.1 `HandleIpcGetConfigSnapshot` — ConfigStore::snapshot() → TLV
-- [ ] 3.2.2 `HandleIpcApplyConfigPatch` — TLV → ConfigStore::applyPatch()
-- [ ] 3.2.3 `HandleIpcPersistConfig` — ConfigStore::saveOverrides()
-- [ ] 3.2.4 `HandleIpcReloadConfig` — 重新加载 YAML → apply bindings → 返回 snapshot
-- [ ] 3.2.5 删除旧的 `ConfigSnapshotWire` / `ApplyConfigPatchRequestWire` 固定布局 struct
-- [ ] 3.2.6 删除旧的 IPC handler 中对应的旧格式序列化代码
+- [x] 3.2.1 `HandleIpcGetConfigCatalogV3` — ConfigRuntime catalog blob → paged IPC response
+- [x] 3.2.2 `HandleIpcGetConfigSnapshotV3` — ConfigRuntime snapshot blob → paged IPC response
+- [~] 3.2.3 `HandleIpcApplyConfigPatch` — 当前由 `ApplyConfigTlvChunk` 承担过渡 live patch；后续升级为 v3 patch/result
+- [ ] 3.2.4 `HandleIpcPersistConfigV3` — 按 Catalog `persistPolicy` 保存 overrides
+- [ ] 3.2.5 `HandleIpcReloadConfig` — 重新加载 YAML → apply bindings → 返回 v3 snapshot
+- [ ] 3.2.6 删除旧的 `ConfigSnapshotWire` / `ApplyConfigPatchRequestWire` 固定布局 struct（依赖 App connected mode 全面切 v3）
+- [ ] 3.2.7 删除旧的 IPC handler 中对应的旧格式序列化代码（只删除 legacy fixed ABI fallback；不删除本地离线 fallback）
 
 ### 3.3 App 侧适配
-- [ ] 3.3.1 `ServiceProxy` 使用 ConfigStore 替代旧 INI 合并
-- [ ] 3.3.2 `ServiceProxy::LoadConfig()` 改为通过 IPC 获取 snapshot → ConfigStore
-- [ ] 3.3.3 `ServiceProxy::SaveConfig()` 改为 ApplyConfigPatch + PersistConfig
-- [ ] 3.3.4 删除 `MergeServiceProxyConfigSections()` 旧实现
-- [ ] 3.3.5 集成测试: App ↔ Service IPC round-trip
+- [x] 3.3.1 `ServiceProxy` connected mode 优先通过 `GetConfigCatalogV3` / `GetConfigSnapshotV3` 获取 Service catalog/snapshot
+- [ ] 3.3.2 新增 `ConfigDraft`，拆分 Service snapshot cache、用户 draft、dirty baseline version
+- [ ] 3.3.3 删除 connected mode 对 legacy `GetConfigSnapshot=42` 的 fallback
+- [ ] 3.3.4 保留本地 binder/YAML fallback 作为 Service 不可用/离线场景，不作为 legacy 删除目标
+- [ ] 3.3.5 `ServiceProxy::SaveConfig()` / Apply 流程升级为 v3 Patch + v3 Persist result
+- [ ] 3.3.6 删除 `MergeServiceProxyConfigSections()` 旧实现（如仍存在）
+- [ ] 3.3.7 集成测试: App ↔ Service v3 IPC round-trip
 
 ---
 
@@ -171,14 +177,16 @@
 
 ## 进度总览
 
+> 下表是 2026-06-05 早期任务拆分的历史统计，不再作为当前 Config v3 权威进度。当前状态：P0 地基与 P1-1 `GetConfigCatalogV3` / `GetConfigSnapshotV3` 已完成；下一步是 P1-2 App Draft、legacy fixed ABI fallback 删除、Catalog 策略字段、`IConfigTarget`、default.yaml generator/check。详见 [config_v3_full_upgrade_plan.md](artifacts/config_v3_full_upgrade_plan.md)。
+
 | Phase | 任务数 | 已完成 | 状态 |
 |-------|--------|--------|------|
-| Phase 0 | 13 | 11 | 进行中 |
-| Phase 1 | 16 | 13 | 已完成 |
-| Phase 2 | 26 | 12 | 进行中 |
-| Phase 3 | 14 | 5 | 进行中 |
-| Phase 4 | 11 | 2 | 进行中 |
-| **总计** | **80** | **41** | — |
+| Phase 0 | 13 | 11 | 历史统计 |
+| Phase 1 | 16 | 13 | 历史统计 |
+| Phase 2 | 26 | 12 | 历史统计 |
+| Phase 3 | 14 | 5 | 已被 P1-1 v3 IPC 部分覆盖 |
+| Phase 4 | 11 | 2 | 历史统计 |
+| **总计** | **80** | **41** | 历史统计 |
 
 ## 文档产出
 
@@ -188,4 +196,4 @@
 
 ---
 
-> 最后更新: 2026-06-05 (Phase 0–1 代码实现完成, 编译验证待跑)
+> 最后更新: 2026-06-07 (同步 P1-1 v3 Catalog/Snapshot IPC 已完成；legacy fixed ABI fallback 后续删除，本地 fallback 保留为离线/Service 不可用路径)
