@@ -104,7 +104,7 @@ std::vector<uint8_t> serializeMutationResult(const ConfigMutationResultTlv& resu
 ConfigMutationResultTlv deserializeMutationResult(const uint8_t* data, size_t size);
 
 struct ConfigV3CatalogPayload {
-    uint16_t version = 1;
+    uint16_t version = 2;
     uint32_t schemaVersion = 0;
     uint32_t snapshotVersion = 0;
     std::vector<ConfigDescriptor> entries;

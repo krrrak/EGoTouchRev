@@ -13,7 +13,8 @@ namespace {
 bool IsLiveEditableEntry(const Config::ConfigSchemaEntry& entry) {
     return entry.boundToRuntime &&
            (entry.runtimeBinding == Config::ConfigRuntimeBinding::LiveSetter ||
-            entry.runtimeBinding == Config::ConfigRuntimeBinding::ManualLiveApply);
+            entry.runtimeBinding == Config::ConfigRuntimeBinding::ManualLiveApply) &&
+           Config::isLiveApplyTiming(entry.applyTiming);
 }
 
 } // namespace

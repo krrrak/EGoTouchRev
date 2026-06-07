@@ -24,6 +24,9 @@ void ConfigBinder::bindSchema(std::string_view yamlPath,
     entry.displayName = deriveDisplayName(yamlPath);
     entry.moduleTag = deriveModuleTag(yamlPath);
     entry.runtimeBinding = runtimeBinding;
+    entry.scope = deriveConfigScope(yamlPath, runtimeBinding);
+    entry.applyTiming = deriveConfigApplyTiming(yamlPath, runtimeBinding);
+    entry.persistPolicy = deriveConfigPersistPolicy(yamlPath, runtimeBinding);
     if (range.min != 0.0 || range.max != 0.0) {
         entry.range = range;
     }
@@ -83,6 +86,9 @@ ConfigSchemaSnapshot ConfigBinder::snapshot() const {
         entry.runtimeBinding = b.runtimeBinding;
         entry.boundToRuntime = b.runtimeBinding == ConfigRuntimeBinding::LiveSetter ||
                                b.runtimeBinding == ConfigRuntimeBinding::ManualLiveApply;
+        entry.scope = b.scope;
+        entry.applyTiming = b.applyTiming;
+        entry.persistPolicy = b.persistPolicy;
 
         if (b.typeName == "enum") {
             entry.uiType = ConfigUiType::Enum;

@@ -32,6 +32,9 @@ struct BindingEntry {
     std::string moduleTag;                // 来自 deriveModuleTag()
     std::vector<std::pair<int, std::string>> enumMapping;  // 枚举值映射
     ConfigRuntimeBinding runtimeBinding = ConfigRuntimeBinding::SchemaOnly;
+    ConfigScope scope = ConfigScope::RuntimeOnly;
+    ConfigApplyTiming applyTiming = ConfigApplyTiming::ReadOnly;
+    ConfigPersistPolicy persistPolicy = ConfigPersistPolicy::RuntimeOnly;
 };
 
 class ConfigBinder {
@@ -135,6 +138,9 @@ void ConfigBinder::bind(std::string_view yamlPath,
     entry.displayName = deriveDisplayName(yamlPath);
     entry.moduleTag = deriveModuleTag(yamlPath);
     entry.runtimeBinding = runtimeBinding;
+    entry.scope = deriveConfigScope(yamlPath, runtimeBinding);
+    entry.applyTiming = deriveConfigApplyTiming(yamlPath, runtimeBinding);
+    entry.persistPolicy = deriveConfigPersistPolicy(yamlPath, runtimeBinding);
     if (range.min != 0.0 || range.max != 0.0) {
         entry.range = range;
     }
@@ -168,6 +174,9 @@ void ConfigBinder::bindEnum(std::string_view yamlPath,
     entry.displayName = deriveDisplayName(yamlPath);
     entry.moduleTag = deriveModuleTag(yamlPath);
     entry.runtimeBinding = runtimeBinding;
+    entry.scope = deriveConfigScope(yamlPath, runtimeBinding);
+    entry.applyTiming = deriveConfigApplyTiming(yamlPath, runtimeBinding);
+    entry.persistPolicy = deriveConfigPersistPolicy(yamlPath, runtimeBinding);
 
     for (const auto& [val, name] : enumMapping) {
         const auto intValue = static_cast<int>(val);

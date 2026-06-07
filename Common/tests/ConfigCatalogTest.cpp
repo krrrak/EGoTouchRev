@@ -111,6 +111,9 @@ void TestConfigV3PayloadSerialization()
     second.enumMapping = {{1, "one"}, {2, "two"}};
     second.runtimeBinding = Config::ConfigRuntimeBinding::LiveSetter;
     second.boundToRuntime = true;
+    second.scope = Config::ConfigScope::TouchPipeline;
+    second.applyTiming = Config::ConfigApplyTiming::FrameBoundary;
+    second.persistPolicy = Config::ConfigPersistPolicy::UserOverride;
 
     Config::ConfigDescriptor first;
     first.path = "service.mode";
@@ -125,8 +128,10 @@ void TestConfigV3PayloadSerialization()
     catalog.schemaVersion = 11;
     catalog.snapshotVersion = 22;
     catalog.entries = {second, first};
+    Require(catalog.version == 2, "Config v3 catalog should default to wire version 2");
     const auto catalogBytes = Config::serializeConfigV3Catalog(catalog);
     const auto catalogRoundtrip = Config::deserializeConfigV3Catalog(catalogBytes.data(), catalogBytes.size());
+    Require(catalogRoundtrip.version == 2, "Config v3 catalog version should roundtrip");
     Require(catalogRoundtrip.schemaVersion == 11 && catalogRoundtrip.snapshotVersion == 22, "Config v3 catalog versions should roundtrip");
     Require(catalogRoundtrip.entries.size() == 2, "Config v3 catalog entries should roundtrip");
     Require(catalogRoundtrip.entries[0].keyId == Config::ConfigKeyId::SvcMode, "Config v3 catalog should sort by keyId");
@@ -139,13 +144,18 @@ void TestConfigV3PayloadSerialization()
     Require(catalogRoundtrip.entries[1].enumMapping.size() == 2 && catalogRoundtrip.entries[1].enumMapping[1].second == "two", "Config v3 catalog enumMapping should roundtrip");
     Require(catalogRoundtrip.entries[1].runtimeBinding == Config::ConfigRuntimeBinding::LiveSetter, "Config v3 catalog runtimeBinding should roundtrip");
     Require(catalogRoundtrip.entries[1].boundToRuntime, "Config v3 catalog boundToRuntime should roundtrip");
+    Require(catalogRoundtrip.entries[1].scope == Config::ConfigScope::TouchPipeline, "Config v3 catalog scope should roundtrip");
+    Require(catalogRoundtrip.entries[1].applyTiming == Config::ConfigApplyTiming::FrameBoundary, "Config v3 catalog applyTiming should roundtrip");
+    Require(catalogRoundtrip.entries[1].persistPolicy == Config::ConfigPersistPolicy::UserOverride, "Config v3 catalog persistPolicy should roundtrip");
 
     Config::ConfigV3SnapshotPayload snapshot;
     snapshot.schemaVersion = 11;
     snapshot.snapshotVersion = 23;
     snapshot.entries = {{Config::ConfigKeyId::SvcAutoMode, true}, {Config::ConfigKeyId::SvcPenButtonMode, std::string{"native_barrel"}}, {Config::ConfigKeyId::TouchBaselineBgMaxStep, int32_t{42}}};
+    Require(snapshot.version == 1, "Config v3 snapshot should remain wire version 1");
     const auto snapshotBytes = Config::serializeConfigV3Snapshot(snapshot);
     const auto snapshotRoundtrip = Config::deserializeConfigV3Snapshot(snapshotBytes.data(), snapshotBytes.size());
+    Require(snapshotRoundtrip.version == 1, "Config v3 snapshot version should roundtrip");
     Require(snapshotRoundtrip.entries.size() == 3, "Config v3 snapshot entries should roundtrip");
     Require(Config::tryGetValue<bool>(snapshotRoundtrip.entries[0].value).value_or(false), "Config v3 snapshot bool should roundtrip");
     Require(Config::tryGetValue<std::string>(snapshotRoundtrip.entries[1].value).value_or("") == "native_barrel", "Config v3 snapshot string should roundtrip");
@@ -160,10 +170,20 @@ void TestConfigV3PayloadSerialization()
     try { (void)Config::deserializeConfigV3Snapshot(trailing.data(), trailing.size()); } catch (const std::runtime_error&) { trailingRejected = true; }
     Require(trailingRejected, "Config v3 snapshot should reject trailing bytes");
     auto unsupported = catalogBytes;
-    unsupported[4] = 2;
+    unsupported[4] = 3;
     bool versionRejected = false;
     try { (void)Config::deserializeConfigV3Catalog(unsupported.data(), unsupported.size()); } catch (const std::runtime_error&) { versionRejected = true; }
     Require(versionRejected, "Config v3 catalog should reject unsupported version");
+    auto oldV1Catalog = catalogBytes;
+    oldV1Catalog[4] = 1;
+    oldV1Catalog[5] = 0;
+    bool oldV1RejectedAsUnsupported = false;
+    try {
+        (void)Config::deserializeConfigV3Catalog(oldV1Catalog.data(), oldV1Catalog.size());
+    } catch (const std::runtime_error& ex) {
+        oldV1RejectedAsUnsupported = std::string(ex.what()).find("unsupported version") != std::string::npos;
+    }
+    Require(oldV1RejectedAsUnsupported, "Config v3 catalog v1 payload should fail with unsupported version");
 }
 
 void TestBinderDefaultsCompatibilityAndUnknownRuntimePath()
@@ -187,6 +207,10 @@ void TestBinderDefaultsCompatibilityAndUnknownRuntimePath()
     Require(unknown.has_value(), "catalog should retain unknown runtime path as metadata");
     Require(unknown->get().keyId == Config::ConfigKeyId::MaxKeyId,
             "unknown runtime path should use MaxKeyId sentinel");
+    Require(unknown->get().scope == Config::ConfigScope::TouchPipeline,
+            "unknown touch runtime path should keep touch scope");
+    Require(unknown->get().applyTiming == Config::ConfigApplyTiming::FrameBoundary,
+            "unknown live setter path should keep frame-boundary apply timing");
 
     const auto schema = Config::BuildMergedSchema(defaults, binder);
     Require(schema.entries.size() == 4, "BuildMergedSchema should merge defaults and binder paths");
@@ -194,12 +218,18 @@ void TestBinderDefaultsCompatibilityAndUnknownRuntimePath()
             "BuildMergedSchema should sort by stable keyId");
 
     bool sawCurrentRuntimeValue = false;
+    bool sawRestartRequiredServiceMode = false;
     for (const auto& entry : schema.entries) {
         if (entry.yamlPath == "touch.signal_cond.baseline_bg_max_step") {
             sawCurrentRuntimeValue = Config::tryGetValue<int32_t>(entry.currentValue).value_or(0) == 42;
         }
+        if (entry.yamlPath == "service.mode") {
+            sawRestartRequiredServiceMode = entry.scope == Config::ConfigScope::ServicePolicy &&
+                                            entry.applyTiming == Config::ConfigApplyTiming::RestartRequired;
+        }
     }
     Require(sawCurrentRuntimeValue, "BuildMergedSchema should preserve binder current value compatibility");
+    Require(sawRestartRequiredServiceMode, "BuildMergedSchema should infer service.mode restart-required policy");
 }
 
 void TestIirRenamedKeysKeepLegacyAliases()

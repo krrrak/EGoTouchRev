@@ -30,20 +30,34 @@ void RequireLiveMappedEntry(const Config::ConfigSchemaSnapshot& schema,
                             std::string_view path) {
     const auto* entry = FindEntry(schema, path);
     Require(entry != nullptr, "schema entry should exist");
-    Require(entry->boundToRuntime, "schema entry should be bound to runtime");
-    Require(entry->runtimeBinding == Config::ConfigRuntimeBinding::ManualLiveApply ||
-            entry->runtimeBinding == Config::ConfigRuntimeBinding::LiveSetter,
-            "schema entry should be live patchable");
-
     const auto catalogKeyId = Config::tryKeyIdForPath(path);
     Require(catalogKeyId.has_value(), "catalog keyId should exist for schema path");
     Require(entry->keyId == *catalogKeyId, "schema keyId should match shared key map");
+    Require(entry->boundToRuntime, "schema entry should be bound to runtime");
+    Require(entry->runtimeBinding == Config::ConfigRuntimeBinding::ManualLiveApply ||
+            entry->runtimeBinding == Config::ConfigRuntimeBinding::LiveSetter,
+            "schema entry should have runtime binding");
+    Require(Config::isLiveApplyTiming(entry->applyTiming), "schema entry should be live patchable");
+}
+
+void RequireMappedRestartEntry(const Config::ConfigSchemaSnapshot& schema,
+                               std::string_view path) {
+    const auto* entry = FindEntry(schema, path);
+    Require(entry != nullptr, "restart schema entry should exist");
+    const auto catalogKeyId = Config::tryKeyIdForPath(path);
+    Require(catalogKeyId.has_value(), "restart schema keyId should exist");
+    Require(entry->keyId == *catalogKeyId, "restart schema keyId should match shared key map");
+    Require(entry->scope == Config::ConfigScope::ServicePolicy, "restart schema entry should be service policy");
+    Require(entry->applyTiming == Config::ConfigApplyTiming::RestartRequired,
+            "restart schema entry should require restart");
+    Require(!Config::isLiveApplyTiming(entry->applyTiming),
+            "restart schema entry should not be live patchable");
 }
 
 void TestSchemaCoversServiceTouchAndStylusCatalogKeys() {
     const auto schema = App::BuildServiceProxyConfigSchemaSnapshotForTest();
 
-    RequireLiveMappedEntry(schema, "service.mode");
+    RequireMappedRestartEntry(schema, "service.mode");
     RequireLiveMappedEntry(schema, "service.auto_mode");
     RequireLiveMappedEntry(schema, "service.stylus_vhf_enabled");
     RequireLiveMappedEntry(schema, "service.pen_button_mode");
@@ -104,6 +118,9 @@ Config::ConfigV3CatalogPayload BuildCatalogPayload() {
             .enumMapping = entry.enumMapping,
             .runtimeBinding = entry.runtimeBinding,
             .boundToRuntime = entry.boundToRuntime,
+            .scope = entry.scope,
+            .applyTiming = entry.applyTiming,
+            .persistPolicy = entry.persistPolicy,
         });
     }
     return payload;
@@ -120,7 +137,7 @@ void TestV3CatalogPayloadAppliesSchemaAndDefaults() {
     ApplyCatalog(proxy);
     const auto& schema = proxy.GetConfigSchemaSnapshot();
 
-    RequireLiveMappedEntry(schema, "service.mode");
+    RequireMappedRestartEntry(schema, "service.mode");
     RequireLiveMappedEntry(schema, "touch.signal_cond.baseline_no_finger_max_step");
     RequireLiveMappedEntry(schema, "stylus.sp.bt_freq_shift_debounce_frames");
     Require(proxy.GetConfigStore().has("service.mode"), "local fallback store should remain populated");

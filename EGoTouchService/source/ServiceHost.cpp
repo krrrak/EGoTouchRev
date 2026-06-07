@@ -424,7 +424,8 @@ bool ConfigValueAllowedBySchema(std::string_view path,
     }
     if (!it->boundToRuntime ||
         (it->runtimeBinding != Config::ConfigRuntimeBinding::LiveSetter &&
-         it->runtimeBinding != Config::ConfigRuntimeBinding::ManualLiveApply)) {
+         it->runtimeBinding != Config::ConfigRuntimeBinding::ManualLiveApply) ||
+        !Config::isLiveApplyTiming(it->applyTiming)) {
         return false;
     }
 

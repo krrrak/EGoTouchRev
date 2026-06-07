@@ -99,13 +99,19 @@ void ClampStylusIirCoefficients(Config::ConfigStore& store) {
     }
 }
 
-bool ConfigValueAllowedBySchema(std::string_view path, const Config::ConfigValue& value, const Config::ConfigSchemaSnapshot& schema) {
+bool ConfigValueAllowedBySchema(std::string_view path,
+                                const Config::ConfigValue& value,
+                                const Config::ConfigSchemaSnapshot& schema,
+                                bool requireLiveApply) {
     const auto it = std::find_if(schema.entries.begin(), schema.entries.end(),
         [path](const Config::ConfigSchemaEntry& entry) { return entry.yamlPath == path; });
     if (it == schema.entries.end()) return false;
-    if (!it->boundToRuntime ||
-        (it->runtimeBinding != Config::ConfigRuntimeBinding::LiveSetter &&
-         it->runtimeBinding != Config::ConfigRuntimeBinding::ManualLiveApply)) return false;
+    if (requireLiveApply) {
+        if (!it->boundToRuntime ||
+            (it->runtimeBinding != Config::ConfigRuntimeBinding::LiveSetter &&
+             it->runtimeBinding != Config::ConfigRuntimeBinding::ManualLiveApply) ||
+            !Config::isLiveApplyTiming(it->applyTiming)) return false;
+    }
     if (path == "service.mode") {
         const auto str = Config::tryGetValue<std::string>(value);
         return str.has_value() && (*str == "full" || *str == "touch_only");
@@ -191,7 +197,7 @@ bool ConfigRuntime::Initialize(const std::string& configPath, const StartupValid
     auto schema = Config::BuildMergedSchema(defaults, binder);
     for (const auto& path : current.allPaths()) {
         const auto value = current.get<Config::ConfigValue>(path);
-        if (!ConfigValueAllowedBySchema(path, value, schema) && defaults.has(path)) {
+        if (!ConfigValueAllowedBySchema(path, value, schema, false) && defaults.has(path)) {
             current.set<Config::ConfigValue>(path, defaults.get<Config::ConfigValue>(path));
             LOG_WARN("Service", __func__, "Config", "Invalid config value at '{}'; restored default.", path);
         }
@@ -410,7 +416,7 @@ bool ConfigRuntime::ApplyCompletedTlvPayloadLocked(const std::vector<uint8_t>& p
         if (!valueOk) { result.status = Ipc::IpcStatusCode::InvalidRequest; return false; }
         const std::string pathString(*path);
         if (pathString == "service.pen_button_route") penButtonRouteTouched = true;
-        if (!ConfigValueAllowedBySchema(pathString, value, m_schema)) { result.status = Ipc::IpcStatusCode::InvalidRequest; return false; }
+        if (!ConfigValueAllowedBySchema(pathString, value, m_schema, true)) { result.status = Ipc::IpcStatusCode::InvalidRequest; return false; }
         const bool changed = !candidate.has(pathString) || candidate.get<Config::ConfigValue>(pathString) != value;
         candidate.set<Config::ConfigValue>(pathString, value);
         if (changed) ++result.changedCount;

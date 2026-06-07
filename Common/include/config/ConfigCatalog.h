@@ -31,6 +31,9 @@ struct ConfigDescriptor {
     std::vector<std::pair<int, std::string>> enumMapping;
     ConfigRuntimeBinding runtimeBinding = ConfigRuntimeBinding::SchemaOnly;
     bool boundToRuntime = false;
+    ConfigScope scope = ConfigScope::RuntimeOnly;
+    ConfigApplyTiming applyTiming = ConfigApplyTiming::ReadOnly;
+    ConfigPersistPolicy persistPolicy = ConfigPersistPolicy::RuntimeOnly;
 };
 
 class ConfigCatalog {

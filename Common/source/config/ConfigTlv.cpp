@@ -345,8 +345,9 @@ ConfigMutationResultTlv deserializeMutationResult(const uint8_t* data, size_t si
 namespace {
 constexpr uint32_t kConfigV3CatalogMagic = 0x33435643u; // 'CVC3'
 constexpr uint32_t kConfigV3SnapshotMagic = 0x33535643u; // 'CVS3'
-constexpr uint16_t kConfigV3Version = 1;
-constexpr size_t kConfigV3MinCatalogEntrySize = sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint8_t) + sizeof(uint8_t) + sizeof(uint8_t) + sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint8_t) + sizeof(uint8_t);
+constexpr uint16_t kConfigV3CatalogVersion = 2;
+constexpr uint16_t kConfigV3SnapshotVersion = 1;
+constexpr size_t kConfigV3MinCatalogEntrySize = sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint8_t) + sizeof(uint8_t) + sizeof(uint8_t) + sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint8_t) + sizeof(uint8_t) + sizeof(uint8_t) + sizeof(uint8_t) + sizeof(uint8_t);
 constexpr size_t kConfigV3MinSnapshotEntrySize = sizeof(uint16_t) + sizeof(uint8_t) + sizeof(uint16_t);
 
 void appendUint32Le(std::vector<uint8_t>& out, uint32_t value) {
@@ -461,7 +462,14 @@ void appendHeader(std::vector<uint8_t>& out, uint32_t magic, uint16_t version, u
     appendUint32Le(out, static_cast<uint32_t>(count));
 }
 
-uint32_t readHeaderStrict(const uint8_t* data, size_t size, size_t& offset, uint32_t expectedMagic, uint32_t& schemaVersion, uint32_t& snapshotVersion) {
+uint32_t readHeaderStrict(const uint8_t* data,
+                          size_t size,
+                          size_t& offset,
+                          uint32_t expectedMagic,
+                          uint16_t expectedVersion,
+                          uint16_t& wireVersion,
+                          uint32_t& schemaVersion,
+                          uint32_t& snapshotVersion) {
     uint32_t magic = 0;
     uint16_t version = 0;
     uint32_t count = 0;
@@ -471,7 +479,8 @@ uint32_t readHeaderStrict(const uint8_t* data, size_t size, size_t& offset, uint
         throw std::runtime_error("Config v3 truncated header");
     }
     if (magic != expectedMagic) throw std::runtime_error("Config v3 invalid magic");
-    if (version != kConfigV3Version) throw std::runtime_error("Config v3 unsupported version");
+    if (version != expectedVersion) throw std::runtime_error("Config v3 unsupported version");
+    wireVersion = version;
     return count;
 }
 
@@ -505,9 +514,50 @@ bool isKnownRuntimeBinding(uint8_t binding) {
         return false;
     }
 }
+
+bool isKnownConfigScope(uint8_t scope) {
+    switch (static_cast<ConfigScope>(scope)) {
+    case ConfigScope::RuntimeOnly:
+    case ConfigScope::ServicePolicy:
+    case ConfigScope::TouchPipeline:
+    case ConfigScope::StylusPipeline:
+    case ConfigScope::Debug:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool isKnownConfigApplyTiming(uint8_t timing) {
+    switch (static_cast<ConfigApplyTiming>(timing)) {
+    case ConfigApplyTiming::ReadOnly:
+    case ConfigApplyTiming::Immediate:
+    case ConfigApplyTiming::FrameBoundary:
+    case ConfigApplyTiming::Manual:
+    case ConfigApplyTiming::RestartRequired:
+    case ConfigApplyTiming::StartupOnly:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool isKnownConfigPersistPolicy(uint8_t policy) {
+    switch (static_cast<ConfigPersistPolicy>(policy)) {
+    case ConfigPersistPolicy::RuntimeOnly:
+    case ConfigPersistPolicy::UserOverride:
+    case ConfigPersistPolicy::GeneratedDefault:
+        return true;
+    default:
+        return false;
+    }
+}
 } // namespace
 
 std::vector<uint8_t> serializeConfigV3Catalog(const ConfigV3CatalogPayload& payload) {
+    if (payload.version != kConfigV3CatalogVersion) {
+        throw std::invalid_argument("Config v3 catalog unsupported version");
+    }
     std::vector<ConfigDescriptor> entries = payload.entries;
     std::stable_sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
         if (a.keyId != b.keyId) return static_cast<uint16_t>(a.keyId) < static_cast<uint16_t>(b.keyId);
@@ -538,6 +588,9 @@ std::vector<uint8_t> serializeConfigV3Catalog(const ConfigV3CatalogPayload& payl
         }
         appendUint8(out, static_cast<uint8_t>(e.runtimeBinding));
         appendUint8(out, e.boundToRuntime ? 1 : 0);
+        appendUint8(out, static_cast<uint8_t>(e.scope));
+        appendUint8(out, static_cast<uint8_t>(e.applyTiming));
+        appendUint8(out, static_cast<uint8_t>(e.persistPolicy));
     }
     return out;
 }
@@ -545,7 +598,8 @@ std::vector<uint8_t> serializeConfigV3Catalog(const ConfigV3CatalogPayload& payl
 ConfigV3CatalogPayload deserializeConfigV3Catalog(const uint8_t* data, size_t size) {
     size_t offset = 0;
     ConfigV3CatalogPayload payload{};
-    uint32_t count = readHeaderStrict(data, size, offset, kConfigV3CatalogMagic, payload.schemaVersion, payload.snapshotVersion);
+    uint32_t count = readHeaderStrict(data, size, offset, kConfigV3CatalogMagic, kConfigV3CatalogVersion,
+                                      payload.version, payload.schemaVersion, payload.snapshotVersion);
     rejectEntryCountIfImpossible(count, size - offset, kConfigV3MinCatalogEntrySize);
     payload.entries.reserve(count);
     for (uint32_t i = 0; i < count; ++i) {
@@ -578,11 +632,22 @@ ConfigV3CatalogPayload deserializeConfigV3Catalog(const uint8_t* data, size_t si
         }
         uint8_t binding = 0;
         uint8_t bound = 0;
-        if (!readUint8(data, size, offset, binding) || !readUint8(data, size, offset, bound)) throw std::runtime_error("Config v3 truncated binding");
+        uint8_t scope = 0;
+        uint8_t applyTiming = 0;
+        uint8_t persistPolicy = 0;
+        if (!readUint8(data, size, offset, binding) || !readUint8(data, size, offset, bound) ||
+            !readUint8(data, size, offset, scope) || !readUint8(data, size, offset, applyTiming) ||
+            !readUint8(data, size, offset, persistPolicy)) throw std::runtime_error("Config v3 truncated binding");
         if (!isKnownRuntimeBinding(binding)) throw std::runtime_error("Config v3 invalid runtime binding");
         if (bound > 1) throw std::runtime_error("Config v3 invalid bound flag");
+        if (!isKnownConfigScope(scope)) throw std::runtime_error("Config v3 invalid config scope");
+        if (!isKnownConfigApplyTiming(applyTiming)) throw std::runtime_error("Config v3 invalid apply timing");
+        if (!isKnownConfigPersistPolicy(persistPolicy)) throw std::runtime_error("Config v3 invalid persist policy");
         e.runtimeBinding = static_cast<ConfigRuntimeBinding>(binding);
         e.boundToRuntime = bound != 0;
+        e.scope = static_cast<ConfigScope>(scope);
+        e.applyTiming = static_cast<ConfigApplyTiming>(applyTiming);
+        e.persistPolicy = static_cast<ConfigPersistPolicy>(persistPolicy);
         payload.entries.push_back(std::move(e));
     }
     if (offset != size) throw std::runtime_error("Config v3 trailing bytes");
@@ -590,6 +655,9 @@ ConfigV3CatalogPayload deserializeConfigV3Catalog(const uint8_t* data, size_t si
 }
 
 std::vector<uint8_t> serializeConfigV3Snapshot(const ConfigV3SnapshotPayload& payload) {
+    if (payload.version != kConfigV3SnapshotVersion) {
+        throw std::invalid_argument("Config v3 snapshot unsupported version");
+    }
     auto entries = payload.entries;
     std::stable_sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) { return static_cast<uint16_t>(a.keyId) < static_cast<uint16_t>(b.keyId); });
     std::vector<uint8_t> out;
@@ -604,7 +672,8 @@ std::vector<uint8_t> serializeConfigV3Snapshot(const ConfigV3SnapshotPayload& pa
 ConfigV3SnapshotPayload deserializeConfigV3Snapshot(const uint8_t* data, size_t size) {
     size_t offset = 0;
     ConfigV3SnapshotPayload payload{};
-    uint32_t count = readHeaderStrict(data, size, offset, kConfigV3SnapshotMagic, payload.schemaVersion, payload.snapshotVersion);
+    uint32_t count = readHeaderStrict(data, size, offset, kConfigV3SnapshotMagic, kConfigV3SnapshotVersion,
+                                      payload.version, payload.schemaVersion, payload.snapshotVersion);
     rejectEntryCountIfImpossible(count, size - offset, kConfigV3MinSnapshotEntrySize);
     payload.entries.reserve(count);
     for (uint32_t i = 0; i < count; ++i) {

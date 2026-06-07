@@ -169,7 +169,8 @@ Config::ConfigTlvEntry BuildTlvEntry(Config::ConfigKeyId keyId, const Config::Co
 bool IsLivePatchableEntry(const Config::ConfigSchemaEntry& entry) {
     return entry.boundToRuntime &&
            (entry.runtimeBinding == Config::ConfigRuntimeBinding::LiveSetter ||
-            entry.runtimeBinding == Config::ConfigRuntimeBinding::ManualLiveApply);
+            entry.runtimeBinding == Config::ConfigRuntimeBinding::ManualLiveApply) &&
+           Config::isLiveApplyTiming(entry.applyTiming);
 }
 
 std::optional<Config::ConfigValue> NormalizeSnapshotValueForSchema(const Config::ConfigSchemaEntry& schemaEntry,

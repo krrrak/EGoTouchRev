@@ -28,6 +28,29 @@ enum class ConfigRuntimeBinding : uint8_t {
     Removed,
 };
 
+enum class ConfigScope : uint8_t {
+    RuntimeOnly,
+    ServicePolicy,
+    TouchPipeline,
+    StylusPipeline,
+    Debug,
+};
+
+enum class ConfigApplyTiming : uint8_t {
+    ReadOnly,
+    Immediate,
+    FrameBoundary,
+    Manual,
+    RestartRequired,
+    StartupOnly,
+};
+
+enum class ConfigPersistPolicy : uint8_t {
+    RuntimeOnly,
+    UserOverride,
+    GeneratedDefault,
+};
+
 // ── 单个配置键的完整元数据 ──
 struct ConfigSchemaEntry {
     std::string yamlPath;
@@ -42,6 +65,9 @@ struct ConfigSchemaEntry {
     std::vector<std::pair<int, std::string>> enumMapping;  // 枚举映射
     ConfigRuntimeBinding runtimeBinding = ConfigRuntimeBinding::SchemaOnly;
     bool boundToRuntime = false;        // 是否有 live setter 或 manual live apply
+    ConfigScope scope = ConfigScope::RuntimeOnly;
+    ConfigApplyTiming applyTiming = ConfigApplyTiming::ReadOnly;
+    ConfigPersistPolicy persistPolicy = ConfigPersistPolicy::RuntimeOnly;
 };
 
 // ── 全量 schema snapshot ──
@@ -59,5 +85,10 @@ std::string deriveDisplayName(std::string_view yamlPath);
 
 // 从 ConfigValue 推导 UIConfigType
 ConfigUiType deriveUiType(const ConfigValue& value);
+
+ConfigScope deriveConfigScope(std::string_view yamlPath, ConfigRuntimeBinding runtimeBinding);
+ConfigApplyTiming deriveConfigApplyTiming(std::string_view yamlPath, ConfigRuntimeBinding runtimeBinding);
+ConfigPersistPolicy deriveConfigPersistPolicy(std::string_view yamlPath, ConfigRuntimeBinding runtimeBinding);
+bool isLiveApplyTiming(ConfigApplyTiming applyTiming);
 
 } // namespace Config

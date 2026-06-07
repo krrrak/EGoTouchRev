@@ -5,6 +5,7 @@
 #include <exception>
 #include <iostream>
 #include <limits>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -27,9 +28,9 @@ void AppendU32(std::vector<uint8_t>& bytes, uint32_t value) {
     AppendU16(bytes, static_cast<uint16_t>((value >> 16) & 0xFFFFu));
 }
 
-void AppendV3Header(std::vector<uint8_t>& bytes, uint32_t magic, uint32_t count) {
+void AppendV3Header(std::vector<uint8_t>& bytes, uint32_t magic, uint32_t count, uint16_t version = 1) {
     AppendU32(bytes, magic);
-    AppendU16(bytes, 1);
+    AppendU16(bytes, version);
     AppendU32(bytes, 1);
     AppendU32(bytes, 1);
     AppendU32(bytes, count);
@@ -46,7 +47,12 @@ void AppendV3String(std::vector<uint8_t>& bytes, const char* value) {
     }
 }
 
-void AppendMinimalCatalogEntry(std::vector<uint8_t>& bytes, uint8_t uiType, uint8_t runtimeBinding) {
+void AppendMinimalCatalogEntry(std::vector<uint8_t>& bytes,
+                               uint8_t uiType,
+                               uint8_t runtimeBinding,
+                               uint8_t scope = static_cast<uint8_t>(Config::ConfigScope::ServicePolicy),
+                               uint8_t applyTiming = static_cast<uint8_t>(Config::ConfigApplyTiming::Manual),
+                               uint8_t persistPolicy = static_cast<uint8_t>(Config::ConfigPersistPolicy::UserOverride)) {
     AppendV3String(bytes, "service.auto_mode");
     AppendU16(bytes, static_cast<uint16_t>(Config::ConfigKeyId::SvcAutoMode));
     bytes.push_back(uiType);
@@ -59,6 +65,9 @@ void AppendMinimalCatalogEntry(std::vector<uint8_t>& bytes, uint8_t uiType, uint
     AppendU16(bytes, 0);
     bytes.push_back(runtimeBinding);
     bytes.push_back(0);
+    bytes.push_back(scope);
+    bytes.push_back(applyTiming);
+    bytes.push_back(persistPolicy);
 }
 
 template <typename Fn>
@@ -66,6 +75,17 @@ void RequireThrows(Fn&& fn, const char* message) {
     try {
         fn();
     } catch (const std::exception&) {
+        return;
+    }
+    Require(false, message);
+}
+
+template <typename Fn>
+void RequireThrowsMessage(Fn&& fn, const char* expectedText, const char* message) {
+    try {
+        fn();
+    } catch (const std::exception& ex) {
+        Require(std::string(ex.what()).find(expectedText) != std::string::npos, message);
         return;
     }
     Require(false, message);
@@ -160,7 +180,7 @@ int main() {
     RequireStatus(trailing, ConfigTlvParseStatus::TrailingBytes, "trailing bytes are structured");
 
     std::vector<uint8_t> oversizedCatalogCount;
-    AppendV3Header(oversizedCatalogCount, 0x33435643u, std::numeric_limits<uint32_t>::max());
+    AppendV3Header(oversizedCatalogCount, 0x33435643u, std::numeric_limits<uint32_t>::max(), 2);
     RequireThrows([&] { (void)deserializeConfigV3Catalog(oversizedCatalogCount.data(), oversizedCatalogCount.size()); },
                   "v3 catalog rejects impossible count before reserve");
 
@@ -179,15 +199,51 @@ int main() {
     RequireThrows([&] { (void)serializeConfigV3Catalog(largeEnumPayload); }, "v3 catalog rejects oversized enum mapping");
 
     std::vector<uint8_t> invalidUiType;
-    AppendV3Header(invalidUiType, 0x33435643u, 1);
+    AppendV3Header(invalidUiType, 0x33435643u, 1, 2);
     AppendMinimalCatalogEntry(invalidUiType, 0xFFu, static_cast<uint8_t>(ConfigRuntimeBinding::SchemaOnly));
     RequireThrows([&] { (void)deserializeConfigV3Catalog(invalidUiType.data(), invalidUiType.size()); }, "v3 catalog rejects invalid ui type");
 
     std::vector<uint8_t> invalidRuntimeBinding;
-    AppendV3Header(invalidRuntimeBinding, 0x33435643u, 1);
+    AppendV3Header(invalidRuntimeBinding, 0x33435643u, 1, 2);
     AppendMinimalCatalogEntry(invalidRuntimeBinding, static_cast<uint8_t>(ConfigUiType::Bool), 0xFFu);
     RequireThrows([&] { (void)deserializeConfigV3Catalog(invalidRuntimeBinding.data(), invalidRuntimeBinding.size()); },
                   "v3 catalog rejects invalid runtime binding");
+
+    std::vector<uint8_t> oldCatalogV1;
+    AppendV3Header(oldCatalogV1, 0x33435643u, 1, 1);
+    AppendMinimalCatalogEntry(oldCatalogV1,
+                              static_cast<uint8_t>(ConfigUiType::Bool),
+                              static_cast<uint8_t>(ConfigRuntimeBinding::LiveSetter));
+    RequireThrowsMessage([&] { (void)deserializeConfigV3Catalog(oldCatalogV1.data(), oldCatalogV1.size()); },
+                         "unsupported version",
+                         "v3 catalog rejects v1 payload as unsupported version");
+
+    std::vector<uint8_t> invalidScope;
+    AppendV3Header(invalidScope, 0x33435643u, 1, 2);
+    AppendMinimalCatalogEntry(invalidScope, static_cast<uint8_t>(ConfigUiType::Bool), static_cast<uint8_t>(ConfigRuntimeBinding::LiveSetter), 0xFFu);
+    RequireThrows([&] { (void)deserializeConfigV3Catalog(invalidScope.data(), invalidScope.size()); },
+                  "v3 catalog rejects invalid config scope");
+
+    std::vector<uint8_t> invalidApplyTiming;
+    AppendV3Header(invalidApplyTiming, 0x33435643u, 1, 2);
+    AppendMinimalCatalogEntry(invalidApplyTiming,
+                              static_cast<uint8_t>(ConfigUiType::Bool),
+                              static_cast<uint8_t>(ConfigRuntimeBinding::LiveSetter),
+                              static_cast<uint8_t>(ConfigScope::ServicePolicy),
+                              0xFFu);
+    RequireThrows([&] { (void)deserializeConfigV3Catalog(invalidApplyTiming.data(), invalidApplyTiming.size()); },
+                  "v3 catalog rejects invalid apply timing");
+
+    std::vector<uint8_t> invalidPersistPolicy;
+    AppendV3Header(invalidPersistPolicy, 0x33435643u, 1, 2);
+    AppendMinimalCatalogEntry(invalidPersistPolicy,
+                              static_cast<uint8_t>(ConfigUiType::Bool),
+                              static_cast<uint8_t>(ConfigRuntimeBinding::LiveSetter),
+                              static_cast<uint8_t>(ConfigScope::ServicePolicy),
+                              static_cast<uint8_t>(ConfigApplyTiming::Manual),
+                              0xFFu);
+    RequireThrows([&] { (void)deserializeConfigV3Catalog(invalidPersistPolicy.data(), invalidPersistPolicy.size()); },
+                  "v3 catalog rejects invalid persist policy");
 
     std::cout << "[PASS] ConfigTlvTest\n";
     return 0;

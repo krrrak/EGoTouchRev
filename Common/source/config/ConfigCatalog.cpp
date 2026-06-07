@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace Config {
@@ -21,6 +22,16 @@ bool boundToRuntime(ConfigRuntimeBinding runtimeBinding)
 {
     return runtimeBinding == ConfigRuntimeBinding::LiveSetter ||
            runtimeBinding == ConfigRuntimeBinding::ManualLiveApply;
+}
+
+bool startsWith(std::string_view value, std::string_view prefix)
+{
+    return value.size() >= prefix.size() && value.substr(0, prefix.size()) == prefix;
+}
+
+bool containsToken(std::string_view value, std::string_view token)
+{
+    return value.find(token) != std::string_view::npos;
 }
 
 ConfigUiType uiTypeFromTypeName(std::string_view typeName, const ConfigValue& defaultValue)
@@ -44,6 +55,47 @@ void sortDescriptors(std::vector<ConfigDescriptor>& descriptors)
 }
 
 } // namespace
+
+ConfigScope deriveConfigScope(std::string_view yamlPath, ConfigRuntimeBinding runtimeBinding)
+{
+    if (startsWith(yamlPath, "service.")) return ConfigScope::ServicePolicy;
+    if (startsWith(yamlPath, "touch.")) return ConfigScope::TouchPipeline;
+    if (startsWith(yamlPath, "stylus.")) return ConfigScope::StylusPipeline;
+    if (startsWith(yamlPath, "debug.") || containsToken(yamlPath, ".debug.") || containsToken(yamlPath, "diagnostic")) {
+        return ConfigScope::Debug;
+    }
+    if (runtimeBinding == ConfigRuntimeBinding::LiveSetter ||
+        runtimeBinding == ConfigRuntimeBinding::ManualLiveApply) {
+        return ConfigScope::RuntimeOnly;
+    }
+    return ConfigScope::RuntimeOnly;
+}
+
+ConfigApplyTiming deriveConfigApplyTiming(std::string_view yamlPath, ConfigRuntimeBinding runtimeBinding)
+{
+    if (runtimeBinding == ConfigRuntimeBinding::Removed) return ConfigApplyTiming::ReadOnly;
+    if (runtimeBinding == ConfigRuntimeBinding::SchemaOnly) return ConfigApplyTiming::ReadOnly;
+    if (yamlPath == "service.mode") return ConfigApplyTiming::RestartRequired;
+    if (runtimeBinding == ConfigRuntimeBinding::ManualLiveApply) return ConfigApplyTiming::Manual;
+    return ConfigApplyTiming::FrameBoundary;
+}
+
+ConfigPersistPolicy deriveConfigPersistPolicy(std::string_view yamlPath, ConfigRuntimeBinding runtimeBinding)
+{
+    if (runtimeBinding == ConfigRuntimeBinding::Removed) return ConfigPersistPolicy::GeneratedDefault;
+    if (runtimeBinding == ConfigRuntimeBinding::SchemaOnly) return ConfigPersistPolicy::GeneratedDefault;
+    if (startsWith(yamlPath, "debug.") || containsToken(yamlPath, ".debug.")) {
+        return ConfigPersistPolicy::RuntimeOnly;
+    }
+    return ConfigPersistPolicy::UserOverride;
+}
+
+bool isLiveApplyTiming(ConfigApplyTiming applyTiming)
+{
+    return applyTiming == ConfigApplyTiming::Immediate ||
+           applyTiming == ConfigApplyTiming::FrameBoundary ||
+           applyTiming == ConfigApplyTiming::Manual;
+}
 
 ConfigCatalog::ConfigCatalog(std::vector<ConfigDescriptor> descriptors)
     : m_descriptors(std::move(descriptors))
@@ -121,6 +173,9 @@ ConfigCatalogBuilder& ConfigCatalogBuilder::addBindings(std::span<const BindingE
         descriptor.enumMapping = binding.enumMapping;
         descriptor.runtimeBinding = binding.runtimeBinding;
         descriptor.boundToRuntime = boundToRuntime(binding.runtimeBinding);
+        descriptor.scope = binding.scope;
+        descriptor.applyTiming = binding.applyTiming;
+        descriptor.persistPolicy = binding.persistPolicy;
         add(std::move(descriptor));
     }
     return *this;
@@ -136,6 +191,9 @@ ConfigCatalogBuilder& ConfigCatalogBuilder::addDefaults(const ConfigStore& defau
         descriptor.uiType = deriveUiType(descriptor.defaultValue);
         descriptor.displayName = deriveDisplayName(path);
         descriptor.moduleTag = deriveModuleTag(path);
+        descriptor.scope = deriveConfigScope(path, descriptor.runtimeBinding);
+        descriptor.applyTiming = deriveConfigApplyTiming(path, descriptor.runtimeBinding);
+        descriptor.persistPolicy = deriveConfigPersistPolicy(path, descriptor.runtimeBinding);
         add(std::move(descriptor));
     }
     return *this;
@@ -196,6 +254,9 @@ ConfigDescriptor descriptorFromSchemaEntry(const ConfigSchemaEntry& entry)
     descriptor.enumMapping = entry.enumMapping;
     descriptor.runtimeBinding = entry.runtimeBinding;
     descriptor.boundToRuntime = entry.boundToRuntime;
+    descriptor.scope = entry.scope;
+    descriptor.applyTiming = entry.applyTiming;
+    descriptor.persistPolicy = entry.persistPolicy;
     return descriptor;
 }
 
@@ -214,6 +275,9 @@ ConfigSchemaEntry schemaEntryFromDescriptor(const ConfigDescriptor& descriptor)
     entry.enumMapping = descriptor.enumMapping;
     entry.runtimeBinding = descriptor.runtimeBinding;
     entry.boundToRuntime = descriptor.boundToRuntime;
+    entry.scope = descriptor.scope;
+    entry.applyTiming = descriptor.applyTiming;
+    entry.persistPolicy = descriptor.persistPolicy;
     return entry;
 }
 
