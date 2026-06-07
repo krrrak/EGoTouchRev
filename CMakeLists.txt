@@ -528,8 +528,8 @@ if (EGO_BUILD_TESTS)
 
     add_executable(EGoTouchApp_ServiceProxyCatalogSchemaTest
         Tools/EGoTouchApp/tests/ServiceProxyCatalogSchemaTest.cpp
+        Tools/EGoTouchApp/tests/ServiceProxyCatalogSchemaTestFixture.cpp
         Tools/EGoTouchApp/source/ServiceProxy.Config.cpp
-        Tools/EGoTouchApp/source/ServiceProxy.Connection.cpp
         Tools/EGoTouchApp/source/ServiceProxy.DynamicDebug.cpp
         Tools/EGoTouchApp/source/ServiceProxy.cpp
     )
