@@ -17,7 +17,7 @@
 - [x] P1-3 Catalog strategy fields：`ConfigScope` / `ConfigApplyTiming` / `ConfigPersistPolicy` 进入 schema、descriptor、binding 与 v3 catalog payload；catalog wire version 升为 2，snapshot 保持 version 1；App/UI live patch 过滤 `ReadOnly` / `StartupOnly` / `RestartRequired`
 - [x] P1-4 `IConfigTarget` / target registry：`ConfigRuntime` 通过 target validate 后 commit，失败不落库；默认注册 `ServicePolicyTarget` / `PipelineConfigTarget`；ServiceHost 按 apply action plan 在 runtime mutex 外执行 pipeline apply；IIR 关系校验迁入 pipeline target
 - [x] P1-5 Catalog-to-`default.yaml` generator/check；runtime-derived drift check 已接入 CTest，消除 Catalog/default.yaml 漂移
-- [ ] P1-6 v3 Patch/Persist result 完整化；实现 restart-required staged/persist/restart 语义
+- [x] P1-6 v3 Patch/Persist result 完整化；`ApplyConfigPatchV3` / `PersistConfigV3` 已落地，支持 restart-required staged/persist/restart 语义（当前 patch payload cap: 240 bytes）
 - [ ] P1-7 App `ConfigDraft` 完整拆分 snapshot cache、editable draft、dirty baseline、apply/persist state
 - [ ] P2 legacy fixed ABI cleanup：删除 Service/Common 旧 `ConfigSnapshotWire` / `ApplyConfigPatchRequestWire` 主路径；保留本地离线 fallback
 
@@ -27,7 +27,7 @@
 
 | Gate | 状态 | 任务内容 | 修改范围 | 预期行为 | 验收方式 | 并行规则 |
 |------|------|----------|----------|----------|----------|----------|
-| Step 1 P1-6 final review/fix | [~] 进行中 | 冻结并验收 `ApplyConfigPatchV3` / `PersistConfigV3` wire/result；完成 restart-required staged + persist 语义 | IPC wire/client/server, `ConfigRuntime`, `ServiceHost`, `ServiceProxy`, ABI/runtime/App tests | semantic reject 返回 result wire `Rejected`; malformed request 才 IPC failure; `VersionMismatch` refresh/retry; restart-required 不 live apply; persist policy skip/count | `git diff --check`; `cmake --preset arm64-Debug`; build 或相关 target build; `ctest --preset arm64-Debug --output-on-failure` | 串行；不允许多 impl 并行 |
+| Step 1 P1-6 final review/fix | [x] 已完成 | 冻结并验收 `ApplyConfigPatchV3` / `PersistConfigV3` wire/result；完成 restart-required staged + persist 语义 | IPC wire/client/server, `ConfigRuntime`, `ServiceHost`, `ServiceProxy`, ABI/runtime/App tests | semantic reject 返回 result wire `Rejected`; malformed request 才 IPC failure; `VersionMismatch` refresh/retry; restart-required 不 live apply; persist policy skip/count | `ctest --preset arm64-Debug --output-on-failure` 40/40 passed；full build 受运行中 `EGoTouchService.exe` 锁定影响，相关 target build passed | 已串行完成 |
 | Step 2 P1-7 ConfigDraft | [ ] 待开始 | 拆分 Service catalog cache、snapshot cache、editable draft、dirty baseline、apply/persist state | App `ServiceProxy`, `ConfigUIRenderer`, inspector, App tests | refresh 不覆盖 dirty draft; apply/persist 状态可表达 rejected、unpersisted、restart-required、VersionMismatch rebase | App draft tests + full ctest | 串行；不可与 App legacy cleanup 并行 |
 | Step 3 P2 Common/Service legacy IPC cleanup | [ ] 待开始 | 删除/隔离 Service/Common legacy fixed ABI 主路径 | Common IPC, ServiceHost, IPC ABI tests | connected config IPC 只保留 v3 catalog/snapshot/patch/persist；旧 command tombstone 或 unsupported | `git grep` legacy symbols; build; ctest | 可与 Step 4 并行，独立 worktree |
 | Step 4 P2 App connected legacy cleanup + offline fallback | [ ] 待开始 | 清理 App connected legacy merge/apply/helper；保留离线 binder/YAML fallback | App `ServiceProxy`, inspector, App fallback tests | connected 只走 v3；offline fallback 仍可初始化 schema/store；v3 fetch failure 不伪装成 legacy snapshot | App connected/offline tests + full ctest | 可与 Step 3 并行；不可与 Step 2 并行 |
@@ -165,8 +165,8 @@
 ### 3.2 Service 侧 IPC Handler
 - [x] 3.2.1 `HandleIpcGetConfigCatalogV3` — ConfigRuntime catalog blob → paged IPC response
 - [x] 3.2.2 `HandleIpcGetConfigSnapshotV3` — ConfigRuntime snapshot blob → paged IPC response
-- [~] 3.2.3 `HandleIpcApplyConfigPatch` — 当前由 `ApplyConfigTlvChunk` 承担过渡 live patch；已接入 target validate/rollback/action plan，后续升级为 v3 patch/result
-- [ ] 3.2.4 `HandleIpcPersistConfigV3` — 按 Catalog `persistPolicy` 保存 overrides
+- [x] 3.2.3 `HandleIpcApplyConfigPatchV3` — v3 patch/result 已落地；semantic reject 通过 result wire `Rejected` 返回，malformed request 才 IPC failure
+- [x] 3.2.4 `HandleIpcPersistConfigV3` — 按 Catalog `UserOverride` persist policy 保存 overrides，并统计 skipped/persisted
 - [ ] 3.2.5 `HandleIpcReloadConfig` — 重新加载 YAML → apply bindings → 返回 v3 snapshot
 - [ ] 3.2.6 删除旧的 `ConfigSnapshotWire` / `ApplyConfigPatchRequestWire` 固定布局 struct（依赖 App connected mode 全面切 v3）
 - [ ] 3.2.7 删除旧的 IPC handler 中对应的旧格式序列化代码（只删除 legacy fixed ABI fallback；不删除本地离线 fallback）
@@ -177,7 +177,7 @@
 - [~] 3.3.2 新增 `ConfigDraft`，拆分 Service snapshot cache、用户 draft、dirty baseline version（当前仅完成轻量 v3 baseline version 记录）
 - [x] 3.3.3 删除 connected mode 对 legacy `GetConfigSnapshot=42` 的 fallback
 - [x] 3.3.4 保留本地 binder/YAML fallback 作为 Service 不可用/离线场景，不作为 legacy 删除目标
-- [~] 3.3.5 `ServiceProxy::SaveConfig()` / Apply 流程升级为 v3 Patch + v3 Persist result（当前 live apply 仍走 `ApplyConfigTlvChunk`，并按 catalog `applyTiming` 过滤不可 live patch 键）
+- [x] 3.3.5 `ServiceProxy::SaveConfig()` / Apply 流程升级为 v3 Patch + v3 Persist result；VersionMismatch 后 refresh v3 snapshot 并 retry，retry response 同样校验 wireVersion/status
 - [ ] 3.3.6 删除 `MergeServiceProxyConfigSections()` 旧实现（如仍存在）
 - [ ] 3.3.7 集成测试: App ↔ Service v3 IPC round-trip
 
@@ -209,7 +209,7 @@
 
 ## 进度总览
 
-> 下表是 2026-06-05 早期任务拆分的历史统计，不再作为当前 Config v3 权威进度。当前状态：P0、P1-1、P1-2、P1-3 Catalog 策略字段、P1-4 `IConfigTarget` registry、P1-5 default.yaml drift check 已完成；下一步是 v3 Patch/Persist result、完整 `ConfigDraft`、legacy fixed ABI cleanup。详见本文档顶部“Config v3 当前主线”。
+> 下表是 2026-06-05 早期任务拆分的历史统计，不再作为当前 Config v3 权威进度。当前状态：P0、P1-1、P1-2、P1-3 Catalog 策略字段、P1-4 `IConfigTarget` registry、P1-5 default.yaml drift check、P1-6 v3 Patch/Persist result 已完成；下一步是完整 `ConfigDraft`、legacy fixed ABI cleanup、build macro cleanup、packaging/e2e。详见本文档顶部“Config v3 当前主线”。
 
 | Phase | 任务数 | 已完成 | 状态 |
 |-------|--------|--------|------|
@@ -228,4 +228,4 @@
 
 ---
 
-> 最后更新: 2026-06-07 (同步 P1-5 runtime-derived default.yaml drift check 已合入；Service/Common legacy fixed ABI cleanup 后续处理，本地 fallback 保留为离线/Service 不可用路径)
+> 最后更新: 2026-06-08 (同步 P1-6 v3 Patch/Persist result 已合入；Service/Common legacy fixed ABI cleanup 后续处理，本地 fallback 保留为离线/Service 不可用路径)

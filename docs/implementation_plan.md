@@ -2,7 +2,7 @@
 
 > 日期: 2026-06-05 | 策略: 完全重构, 不兼容旧格式 | 原则: 配置文件是唯一权威数据源
 
-> 当前实现进度: 截至 2026-06-07，P1-3 Catalog 策略字段、P1-4 `IConfigTarget` registry、P1-5 runtime-derived `default.yaml` drift check 已合入。当前架构仍是 v3 过渡态：Catalog/Snapshot v3 IPC 已落地，ConfigRuntime 已通过 target validate/rollback/action plan 管理 live patch；完整 v3 Patch/Persist result、App `ConfigDraft`、legacy fixed ABI cleanup 仍待完成。
+> 当前实现进度: 截至 2026-06-08，P1-3 Catalog 策略字段、P1-4 `IConfigTarget` registry、P1-5 runtime-derived `default.yaml` drift check、P1-6 v3 Patch/Persist result 已合入。当前架构仍是 v3 过渡态：Catalog/Snapshot/Patch/Persist v3 IPC 已落地，ConfigRuntime 已通过 target validate/rollback/action plan 管理 live patch 与 restart-required staged patch；App `ConfigDraft`、legacy fixed ABI cleanup、build macro cleanup、packaging/e2e 仍待完成。
 
 ---
 
@@ -387,8 +387,8 @@ enum class ConfigPersistPolicy : uint8_t {
 
 仍待完成:
 
-- `RestartRequired` 的 staged patch + persist + restart 生效语义。
-- `GeneratedDefault` / `Persistable` 在 v3 Persist 中的最终消费。
+- 完整 App `ConfigDraft` 状态展示和 per-key apply/persist state。
+- YAML-only / non-user override 是否允许保留的 allowlist 策略。
 
 ### 2.7 IConfigTarget — 事务化 validate/apply 边界
 
@@ -438,6 +438,36 @@ ConfigRuntime::BuildFactoryDefaultSchema()
 - 注释。
 - 排序。
 - YAML 标量展示格式（如语义等价的数字写法）。
+
+### 2.9 v3 Patch/Persist — connected mode 配置变更主路径
+
+当前 connected mode 已新增 v3 patch/persist IPC:
+
+| Command | 当前行为 |
+|---------|----------|
+| `ApplyConfigPatchV3 = 48` | 请求携带 base schema/snapshot version 与 TLV patch payload；响应返回 changed/applied/restartRequired/rejected counts 与 status |
+| `PersistConfigV3 = 49` | 按 Catalog persist policy 保存 overrides；当前只保存 `UserOverride` entries，其他 policy 计入 skipped |
+
+Result status:
+
+- `Ok`
+- `NoChanges`
+- `VersionMismatch`
+- `Rejected`
+- `PersistFailed`
+
+语义边界:
+
+- malformed request wire、invalid state、internal error 使用 IPC failure。
+- syntactically valid patch 的 schema/target/policy reject 使用 IPC success + result wire `Rejected`。
+- `VersionMismatch` 后 App refresh v3 snapshot 并 retry；retry response 同样校验 `wireVersion` / status / length。
+- `RestartRequired` key 可 staged/persist，不触发 live apply action。
+- live key 仍走 target validate/action plan，target validate 失败不 commit runtime store。
+
+当前限制:
+
+- v3 patch request payload cap 为 240 bytes。
+- `PersistConfigV3` 会从 runtime/schema 的 `UserOverride` entries 重写 `overrides.yaml`；非 `UserOverride` / YAML-only entries 不保留，除非后续引入显式 allowlist。
 
 ---
 
@@ -667,7 +697,7 @@ EGoTouchRev-2.0.0/
 | P1-3 Catalog strategy fields | 已完成 | `ConfigScope` / `ConfigApplyTiming` / `ConfigPersistPolicy` 已进入 catalog v2 round-trip; App live patch 过滤不可 live apply 键 |
 | P1-4 `IConfigTarget` registry | 已完成 | `ConfigRuntime` 通过 target validate 后 commit，失败 rollback; `ServicePolicyTarget` / `PipelineConfigTarget` 默认注册; apply action 在 mutex 外执行 |
 | P1-5 Catalog-to-`default.yaml` generator/check | 已完成 | `ConfigDefaultYamlDriftTest` 从 runtime factory defaults/schema 生成 YAML 并与仓库 `config/default.yaml` 语义比较；CTest 增至 40 |
-| P1-6 v3 Patch/Persist result | 待完成 | 替换过渡 `ApplyConfigTlvChunk` / legacy persist 语义，支持 per-key result 与 restart-required staged flow |
+| P1-6 v3 Patch/Persist result | 已完成 | `ApplyConfigPatchV3` / `PersistConfigV3` 已落地；支持 result wire、VersionMismatch retry、semantic reject result、restart-required staged flow；patch payload cap 240 bytes |
 | P1-7 App `ConfigDraft` | 待完成 | 拆分 Service snapshot cache、用户 draft、dirty baseline、apply/persist state |
 | P2 legacy fixed ABI cleanup | 待完成 | 删除 Service/Common 旧 fixed ABI 主路径；本地离线 fallback 保留 |
 
