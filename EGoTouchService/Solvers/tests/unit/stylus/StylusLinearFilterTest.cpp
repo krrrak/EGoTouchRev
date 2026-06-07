@@ -1230,7 +1230,7 @@ void TestIirCoefSelectionUsesRawMappedHistorySpeed() {
 
     Require(stylus.runtime.Active().post.speedValue > 0,
             "speed path should observe movement from raw mapped history");
-    Require(iir.m_currentCoef > iir.m_coefLowInBand,
+    Require(iir.m_currentCoef > iir.m_coefLowHover,
             "IIR coefficient selection should react to raw-history speed, not a frozen finalCoor");
 }
 

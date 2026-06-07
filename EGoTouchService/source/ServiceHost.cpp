@@ -317,11 +317,11 @@ Config::ConfigValue ConfigValueFromTlvEntry(const Config::ConfigTlvEntry& entry,
     }
 }
 
-constexpr std::array<std::string_view, 4> kStylusIirCoefficientPaths{
-    "stylus.sp.iir_coef_low_in_band",
-    "stylus.sp.iir_coef_high_in_band",
-    "stylus.sp.iir_coef_low_edge",
-    "stylus.sp.iir_coef_high_edge",
+constexpr std::array<std::pair<std::string_view, std::string_view>, 4> kStylusIirCoefficientPathPairs{
+    std::pair{"stylus.sp.iir_coef_low_hover", "stylus.sp.iir_coef_low_in_band"},
+    std::pair{"stylus.sp.iir_coef_high_hover", "stylus.sp.iir_coef_high_in_band"},
+    std::pair{"stylus.sp.iir_coef_low_writing", "stylus.sp.iir_coef_low_edge"},
+    std::pair{"stylus.sp.iir_coef_high_writing", "stylus.sp.iir_coef_high_edge"},
 };
 
 bool StylusIirCoefficientsWithinMax(const Config::ConfigStore& store) {
@@ -330,7 +330,8 @@ bool StylusIirCoefficientsWithinMax(const Config::ConfigStore& store) {
         return false;
     }
 
-    for (const auto path : kStylusIirCoefficientPaths) {
+    for (const auto [canonicalPath, legacyPath] : kStylusIirCoefficientPathPairs) {
+        const auto path = store.has(canonicalPath) ? canonicalPath : legacyPath;
         const int32_t coef = store.getOr<int32_t>(path, 0);
         if (coef < 0 || coef > maxCoef) {
             return false;
@@ -342,7 +343,8 @@ bool StylusIirCoefficientsWithinMax(const Config::ConfigStore& store) {
 void ClampStylusIirCoefficients(Config::ConfigStore& store) {
     const int32_t maxCoef = std::clamp(store.getOr<int32_t>("stylus.sp.iir_max_coef", 32), int32_t{1}, int32_t{255});
     store.set<int32_t>("stylus.sp.iir_max_coef", maxCoef);
-    for (const auto path : kStylusIirCoefficientPaths) {
+    for (const auto [canonicalPath, legacyPath] : kStylusIirCoefficientPathPairs) {
+        const auto path = store.has(canonicalPath) ? canonicalPath : legacyPath;
         if (store.has(path)) {
             store.set<int32_t>(path, std::clamp(store.get<int32_t>(path), int32_t{0}, maxCoef));
         }

@@ -578,7 +578,7 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
 
             ImGui::Separator();
             ImGui::TextColored(ImVec4(1.0f,0.85f,0.4f,1.f), "Edge / Signal Gates");
-            ImGui::Text("Mode: %s%s", diag.isHover ? "Hover" : "Write", diag.isEdge ? " + Edge" : "");
+            ImGui::Text("Mode: %s%s", diag.isHover ? "Hover" : "Writing", diag.isEdge ? " + Edge" : "");
             ImGui::Text("Edge flags: dim1=%s  dim2=%s", diag.dim1Edge ? "yes" : "no", diag.dim2Edge ? "yes" : "no");
             ImGui::Text("Peak: tx1=%u sum3x3=%u  tx2=%u sum3x3=%u tx2Valid=%s",
                 diag.tx1PeakValue,

@@ -55,12 +55,12 @@ const std::pair<ConfigKeyId, std::string_view> kStaticKeyMap[] = {
     {ConfigKeyId::StylusSpCoorReviseFactorDim2, "stylus.sp.coor_revise_factor_dim2"},
     {ConfigKeyId::StylusSpCoorSpeedEnabled, "stylus.sp.coor_speed_enabled"},
     {ConfigKeyId::StylusSpIirFilterEnabled, "stylus.sp.iir_filter_enabled"},
-    {ConfigKeyId::StylusSpIirCoefLowInBand, "stylus.sp.iir_coef_low_in_band"},
-    {ConfigKeyId::StylusSpIirCoefHighInBand, "stylus.sp.iir_coef_high_in_band"},
-    {ConfigKeyId::StylusSpIirSpeedTholdInBand, "stylus.sp.iir_speed_thold_in_band"},
-    {ConfigKeyId::StylusSpIirCoefLowEdge, "stylus.sp.iir_coef_low_edge"},
-    {ConfigKeyId::StylusSpIirCoefHighEdge, "stylus.sp.iir_coef_high_edge"},
-    {ConfigKeyId::StylusSpIirSpeedTholdEdge, "stylus.sp.iir_speed_thold_edge"},
+    {ConfigKeyId::StylusSpIirCoefLowHover, "stylus.sp.iir_coef_low_hover"},
+    {ConfigKeyId::StylusSpIirCoefHighHover, "stylus.sp.iir_coef_high_hover"},
+    {ConfigKeyId::StylusSpIirSpeedTholdHover, "stylus.sp.iir_speed_thold_hover"},
+    {ConfigKeyId::StylusSpIirCoefLowWriting, "stylus.sp.iir_coef_low_writing"},
+    {ConfigKeyId::StylusSpIirCoefHighWriting, "stylus.sp.iir_coef_high_writing"},
+    {ConfigKeyId::StylusSpIirSpeedTholdWriting, "stylus.sp.iir_speed_thold_writing"},
     {ConfigKeyId::StylusSpIirSpeedMax, "stylus.sp.iir_speed_max"},
     {ConfigKeyId::StylusSpIirMaxCoef, "stylus.sp.iir_max_coef"},
     {ConfigKeyId::StylusSpAftCoorEnabled, "stylus.sp.aft_coor_enabled"},
@@ -71,6 +71,15 @@ const std::pair<ConfigKeyId, std::string_view> kStaticKeyMap[] = {
     {ConfigKeyId::StylusSpLockSensorTxCount, "stylus.sp.lock_sensor_tx_count"},
     {ConfigKeyId::StylusSpLockSensorRxCount, "stylus.sp.lock_sensor_rx_count"},
     {ConfigKeyId::StylusSpLockBypass, "stylus.sp.lock_bypass"},
+};
+
+const std::pair<std::string_view, ConfigKeyId> kStaticPathAliases[] = {
+    {"stylus.sp.iir_coef_low_in_band", ConfigKeyId::StylusSpIirCoefLowHover},
+    {"stylus.sp.iir_coef_high_in_band", ConfigKeyId::StylusSpIirCoefHighHover},
+    {"stylus.sp.iir_speed_thold_in_band", ConfigKeyId::StylusSpIirSpeedTholdHover},
+    {"stylus.sp.iir_coef_low_edge", ConfigKeyId::StylusSpIirCoefLowWriting},
+    {"stylus.sp.iir_coef_high_edge", ConfigKeyId::StylusSpIirCoefHighWriting},
+    {"stylus.sp.iir_speed_thold_edge", ConfigKeyId::StylusSpIirSpeedTholdWriting},
 };
 
 std::unordered_map<ConfigKeyId, std::string>& mutableKeyIdToPath()
@@ -94,6 +103,9 @@ void ensureStaticMapsInitialized()
             std::string path{pathView};
             idToPath.try_emplace(id, path);
             pathToId.try_emplace(std::move(path), id);
+        }
+        for (const auto& [pathView, id] : kStaticPathAliases) {
+            pathToId.try_emplace(std::string{pathView}, id);
         }
         return true;
     }();

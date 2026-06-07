@@ -189,12 +189,12 @@ void TestPersistedGridIIRStateIsNotInjectedWhenPipelineOmitsGridIIR() {
 
 void TestStylusPipelineConfigRoundTripCoversIirAndLockKeys() {
     Solvers::StylusPipeline saved;
-    saved.m_commonPost.m_coorIIRProcess.m_coefLowInBand = 11;
-    saved.m_commonPost.m_coorIIRProcess.m_coefHighInBand = 12;
-    saved.m_commonPost.m_coorIIRProcess.m_speedTholdInBand = 13;
-    saved.m_commonPost.m_coorIIRProcess.m_coefLowEdge = 14;
-    saved.m_commonPost.m_coorIIRProcess.m_coefHighEdge = 15;
-    saved.m_commonPost.m_coorIIRProcess.m_speedTholdEdge = 16;
+    saved.m_commonPost.m_coorIIRProcess.m_coefLowHover = 11;
+    saved.m_commonPost.m_coorIIRProcess.m_coefHighHover = 12;
+    saved.m_commonPost.m_coorIIRProcess.m_speedTholdHover = 13;
+    saved.m_commonPost.m_coorIIRProcess.m_coefLowWriting = 14;
+    saved.m_commonPost.m_coorIIRProcess.m_coefHighWriting = 15;
+    saved.m_commonPost.m_coorIIRProcess.m_speedTholdWriting = 16;
     saved.m_commonPost.m_coorIIRProcess.m_speedMax = 321;
     saved.m_commonPost.m_coorIIRProcess.m_maxCoef = 17;
     saved.m_commonPost.m_aftCoorProcess.m_lockFlashInBandX = 21;
@@ -216,12 +216,12 @@ void TestStylusPipelineConfigRoundTripCoversIirAndLockKeys() {
         }
     }
 
-    Require(loaded.m_commonPost.m_coorIIRProcess.m_coefLowInBand == 11, "IIR low in-band coefficient should round-trip");
-    Require(loaded.m_commonPost.m_coorIIRProcess.m_coefHighInBand == 12, "IIR high in-band coefficient should round-trip");
-    Require(loaded.m_commonPost.m_coorIIRProcess.m_speedTholdInBand == 13, "IIR in-band speed threshold should round-trip");
-    Require(loaded.m_commonPost.m_coorIIRProcess.m_coefLowEdge == 14, "IIR low edge coefficient should round-trip");
-    Require(loaded.m_commonPost.m_coorIIRProcess.m_coefHighEdge == 15, "IIR high edge coefficient should round-trip");
-    Require(loaded.m_commonPost.m_coorIIRProcess.m_speedTholdEdge == 16, "IIR edge speed threshold should round-trip");
+    Require(loaded.m_commonPost.m_coorIIRProcess.m_coefLowHover == 11, "IIR low hover coefficient should round-trip");
+    Require(loaded.m_commonPost.m_coorIIRProcess.m_coefHighHover == 12, "IIR high hover coefficient should round-trip");
+    Require(loaded.m_commonPost.m_coorIIRProcess.m_speedTholdHover == 13, "IIR hover speed threshold should round-trip");
+    Require(loaded.m_commonPost.m_coorIIRProcess.m_coefLowWriting == 14, "IIR low writing coefficient should round-trip");
+    Require(loaded.m_commonPost.m_coorIIRProcess.m_coefHighWriting == 15, "IIR high writing coefficient should round-trip");
+    Require(loaded.m_commonPost.m_coorIIRProcess.m_speedTholdWriting == 16, "IIR writing speed threshold should round-trip");
     Require(loaded.m_commonPost.m_coorIIRProcess.m_speedMax == 321, "IIR speed max should round-trip");
     Require(loaded.m_commonPost.m_coorIIRProcess.m_maxCoef == 17, "IIR max coefficient should round-trip");
     Require(loaded.m_commonPost.m_aftCoorProcess.m_lockFlashInBandX == 21, "AFT in-band X lock flash should round-trip");

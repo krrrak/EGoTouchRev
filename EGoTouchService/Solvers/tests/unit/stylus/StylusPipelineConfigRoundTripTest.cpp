@@ -78,12 +78,12 @@ void TestStylusIirBindingsExposeCompleteUiSchema() {
     Require(enabled->boundToRuntime, "IIR enable entry should be bound to runtime");
     RequireBoolDefault(*enabled, true);
 
-    RequireIirEntry(schema, "stylus.sp.iir_coef_low_in_band", 2, 0.0, 255.0);
-    RequireIirEntry(schema, "stylus.sp.iir_coef_high_in_band", 16, 0.0, 255.0);
-    RequireIirEntry(schema, "stylus.sp.iir_speed_thold_in_band", 20, 0.0, 255.0);
-    RequireIirEntry(schema, "stylus.sp.iir_coef_low_edge", 6, 0.0, 255.0);
-    RequireIirEntry(schema, "stylus.sp.iir_coef_high_edge", 18, 0.0, 255.0);
-    RequireIirEntry(schema, "stylus.sp.iir_speed_thold_edge", 10, 0.0, 255.0);
+    RequireIirEntry(schema, "stylus.sp.iir_coef_low_hover", 2, 0.0, 255.0);
+    RequireIirEntry(schema, "stylus.sp.iir_coef_high_hover", 16, 0.0, 255.0);
+    RequireIirEntry(schema, "stylus.sp.iir_speed_thold_hover", 20, 0.0, 255.0);
+    RequireIirEntry(schema, "stylus.sp.iir_coef_low_writing", 6, 0.0, 255.0);
+    RequireIirEntry(schema, "stylus.sp.iir_coef_high_writing", 18, 0.0, 255.0);
+    RequireIirEntry(schema, "stylus.sp.iir_speed_thold_writing", 10, 0.0, 255.0);
     RequireIirEntry(schema, "stylus.sp.iir_speed_max", 205, 0.0, 1000.0);
     RequireIirEntry(schema, "stylus.sp.iir_max_coef", 32, 1.0, 255.0);
 }
