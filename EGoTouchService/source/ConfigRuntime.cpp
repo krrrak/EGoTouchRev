@@ -2,6 +2,8 @@
 
 #include "Logger.h"
 #include "SolverTypes.h"
+#include "TouchPipeline.h"
+#include "StylusPipeline.h"
 #include "config/ConfigBinder.h"
 #include "config/ConfigKeyMap.h"
 #include "config/SchemaValidator.h"
@@ -321,8 +323,17 @@ ConfigRuntime::TlvApplyResult ConfigRuntime::ApplyTlvChunk(const Ipc::ConfigTlvC
 }
 
 bool ConfigRuntime::ApplyCompletedTlvPayloadLocked(const std::vector<uint8_t>& payload, TlvApplyResult& result) {
-    const auto patch = Config::deserializePatch(payload.data(), payload.size());
-    if (patch.entries.empty()) { result.status = Ipc::IpcStatusCode::InvalidRequest; return false; }
+    const auto parseResult = Config::deserializePatchDetailed(payload.data(), payload.size());
+    if (!parseResult.ok()) {
+        result.status = parseResult.status == Config::ConfigTlvParseStatus::InvalidArgument
+            ? Ipc::IpcStatusCode::InternalError
+            : Ipc::IpcStatusCode::InvalidRequest;
+        LOG_WARN("Service", __func__, "Config", "Rejected config TLV patch: status={} offset={} entryIndex={} keyId=0x{:04X} valueType=0x{:02X}",
+                 Config::toString(parseResult.status), parseResult.issue.offset, parseResult.issue.entryIndex,
+                 parseResult.issue.rawKeyId, parseResult.issue.rawValueType);
+        return false;
+    }
+    const auto& patch = parseResult.patch;
     bool penButtonRouteTouched = false;
     Config::ConfigStore candidate = m_store;
     for (const auto& entry : patch.entries) {
