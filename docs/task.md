@@ -16,7 +16,7 @@
 - [x] P1-2 App connected mode 删除 legacy `GetConfigSnapshot=42` fallback；本地 binder/YAML fallback 仅保留为 Service 不可用/离线路径
 - [x] P1-3 Catalog strategy fields：`ConfigScope` / `ConfigApplyTiming` / `ConfigPersistPolicy` 进入 schema、descriptor、binding 与 v3 catalog payload；catalog wire version 升为 2，snapshot 保持 version 1；App/UI live patch 过滤 `ReadOnly` / `StartupOnly` / `RestartRequired`
 - [x] P1-4 `IConfigTarget` / target registry：`ConfigRuntime` 通过 target validate 后 commit，失败不落库；默认注册 `ServicePolicyTarget` / `PipelineConfigTarget`；ServiceHost 按 apply action plan 在 runtime mutex 外执行 pipeline apply；IIR 关系校验迁入 pipeline target
-- [ ] P1-5 Catalog-to-`default.yaml` generator/check；消除 Catalog/default.yaml 漂移
+- [x] P1-5 Catalog-to-`default.yaml` generator/check；runtime-derived drift check 已接入 CTest，消除 Catalog/default.yaml 漂移
 - [ ] P1-6 v3 Patch/Persist result 完整化；实现 restart-required staged/persist/restart 语义
 - [ ] P1-7 App `ConfigDraft` 完整拆分 snapshot cache、editable draft、dirty baseline、apply/persist state
 - [ ] P2 legacy fixed ABI cleanup：删除 Service/Common 旧 `ConfigSnapshotWire` / `ApplyConfigPatchRequestWire` 主路径；保留本地离线 fallback
@@ -81,6 +81,7 @@
 - [x] 1.4.1 从 `config/touch_pipeline_config.yaml` + `config/stylus_pipeline_config.yaml` 提取 active 键 → 生成 `config/default.yaml`
 - [x] 1.4.2 为每个键补全文档注释和范围
 - [~] 1.4.3 验证: 所有当前 active 键的默认值与 C++ constexpr 值一致 (待编译后验证)
+- [x] 1.4.6 Catalog/default.yaml drift check: `ConfigDefaultYamlDriftTest` 从 runtime factory defaults/schema 生成 YAML 并与仓库 `config/default.yaml` 语义比较
 - [ ] 1.4.4 所有 frozen 键的默认值与旧 constexpr 值一致 (frozen 键暂不进入 default.yaml)
 - [ ] 1.4.5 清理旧的 `config/touch_pipeline_config.yaml` / `config/stylus_pipeline_config.yaml` (在 Phase 2 完成后清理)
 
@@ -188,12 +189,13 @@
 - [ ] 4.3.4 重启 Service: `default.yaml` + `overrides.yaml` 合并 → 校验 → 应用 → 配置与重启前一致
 - [ ] 4.3.5 arm64-Debug / arm64-Release 编译通过且行为一致
 - [ ] 4.3.6 所有现有单元测试通过 (无回归)
+- [x] 4.3.7 `ctest --preset arm64-Debug --output-on-failure` 通过，40/40 tests passed（含 `ConfigDefaultYamlDriftTest`）
 
 ---
 
 ## 进度总览
 
-> 下表是 2026-06-05 早期任务拆分的历史统计，不再作为当前 Config v3 权威进度。当前状态：P0、P1-1、P1-2、P1-3 Catalog 策略字段、P1-4 `IConfigTarget` registry 已完成；下一步是 default.yaml generator/check、v3 Patch/Persist result、完整 `ConfigDraft`、legacy fixed ABI cleanup。详见本文档顶部“Config v3 当前主线”。
+> 下表是 2026-06-05 早期任务拆分的历史统计，不再作为当前 Config v3 权威进度。当前状态：P0、P1-1、P1-2、P1-3 Catalog 策略字段、P1-4 `IConfigTarget` registry、P1-5 default.yaml drift check 已完成；下一步是 v3 Patch/Persist result、完整 `ConfigDraft`、legacy fixed ABI cleanup。详见本文档顶部“Config v3 当前主线”。
 
 | Phase | 任务数 | 已完成 | 状态 |
 |-------|--------|--------|------|
@@ -212,4 +214,4 @@
 
 ---
 
-> 最后更新: 2026-06-07 (同步 P1-3 Catalog 策略字段与 P1-4 `IConfigTarget` registry 已合入；Service/Common legacy fixed ABI cleanup 后续处理，本地 fallback 保留为离线/Service 不可用路径)
+> 最后更新: 2026-06-07 (同步 P1-5 runtime-derived default.yaml drift check 已合入；Service/Common legacy fixed ABI cleanup 后续处理，本地 fallback 保留为离线/Service 不可用路径)

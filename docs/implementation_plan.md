@@ -2,7 +2,7 @@
 
 > 日期: 2026-06-05 | 策略: 完全重构, 不兼容旧格式 | 原则: 配置文件是唯一权威数据源
 
-> 当前实现进度: 截至 2026-06-07，P1-3 Catalog 策略字段和 P1-4 `IConfigTarget` registry 已合入。当前架构仍是 v3 过渡态：Catalog/Snapshot v3 IPC 已落地，ConfigRuntime 已通过 target validate/rollback/action plan 管理 live patch；`default.yaml` generator、完整 v3 Patch/Persist result、App `ConfigDraft`、legacy fixed ABI cleanup 仍待完成。
+> 当前实现进度: 截至 2026-06-07，P1-3 Catalog 策略字段、P1-4 `IConfigTarget` registry、P1-5 runtime-derived `default.yaml` drift check 已合入。当前架构仍是 v3 过渡态：Catalog/Snapshot v3 IPC 已落地，ConfigRuntime 已通过 target validate/rollback/action plan 管理 live patch；完整 v3 Patch/Persist result、App `ConfigDraft`、legacy fixed ABI cleanup 仍待完成。
 
 ---
 
@@ -388,7 +388,7 @@ enum class ConfigPersistPolicy : uint8_t {
 仍待完成:
 
 - `RestartRequired` 的 staged patch + persist + restart 生效语义。
-- `GeneratedDefault` / `Persistable` 在 v3 Persist 与 generator 中的最终消费。
+- `GeneratedDefault` / `Persistable` 在 v3 Persist 中的最终消费。
 
 ### 2.7 IConfigTarget — 事务化 validate/apply 边界
 
@@ -414,6 +414,30 @@ parse TLV -> schema/type/range validation -> candidate ConfigStore
 - target validate 失败不得 commit `ConfigStore`。
 - target 不应在 `ConfigRuntime` mutex 内执行阻塞 I/O 或回调 runtime。
 - 外部设备/pipeline apply 必须通过 action plan 在 mutex 外执行。
+
+### 2.8 default.yaml drift check — Catalog 默认值门禁
+
+当前已新增 runtime-derived drift check:
+
+```text
+ConfigRuntime::BuildFactoryDefaultStore()
+ConfigRuntime::BuildFactoryDefaultSchema()
+-> save generated default.yaml to build/temp path
+-> reload generated YAML
+-> compare with repository config/default.yaml semantically
+```
+
+校验覆盖:
+
+- 仓库 `config/default.yaml` 缺少 catalog default key 会失败。
+- 仓库 `config/default.yaml` 中 catalog key 默认值漂移会失败。
+- 仓库 `config/default.yaml` 出现未登记 YAML-only key 会失败；当前 allowlist 为空。
+
+刻意不比较:
+
+- 注释。
+- 排序。
+- YAML 标量展示格式（如语义等价的数字写法）。
 
 ---
 
@@ -642,7 +666,7 @@ EGoTouchRev-2.0.0/
 | P1-2 App connected legacy snapshot fallback 删除 | 已完成 | connected mode 不再 fallback 到 legacy `GetConfigSnapshot=42`; 本地 fallback 仅用于 Service 不可用/离线 |
 | P1-3 Catalog strategy fields | 已完成 | `ConfigScope` / `ConfigApplyTiming` / `ConfigPersistPolicy` 已进入 catalog v2 round-trip; App live patch 过滤不可 live apply 键 |
 | P1-4 `IConfigTarget` registry | 已完成 | `ConfigRuntime` 通过 target validate 后 commit，失败 rollback; `ServicePolicyTarget` / `PipelineConfigTarget` 默认注册; apply action 在 mutex 外执行 |
-| P1-5 Catalog-to-`default.yaml` generator/check | 待完成 | 生成 YAML 与仓库 `config/default.yaml` 语义等价，并接入 CI/CMake 校验 |
+| P1-5 Catalog-to-`default.yaml` generator/check | 已完成 | `ConfigDefaultYamlDriftTest` 从 runtime factory defaults/schema 生成 YAML 并与仓库 `config/default.yaml` 语义比较；CTest 增至 40 |
 | P1-6 v3 Patch/Persist result | 待完成 | 替换过渡 `ApplyConfigTlvChunk` / legacy persist 语义，支持 per-key result 与 restart-required staged flow |
 | P1-7 App `ConfigDraft` | 待完成 | 拆分 Service snapshot cache、用户 draft、dirty baseline、apply/persist state |
 | P2 legacy fixed ABI cleanup | 待完成 | 删除 Service/Common 旧 fixed ABI 主路径；本地离线 fallback 保留 |
