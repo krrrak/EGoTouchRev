@@ -67,7 +67,46 @@ ImVec4 FpsColor(int fps) {
     }
 }
 
+const char* IpcStatusText(Ipc::IpcStatusCode status) {
+    switch (status) {
+    case Ipc::IpcStatusCode::Ok: return "Ok";
+    case Ipc::IpcStatusCode::UnsupportedCommand: return "UnsupportedCommand";
+    case Ipc::IpcStatusCode::InvalidRequest: return "InvalidRequest";
+    case Ipc::IpcStatusCode::InvalidState: return "InvalidState";
+    case Ipc::IpcStatusCode::NotFound: return "NotFound";
+    case Ipc::IpcStatusCode::PermissionDenied: return "PermissionDenied";
+    case Ipc::IpcStatusCode::InternalError: return "InternalError";
+    default: return "Unknown";
+    }
+}
+
 } // namespace
+
+void DiagnosticsWorkbench::DrawApplyConfigResultStatus() const {
+    if (!m_proxy) {
+        return;
+    }
+
+    const ApplyConfigResult result = m_proxy->GetLastApplyConfigResult();
+    if (result.liveApplied) {
+        ImGui::TextColored(GoodColor(), "Apply Global: live apply succeeded.");
+        if (result.persistAttempted && result.persisted) {
+            ImGui::TextColored(GoodColor(), "Persist: saved by Service.");
+        } else if (result.persistAttempted && result.persistStatus == Ipc::IpcStatusCode::UnsupportedCommand) {
+            ImGui::TextColored(WarnColor(), "Persist: unsupported by this Service/build; live changes are runtime-only.");
+        } else if (result.persistAttempted) {
+            ImGui::TextColored(WarnColor(), "Persist: failed (%s); live changes are not saved.", IpcStatusText(result.persistStatus));
+        } else if (result.unpersistedLiveChanges) {
+            ImGui::TextColored(WarnColor(), "Persist: not attempted; live changes are runtime-only.");
+        }
+    } else if (result.persistAttempted && result.persisted) {
+        ImGui::TextColored(GoodColor(), "Apply Global: persisted by Service.");
+    } else if (result.persistAttempted && result.persistStatus == Ipc::IpcStatusCode::UnsupportedCommand) {
+        ImGui::TextColored(WarnColor(), "Apply Global: persistence unsupported by this Service/build.");
+    } else {
+        ImGui::TextColored(WarnColor(), "Apply Global: no successful apply yet or last apply failed.");
+    }
+}
 
 void DiagnosticsWorkbench::DrawInspectorPanel() {
     ImGui::Begin("Inspector");
@@ -257,7 +296,7 @@ void DiagnosticsWorkbench::DrawTouchPipelineConfigPanel() {
     m_touchConfigModuleIndex = std::clamp(m_touchConfigModuleIndex, 0, moduleCount - 1);
     const bool masterParserOnly = m_proxy->IsMasterParserOnlyMode();
 
-    ImGui::TextWrapped("Edit touch pipeline parameters by processing stage. Apply Global sends the ConfigStore to the Service, live-applies the Service pipeline, and persists YAML overrides.");
+    ImGui::TextWrapped("Edit touch pipeline parameters by processing stage. Apply Global sends supported keys to the Service for live apply; persistence depends on Service/build support.");
     if (masterParserOnly) {
         ImGui::TextColored(WarnColor(), "Master Parser Only is enabled. Pipeline configuration controls are disabled.");
     }
@@ -307,7 +346,8 @@ void DiagnosticsWorkbench::DrawTouchPipelineConfigPanel() {
             m_proxy->ApplyConfigStoreGlobally();
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("Applies to Service and saves YAML overrides.");
+        ImGui::TextDisabled("Live-applies supported keys; persistence depends on Service/build support.");
+        DrawApplyConfigResultStatus();
 #endif
 
         ImGui::EndTable();
@@ -418,6 +458,7 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
     if (ImGui::Checkbox("Enable Stylus Native Output", &vhfStylus)) {
         m_proxy->SetSrvStylusVhfEnabled(vhfStylus);
     }
+    ImGui::TextDisabled("Staged; click Apply Global to live-apply service policy.");
 
     ImGui::Separator();
     ImGui::TextUnformatted("Pen Button Injection");
@@ -431,10 +472,15 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
         if (ImGui::Combo("Injection Route", &curRoute, routeItems, IM_ARRAYSIZE(routeItems))) {
             m_proxy->SetPenButtonRoute(static_cast<PenButtonRoute>(curRoute));
         }
+        ImGui::TextDisabled("Button policy changes are staged; click Apply Global to live-apply service policy.");
+        if (ImGui::Button("Apply Global")) {
+            m_proxy->ApplyConfigStoreGlobally();
+        }
+        DrawApplyConfigResultStatus();
     }
 #else
     ImGui::TextUnformatted("Windows INK Output (VHF)");
-    ImGui::TextWrapped("Release uses startup YAML only; edit config/default.yaml or config/overrides.yaml and restart Service.");
+    ImGui::TextWrapped("Supported service policy keys can be live-applied with Apply Global; persistence depends on Service/build support.");
     ImGui::TextDisabled("Stylus Native Output: %s", m_proxy->IsSrvStylusVhfEnabled() ? "Enabled" : "Disabled");
 
     ImGui::Separator();
@@ -556,7 +602,7 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
             ImGui::TextColored(WarnColor(), "Runtime config apply is disabled in this build (EGOTOUCH_CONFIG_ENABLED=0).");
             ImGui::TextWrapped("Stylus pipeline parameters remain editable in the app-local ConfigStore, but Apply Global is disabled and cannot update Service/YAML.");
 #else
-            ImGui::TextWrapped("Edit stylus pipeline parameters by module. Apply Global sends the ConfigStore to the Service, live-applies the Service pipeline, and persists YAML overrides.");
+            ImGui::TextWrapped("Edit stylus pipeline parameters by module. Apply Global sends supported keys to the Service for live apply; persistence depends on Service/build support.");
 #endif
             const auto& schema = m_proxy->GetConfigSchemaSnapshot();
             auto modules = CollectModuleTagsWithPrefix(schema, "Stylus /");
@@ -580,7 +626,8 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
                             m_proxy->ApplyConfigStoreGlobally();
                         }
                         ImGui::SameLine();
-                        ImGui::TextDisabled("Applies to Service and saves YAML overrides.");
+                        ImGui::TextDisabled("Live-applies supported keys; persistence depends on Service/build support.");
+                        DrawApplyConfigResultStatus();
 #endif
                         ImGui::EndTabItem();
                     }

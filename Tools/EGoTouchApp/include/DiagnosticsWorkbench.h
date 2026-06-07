@@ -47,6 +47,7 @@ private:
     void DrawBtMcuPanel();
     void DrawSystemEventsPanel();
     void DrawDvrPanel();
+    void DrawApplyConfigResultStatus() const;
 
     void ExitPlaybackToLivePreview();
     void ExportCurrentFrameCsv(bool isAutoCapture = false);

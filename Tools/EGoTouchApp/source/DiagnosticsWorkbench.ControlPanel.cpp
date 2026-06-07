@@ -199,7 +199,6 @@ void DiagnosticsWorkbench::DrawControlPanel() {
         bool isTouchOnly = !desiredFull;
         if (ImGui::Checkbox("Touch-Only Mode (Pure Finger, Disable Pen)", &isTouchOnly)) {
             m_proxy->SetSrvModeFull(!isTouchOnly);
-            m_proxy->SaveConfig();
         }
         const char* activeModeText = activeFull ? "Full" : "Touch-Only";
         const char* desiredModeText = desiredFull ? "Full" : "Touch-Only";
@@ -212,22 +211,36 @@ void DiagnosticsWorkbench::DrawControlPanel() {
                                activeModeText);
         }
 
+        ImGui::TextDisabled("service.mode is staged and requires Service restart.");
+
         bool autoMode = m_proxy->IsSrvAutoMode();
         if (ImGui::Checkbox("Auto-Mode (Hardware handshake)", &autoMode)) {
             m_proxy->SetSrvAutoMode(autoMode);
         }
+        ImGui::TextDisabled("service.auto_mode is live-applied by Apply Global.");
+
+        if (ImGui::Button("Apply Global")) {
+            m_proxy->ApplyConfigStoreGlobally();
+        }
+        DrawApplyConfigResultStatus();
         if (!allowLiveControl) ImGui::EndDisabled();
     }
 #else
     ImGui::Separator();
     ImGui::TextUnformatted("Global Config");
-    ImGui::TextWrapped("Release builds use startup YAML only. Edit config/default.yaml or config/overrides.yaml and restart EGoTouchService; live save/global mutation is not supported.");
+    ImGui::TextWrapped("Release builds can live-apply supported Service config keys. Persistence depends on Service/build support; service.mode still requires restart.");
     if (m_proxy) {
+        if (!allowLiveControl) ImGui::BeginDisabled();
         const char* activeModeText = m_proxy->IsSrvActiveModeFull() ? "Full" : "Touch-Only";
         const char* desiredModeText = m_proxy->IsSrvModeFull() ? "Full" : "Touch-Only";
-        ImGui::TextDisabled("Mode: desired=%s active=%s", desiredModeText, activeModeText);
-        ImGui::TextDisabled("Auto-Mode: %s", m_proxy->IsSrvAutoMode() ? "Enabled" : "Disabled");
+        ImGui::TextDisabled("Mode: desired=%s active=%s (restart required)", desiredModeText, activeModeText);
+        ImGui::TextDisabled("Auto-Mode: %s (live apply)", m_proxy->IsSrvAutoMode() ? "Enabled" : "Disabled");
         ImGui::TextDisabled("VHF: %s", m_proxy->IsVhfEnabled() ? "Enabled" : "Disabled");
+        if (ImGui::Button("Apply Global")) {
+            m_proxy->ApplyConfigStoreGlobally();
+        }
+        DrawApplyConfigResultStatus();
+        if (!allowLiveControl) ImGui::EndDisabled();
     }
 #endif
 
