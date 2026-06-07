@@ -9,6 +9,14 @@
 #include <string>
 #include <string_view>
 
+namespace App {
+
+bool ServiceProxy::IsConnected() const {
+    return false;
+}
+
+} // namespace App
+
 namespace {
 
 void Require(bool condition, const char* message) {
