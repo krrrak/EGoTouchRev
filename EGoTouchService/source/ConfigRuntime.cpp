@@ -5,6 +5,7 @@
 #include "TouchPipeline.h"
 #include "StylusPipeline.h"
 #include "config/ConfigBinder.h"
+#include "config/ConfigCatalog.h"
 #include "config/ConfigKeyMap.h"
 #include "config/SchemaValidator.h"
 
@@ -13,9 +14,11 @@
 #include <cmath>
 #include <cstring>
 #include <exception>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace Service {
 namespace {
@@ -205,6 +208,67 @@ bool ConfigRuntime::Initialize(const std::string& configPath, const StartupValid
     auto state = ReadServiceConfigStateFromStoreLocked();
     WriteServiceConfigStateToStoreLocked(state);
     return true;
+}
+
+uint32_t HashBytes(std::span<const uint8_t> bytes) noexcept {
+    uint32_t hash = 2166136261u;
+    for (const uint8_t byte : bytes) {
+        hash ^= byte;
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+ConfigRuntime::ConfigV3Blob ConfigRuntime::BuildCatalogV3Blob() const {
+    Config::ConfigSchemaSnapshot schema;
+    {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        schema = m_schema;
+    }
+
+    Config::ConfigV3CatalogPayload payload{};
+    payload.entries = Config::ConfigCatalogBuilder::fromSnapshot(schema).descriptors();
+    payload.entries.erase(std::remove_if(payload.entries.begin(), payload.entries.end(),
+        [](const Config::ConfigDescriptor& entry) { return entry.keyId == Config::ConfigKeyId::MaxKeyId; }),
+        payload.entries.end());
+
+    const auto schemaBytes = Config::serializeConfigV3Catalog(payload);
+    payload.schemaVersion = HashBytes(schemaBytes);
+    payload.snapshotVersion = 0;
+    auto bytes = Config::serializeConfigV3Catalog(payload);
+    const uint32_t checksum = HashBytes(bytes);
+    return ConfigV3Blob{std::move(bytes), payload.schemaVersion, payload.snapshotVersion, checksum};
+}
+
+ConfigRuntime::ConfigV3Blob ConfigRuntime::BuildSnapshotV3Blob() const {
+    Config::ConfigStore store;
+    Config::ConfigSchemaSnapshot schema;
+    {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        store = m_store;
+        schema = m_schema;
+    }
+
+    Config::ConfigV3SnapshotPayload payload{};
+    auto descriptors = Config::ConfigCatalogBuilder::fromSnapshot(schema).descriptors();
+    for (const auto& descriptor : descriptors) {
+        if (descriptor.keyId == Config::ConfigKeyId::MaxKeyId) continue;
+        Config::ConfigV3SnapshotEntry entry{};
+        entry.keyId = descriptor.keyId;
+        entry.value = store.getOr<Config::ConfigValue>(descriptor.path, descriptor.defaultValue);
+        payload.entries.push_back(std::move(entry));
+    }
+
+    Config::ConfigV3CatalogPayload catalogPayload{};
+    catalogPayload.entries = std::move(descriptors);
+    catalogPayload.entries.erase(std::remove_if(catalogPayload.entries.begin(), catalogPayload.entries.end(),
+        [](const Config::ConfigDescriptor& entry) { return entry.keyId == Config::ConfigKeyId::MaxKeyId; }),
+        catalogPayload.entries.end());
+    payload.schemaVersion = HashBytes(Config::serializeConfigV3Catalog(catalogPayload));
+    payload.snapshotVersion = HashBytes(Config::serializeConfigV3Snapshot(payload));
+    auto bytes = Config::serializeConfigV3Snapshot(payload);
+    const uint32_t checksum = HashBytes(bytes);
+    return ConfigV3Blob{std::move(bytes), payload.schemaVersion, payload.snapshotVersion, checksum};
 }
 
 bool ConfigRuntime::ValidateStartupConfig(const Config::ConfigStore& store, const StartupValidator& validateStartupConfig) const {

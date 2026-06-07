@@ -31,7 +31,16 @@ public:
         Config::ConfigStore pipelineConfig{};
     };
 
+    struct ConfigV3Blob {
+        std::vector<uint8_t> bytes;
+        uint32_t schemaVersion = 0;
+        uint32_t snapshotVersion = 0;
+        uint32_t checksum = 0;
+    };
+
     bool Initialize(const std::string& configPath, const StartupValidator& validateStartupConfig);
+    ConfigV3Blob BuildCatalogV3Blob() const;
+    ConfigV3Blob BuildSnapshotV3Blob() const;
     Config::ConfigStore SnapshotStore() const;
     ServiceConfigState ServiceState() const;
     void WriteServiceState(const ServiceConfigState& config);
