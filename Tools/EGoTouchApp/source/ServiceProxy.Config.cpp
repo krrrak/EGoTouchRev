@@ -493,8 +493,165 @@ void ServiceProxy::SaveConfig() {
     (void)ApplyConfigStoreGlobally();
 }
 
+uint32_t HashBytes(std::span<const uint8_t> bytes) noexcept {
+    uint32_t hash = 2166136261u;
+    for (const uint8_t byte : bytes) {
+        hash ^= byte;
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+std::optional<std::vector<uint8_t>> ServiceProxy::FetchConfigV3Bytes(Ipc::ConfigV3PayloadKind payloadKind) {
+    constexpr uint32_t kMaxBytes = 1024u * 1024u;
+    const uint8_t rawKind = static_cast<uint8_t>(payloadKind);
+    std::vector<uint8_t> bytes;
+    uint32_t schemaVersion = 0;
+    uint32_t snapshotVersion = 0;
+    uint32_t totalBytes = 0;
+    uint32_t checksum = 0;
+    uint32_t offset = 0;
+
+    do {
+        Ipc::ConfigV3PageRequestWire request{};
+        request.payloadKind = rawKind;
+        request.schemaVersion = schemaVersion;
+        request.snapshotVersion = snapshotVersion;
+        request.offset = offset;
+        request.maxBytes = Ipc::ConfigV3PageCapacityBytes();
+
+        const auto resp = payloadKind == Ipc::ConfigV3PayloadKind::Catalog
+            ? m_client.GetConfigCatalogV3Page(request)
+            : m_client.GetConfigSnapshotV3Page(request);
+        if (!resp.success || resp.dataLen < sizeof(Ipc::ConfigV3PageResponseHeaderWire)) {
+            LOG_WARN("App", __func__, "Config", "Config v3 page request failed kind={} offset={} status={}", rawKind, offset, static_cast<unsigned int>(resp.status));
+            return std::nullopt;
+        }
+
+        Ipc::ConfigV3PageResponseHeaderWire header{};
+        std::memcpy(&header, resp.data, sizeof(header));
+        if (!Ipc::IsValidConfigV3PageResponse(header, resp.dataLen) || header.payloadKind != rawKind || header.offset != offset) {
+            LOG_WARN("App", __func__, "Config", "Invalid config v3 page header kind={} offset={}", rawKind, offset);
+            return std::nullopt;
+        }
+        if (offset == 0) {
+            if (header.totalBytes > kMaxBytes) {
+                LOG_WARN("App", __func__, "Config", "Config v3 payload too large kind={} bytes={}", rawKind, header.totalBytes);
+                return std::nullopt;
+            }
+            schemaVersion = header.schemaVersion;
+            snapshotVersion = header.snapshotVersion;
+            totalBytes = header.totalBytes;
+            checksum = header.checksum;
+            bytes.reserve(totalBytes);
+        } else if (header.schemaVersion != schemaVersion || header.snapshotVersion != snapshotVersion ||
+                   header.totalBytes != totalBytes || header.checksum != checksum) {
+            LOG_WARN("App", __func__, "Config", "Config v3 page metadata changed kind={} offset={}", rawKind, offset);
+            return std::nullopt;
+        }
+
+        const auto* page = resp.data + header.headerBytes;
+        bytes.insert(bytes.end(), page, page + header.pageBytes);
+        offset += header.pageBytes;
+        if (header.pageBytes == 0 && offset < totalBytes) {
+            LOG_WARN("App", __func__, "Config", "Config v3 page made no progress kind={} offset={}", rawKind, offset);
+            return std::nullopt;
+        }
+    } while (offset < totalBytes);
+
+    if (bytes.size() != totalBytes || HashBytes(std::span<const uint8_t>(bytes.data(), bytes.size())) != checksum) {
+        LOG_WARN("App", __func__, "Config", "Config v3 payload checksum mismatch kind={} bytes={}", rawKind, bytes.size());
+        return std::nullopt;
+    }
+    return bytes;
+}
+
+bool ServiceProxy::ApplyConfigV3CatalogBytes(const uint8_t* data, size_t size) {
+    try {
+        const auto payload = Config::deserializeConfigV3Catalog(data, size);
+        Config::ConfigCatalog catalog(payload.entries);
+        m_configSchema = Config::BuildSchemaSnapshot(catalog);
+        for (const auto& entry : payload.entries) {
+            if (!entry.path.empty()) {
+                m_configDefaults.set<Config::ConfigValue>(entry.path, entry.defaultValue);
+            }
+        }
+        LOG_INFO("App", __func__, "Config", "Applied config v3 catalog entries={} schemaVersion={} snapshotVersion={}",
+                 payload.entries.size(), payload.schemaVersion, payload.snapshotVersion);
+        return true;
+    } catch (const std::exception& ex) {
+        LOG_WARN("App", __func__, "Config", "Failed to apply config v3 catalog: {}", ex.what());
+        return false;
+    }
+}
+
+bool ServiceProxy::ApplyConfigV3SnapshotBytes(const uint8_t* data, size_t size) {
+    try {
+        const auto payload = Config::deserializeConfigV3Snapshot(data, size);
+        std::unordered_map<Config::ConfigKeyId, std::string> pathByKey;
+        for (const auto& entry : m_configSchema.entries) {
+            if (entry.keyId != Config::ConfigKeyId::MaxKeyId && !entry.yamlPath.empty()) {
+                pathByKey.emplace(entry.keyId, entry.yamlPath);
+            }
+        }
+        size_t applied = 0;
+        size_t dirtySkipped = 0;
+        size_t unknownSkipped = 0;
+        for (const auto& entry : payload.entries) {
+            const auto it = pathByKey.find(entry.keyId);
+            if (it == pathByKey.end()) {
+                ++unknownSkipped;
+                LOG_WARN("App", __func__, "Config", "Skipping config v3 snapshot entry with unknown keyId={}", static_cast<unsigned int>(entry.keyId));
+                continue;
+            }
+            if (m_dirtyConfigPaths.contains(it->second)) {
+                ++dirtySkipped;
+                continue;
+            }
+            m_configStore.set<Config::ConfigValue>(it->second, entry.value);
+            ++applied;
+        }
+        SyncServiceMirrorsFromStore(
+            m_configStore,
+            m_srvDesiredModeFull,
+            m_srvActiveModeFull,
+            m_srvAutoMode,
+            m_srvStylusVhfEnabled,
+            m_srvPenButtonMode,
+            m_srvPenButtonRoute);
+        ApplyConfigStoreToLocalRuntime();
+        LOG_INFO("App", __func__, "Config", "Applied config v3 snapshot entries={} applied={} dirtySkipped={} unknownSkipped={}",
+                 payload.entries.size(), applied, dirtySkipped, unknownSkipped);
+        return true;
+    } catch (const std::exception& ex) {
+        LOG_WARN("App", __func__, "Config", "Failed to apply config v3 snapshot: {}", ex.what());
+        return false;
+    }
+}
+
+bool ServiceProxy::ApplyConfigV3CatalogBytesForTest(const uint8_t* data, size_t size) {
+    return ApplyConfigV3CatalogBytes(data, size);
+}
+
+bool ServiceProxy::ApplyConfigV3SnapshotBytesForTest(const uint8_t* data, size_t size) {
+    return ApplyConfigV3SnapshotBytes(data, size);
+}
+
+bool ServiceProxy::RefreshConfigCatalogV3() {
+    if (!m_client.IsConnected()) return false;
+    const auto bytes = FetchConfigV3Bytes(Ipc::ConfigV3PayloadKind::Catalog);
+    return bytes.has_value() && ApplyConfigV3CatalogBytes(bytes->data(), bytes->size());
+}
+
+bool ServiceProxy::RefreshConfigSnapshotV3() {
+    if (!m_client.IsConnected()) return false;
+    const auto bytes = FetchConfigV3Bytes(Ipc::ConfigV3PayloadKind::Snapshot);
+    return bytes.has_value() && ApplyConfigV3SnapshotBytes(bytes->data(), bytes->size());
+}
+
 void ServiceProxy::RefreshConfigSnapshot() {
     if (!m_client.IsConnected()) return;
+    if (RefreshConfigSnapshotV3()) return;
 
     const auto resp = m_client.GetConfigSnapshot();
     if (resp.success && resp.dataLen >= sizeof(Ipc::ConfigSnapshotWire)) {

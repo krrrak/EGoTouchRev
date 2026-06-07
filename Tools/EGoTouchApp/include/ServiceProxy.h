@@ -117,6 +117,8 @@ public:
     bool HasUnpersistedLiveConfigChanges() const { return m_hasUnpersistedLiveConfigChanges.load(std::memory_order_relaxed); }
     void MarkConfigPathsDirty(const std::vector<std::string>& paths);
     void RefreshConfigSnapshot();
+    bool ApplyConfigV3CatalogBytesForTest(const uint8_t* data, size_t size);
+    bool ApplyConfigV3SnapshotBytesForTest(const uint8_t* data, size_t size);
     // Applies ConfigStore edits to the app-local preview pipelines only.
     // Does not live-apply Service-side pipelines; no-op when runtime config is disabled.
     void ApplyConfigStoreToLocalRuntime();
@@ -183,6 +185,11 @@ private:
     void ClearDynamicDebugState();
     DvrRuntimeConfigSnapshot CaptureRuntimeConfigSnapshot() const;
     void InitConfigSchema();
+    bool RefreshConfigCatalogV3();
+    bool RefreshConfigSnapshotV3();
+    std::optional<std::vector<uint8_t>> FetchConfigV3Bytes(Ipc::ConfigV3PayloadKind payloadKind);
+    bool ApplyConfigV3CatalogBytes(const uint8_t* data, size_t size);
+    bool ApplyConfigV3SnapshotBytes(const uint8_t* data, size_t size);
 
     static constexpr const wchar_t* kSharedMemName =
         L"Global\\EGoTouchSharedFrame";

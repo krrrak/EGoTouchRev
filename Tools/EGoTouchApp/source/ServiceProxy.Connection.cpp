@@ -45,6 +45,9 @@ bool ServiceProxy::Connect() {
         return false;
     }
 
+    if (!RefreshConfigCatalogV3()) {
+        LOG_WARN("App", __func__, "Config", "Config v3 catalog unavailable; keeping app-local schema fallback.");
+    }
     RefreshConfigSnapshot();
 
     if (!RefreshDynamicDebugSchema()) {
