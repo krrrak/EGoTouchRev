@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ConfigRuntime.h"
 #include "ServiceConfigCore.h"
 
 #include <cstddef>
@@ -54,6 +55,7 @@ private:
 
     ServiceConfigState m_configState{};
     ServiceMode m_runtimeMode = ServiceMode::Full;
+    ConfigRuntime m_configRuntime;
 
     std::unique_ptr<DeviceRuntime> m_deviceRuntime;
     std::unique_ptr<Impl> m_impl;
@@ -72,8 +74,6 @@ private:
     void BuildDebugSchema();
 
     bool InitializeConfigStores(const std::string& configPath);
-    ServiceConfigState ReadServiceConfigStateFromStore() const;
-    void WriteServiceConfigStateToStore(const ServiceConfigState& config);
     void ApplyServiceConfigToRuntime(const ServiceConfigState& config);
     ReloadServiceConfigResult HandleReloadServiceConfig(const ServiceConfigState& reloadedConfig);
     bool ValidateStartupConfig(const Config::ConfigStore& store) const;

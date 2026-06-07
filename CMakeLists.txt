@@ -331,13 +331,17 @@ ego_copy_config_to_output(EGoTouchApp)
 set(SERVICE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/EGoTouchService")
 
 add_library(EGoTouchServiceCore STATIC
+    "${SERVICE_ROOT}/source/ConfigRuntime.cpp"
     "${SERVICE_ROOT}/source/ServiceConfigCore.cpp"
     "${SERVICE_ROOT}/source/ServiceEntryCore.cpp"
 )
 target_include_directories(EGoTouchServiceCore PUBLIC
     "${SERVICE_ROOT}/include"
 )
-target_link_libraries(EGoTouchServiceCore PUBLIC Common advapi32)
+target_compile_definitions(EGoTouchServiceCore PUBLIC
+    EGOTOUCH_CONFIG_ENABLED=${EGO_SOLVERS_RUNTIME_CONFIG_ENABLED}
+)
+target_link_libraries(EGoTouchServiceCore PUBLIC Common Solvers advapi32)
 
 add_executable(EGoTouchService
     "${SERVICE_ROOT}/source/ServiceEntry.cpp"
@@ -409,6 +413,21 @@ if (EGO_BUILD_TESTS)
         EGoTouchService/Host/tests/SystemStateMonitorNamedEventTest.cpp
     )
     target_link_libraries(HostSystemStateMonitorTest PRIVATE Host Common)
+
+    add_executable(ConfigRuntimeTest
+        EGoTouchService/tests/unit/ConfigRuntimeTest.cpp
+        "${SERVICE_ROOT}/source/ConfigRuntime.cpp"
+        "${SERVICE_ROOT}/source/ServiceConfigCore.cpp"
+    )
+    target_include_directories(ConfigRuntimeTest PRIVATE "${SERVICE_ROOT}/include")
+    target_compile_definitions(ConfigRuntimeTest PRIVATE EGOTOUCH_CONFIG_ENABLED=0)
+    target_link_libraries(ConfigRuntimeTest PRIVATE IPCCore Common Solvers)
+    add_test(NAME ConfigRuntimeTest COMMAND ConfigRuntimeTest)
+    set_tests_properties(ConfigRuntimeTest PROPERTIES
+        LABELS "service;config;unit;device-free"
+        TIMEOUT 10
+        WORKING_DIRECTORY "$<TARGET_FILE_DIR:ConfigRuntimeTest>"
+    )
 
     add_subdirectory(EGoTouchService/Solvers/tests)
 
