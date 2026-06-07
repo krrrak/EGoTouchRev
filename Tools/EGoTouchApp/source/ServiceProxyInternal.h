@@ -31,4 +31,6 @@ DvrRuntimeConfigSnapshot BuildRuntimeConfigSnapshotFromState(
     const Solvers::TouchPipeline& touchPipeline,
     const Solvers::StylusPipeline& stylusPipeline);
 
+Config::ConfigSchemaSnapshot BuildServiceProxyConfigSchemaSnapshotForTest();
+
 } // namespace App

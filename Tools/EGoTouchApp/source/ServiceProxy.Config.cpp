@@ -317,6 +317,23 @@ void ServiceProxy::InitConfigSchema() {
     m_configSchema = Config::BuildMergedSchema(m_configDefaults, binder);
 }
 
+Config::ConfigSchemaSnapshot BuildServiceProxyConfigSchemaSnapshotForTest() {
+    Config::ConfigBinder binder;
+    ServiceSchemaState serviceSchemaState;
+    Solvers::TouchPipeline touchPipeline;
+    Solvers::StylusPipeline stylusPipeline;
+
+    RegisterServiceConfigSchemaBindings(binder, serviceSchemaState);
+    touchPipeline.registerBindings(binder);
+    stylusPipeline.registerBindings(binder);
+    Config::registerRuntimeKeyMappings(binder);
+
+    Config::ConfigStore defaults;
+    PopulateServiceDefaults(defaults);
+    binder.writeDefaults(defaults);
+    return Config::BuildMergedSchema(defaults, binder);
+}
+
 void ServiceProxy::ApplyConfigStoreToLocalRuntime() {
     m_pipeline.applyConfig(m_configStore);
     m_stylusPipeline.applyConfig(m_configStore);
@@ -376,17 +393,17 @@ bool ServiceProxy::ApplyConfigStoreGlobally() {
     std::vector<std::string> dirtyPaths(m_dirtyConfigPaths.begin(), m_dirtyConfigPaths.end());
     std::sort(dirtyPaths.begin(), dirtyPaths.end());
     for (const auto& path : dirtyPaths) {
-        auto keyId = Config::tryKeyIdForPath(path);
         const auto schemaIt = std::find_if(m_configSchema.entries.begin(), m_configSchema.entries.end(),
             [&path](const Config::ConfigSchemaEntry& entry) { return entry.yamlPath == path; });
-        if (!keyId.has_value() || !m_configStore.has(path) ||
-            schemaIt == m_configSchema.entries.end() || !IsLivePatchableEntry(*schemaIt)) {
+        if (schemaIt == m_configSchema.entries.end() ||
+            schemaIt->keyId == Config::ConfigKeyId::MaxKeyId ||
+            !m_configStore.has(path) || !IsLivePatchableEntry(*schemaIt)) {
             ++skippedKeys;
             continue;
         }
 
         const Config::ConfigValue value = m_configStore.get<Config::ConfigValue>(path);
-        patch.entries.push_back(BuildTlvEntry(*keyId, value));
+        patch.entries.push_back(BuildTlvEntry(schemaIt->keyId, value));
         appliedPaths.push_back(path);
     }
 

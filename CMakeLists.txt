@@ -526,6 +526,22 @@ if (EGO_BUILD_TESTS)
     )
     target_link_libraries(EGoTouchApp_DiagnosticsWorkbenchLogicTest PRIVATE DVRCore Solvers Common)
 
+    add_executable(EGoTouchApp_ServiceProxyCatalogSchemaTest
+        Tools/EGoTouchApp/tests/ServiceProxyCatalogSchemaTest.cpp
+        Tools/EGoTouchApp/source/ServiceProxy.Config.cpp
+        Tools/EGoTouchApp/source/ServiceProxy.cpp
+    )
+    target_compile_definitions(EGoTouchApp_ServiceProxyCatalogSchemaTest PRIVATE
+        EGOTOUCH_CONFIG_ENABLED=${EGO_SOLVERS_RUNTIME_CONFIG_ENABLED}
+    )
+    target_include_directories(EGoTouchApp_ServiceProxyCatalogSchemaTest PRIVATE
+        "${APP_ROOT}/include"
+        "${APP_ROOT}/source"
+        "${IPCCORE_ROOT}/include/Ipc"
+    )
+    target_link_libraries(EGoTouchApp_ServiceProxyCatalogSchemaTest PRIVATE DVRCore Solvers Common IPCCore)
+    ego_copy_config_to_output(EGoTouchApp_ServiceProxyCatalogSchemaTest)
+
 
     add_subdirectory("${DEVICE_ROOT}/tests")
 
@@ -588,6 +604,11 @@ if (EGO_BUILD_TESTS)
         LABELS "App;EGoTouchApp;DiagnosticsWorkbench;PureLogic"
         TIMEOUT 30
         WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME EGoTouchApp.ServiceProxyCatalogSchemaTest COMMAND EGoTouchApp_ServiceProxyCatalogSchemaTest)
+    set_tests_properties(EGoTouchApp.ServiceProxyCatalogSchemaTest PROPERTIES
+        LABELS "App;EGoTouchApp;ServiceProxy;Config;PureLogic"
+        TIMEOUT 30
+        WORKING_DIRECTORY "$<TARGET_FILE_DIR:EGoTouchApp_ServiceProxyCatalogSchemaTest>")
 
     add_test(NAME ServiceEntryArgumentRoutingTest COMMAND ServiceEntryArgumentRoutingTest)
     add_test(NAME ServiceHostLifecycleFakeIntegrationTest COMMAND ServiceHostLifecycleFakeIntegrationTest)
