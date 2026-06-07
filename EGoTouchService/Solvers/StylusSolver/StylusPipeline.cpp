@@ -9,33 +9,6 @@ namespace Solvers {
 
 void StylusPipeline::registerBindings(Config::ConfigBinder& binder) {
     using Config::ConfigRange;
-
-    // ── HPP2 ──
-    binder.bindSchema("stylus.hpp2.enabled", Config::ConfigValue(true), "bool", {}, "HPP2 pipeline enable");
-    binder.bindSchema("stylus.hpp2.sensor_tx_count", Config::ConfigValue(static_cast<int32_t>(60)), "int", ConfigRange{1.0, 100.0}, "HPP2 sensor TX count");
-    binder.bindSchema("stylus.hpp2.sensor_rx_count", Config::ConfigValue(static_cast<int32_t>(40)), "int", ConfigRange{1.0, 100.0}, "HPP2 sensor RX count");
-    binder.bindSchema("stylus.hpp2.cmf_window_radius", Config::ConfigValue(static_cast<int32_t>(6)), "int", ConfigRange{0.0, 32.0}, "HPP2 CMF window radius");
-    // HPP2 runtime configuration is intentionally disabled; keep keys as schema-only compatibility metadata.
-    binder.bindSchema("stylus.hpp2.raw_abnormal_line_sum_threshold", Config::ConfigValue(static_cast<int32_t>(30000)), "int", ConfigRange{0.0, 2147483647.0}, "HPP2 raw abnormal line sum threshold");
-    binder.bindSchema("stylus.hpp2.raw_abnormal_energy_ratio_threshold", Config::ConfigValue(static_cast<int32_t>(200)), "int", ConfigRange{0.0, 65535.0}, "HPP2 raw abnormal energy ratio threshold");
-    binder.bindSchema("stylus.hpp2.cmn_abnormal_sum_threshold", Config::ConfigValue(static_cast<int32_t>(9000)), "int", ConfigRange{0.0, 2147483647.0}, "HPP2 CMN abnormal sum threshold");
-    binder.bindSchema("stylus.hpp2.cmn_abnormal_min_threshold", Config::ConfigValue(static_cast<int32_t>(2500)), "int", ConfigRange{0.0, 65535.0}, "HPP2 CMN abnormal min threshold");
-    binder.bindSchema("stylus.hpp2.charger_noise_clear_floor", Config::ConfigValue(static_cast<int32_t>(20)), "int", ConfigRange{1.0, 65535.0}, "HPP2 charger noise clear floor");
-    binder.bindSchema("stylus.hpp2.charger_noise_ratio_threshold", Config::ConfigValue(static_cast<int32_t>(299)), "int", ConfigRange{0.0, 65535.0}, "HPP2 charger noise ratio threshold");
-    binder.bindSchema("stylus.hpp2.charger_noise_sum_threshold", Config::ConfigValue(static_cast<int32_t>(400)), "int", ConfigRange{0.0, 2147483647.0}, "HPP2 charger noise sum threshold");
-    binder.bindSchema("stylus.hpp2.charger_noise_max_sample_threshold", Config::ConfigValue(static_cast<int32_t>(200)), "int", ConfigRange{0.0, 65535.0}, "HPP2 charger noise max sample threshold");
-    binder.bindSchema("stylus.hpp2.charger_noise_abnormal_channel_threshold", Config::ConfigValue(static_cast<int32_t>(2)), "int", ConfigRange{0.0, 255.0}, "HPP2 charger noise abnormal channel threshold");
-    binder.bindSchema("stylus.hpp2.charger_noise_peak_protect_radius", Config::ConfigValue(static_cast<int32_t>(2)), "int", ConfigRange{0.0, 65535.0}, "HPP2 charger noise peak protect radius");
-    binder.bindSchema("stylus.hpp2.charger_noise_min_raw_sample", Config::ConfigValue(static_cast<int32_t>(50)), "int", ConfigRange{0.0, 65535.0}, "HPP2 charger noise min raw sample");
-    binder.bindSchema("stylus.hpp2.peak_signal_floor", Config::ConfigValue(static_cast<int32_t>(250)), "int", ConfigRange{0.0, 65535.0}, "HPP2 peak signal floor");
-    binder.bindSchema("stylus.hpp2.peak_search_neighbor_dist", Config::ConfigValue(static_cast<int32_t>(2)), "int", ConfigRange{1.0, 16.0}, "HPP2 peak search neighbor distance");
-    binder.bindSchema("stylus.hpp2.peak_min_width", Config::ConfigValue(static_cast<int32_t>(2)), "int", ConfigRange{1.0, 100.0}, "HPP2 peak min width");
-    binder.bindSchema("stylus.hpp2.peak_max_width", Config::ConfigValue(static_cast<int32_t>(20)), "int", ConfigRange{1.0, 100.0}, "HPP2 peak max width");
-    binder.bindSchema("stylus.hpp2.pressure_edge_enter_threshold", Config::ConfigValue(static_cast<int32_t>(1500)), "int", ConfigRange{0.0, 65535.0}, "HPP2 pressure edge enter threshold");
-    binder.bindSchema("stylus.hpp2.pressure_edge_exit_threshold", Config::ConfigValue(static_cast<int32_t>(3000)), "int", ConfigRange{0.0, 65535.0}, "HPP2 pressure edge exit threshold");
-    binder.bindSchema("stylus.hpp2.pressure_delta_normal", Config::ConfigValue(static_cast<int32_t>(1024)), "int", ConfigRange{0.0, 65535.0}, "HPP2 pressure delta normal");
-    binder.bindSchema("stylus.hpp2.pressure_delta_tight", Config::ConfigValue(static_cast<int32_t>(64)), "int", ConfigRange{0.0, 65535.0}, "HPP2 pressure delta tight");
-    binder.bindSchema("stylus.hpp2.use_tight_pressure_delta", Config::ConfigValue(false), "bool", {}, "HPP2 use tight pressure delta");
     // ── Frame Parser ──
     binder.bind("stylus.sp.frame_parser_enabled", &Stylus::StylusFrameParser::m_enabled, m_frameParser,
                 true, {}, "Frame parser enable");

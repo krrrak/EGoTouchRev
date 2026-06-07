@@ -58,25 +58,40 @@ ImVec4 StatusColor(bool ok) {
     return ok ? GoodColor() : BadColor();
 }
 
+void DrawApplyConfigResultStatus(const ApplyConfigResult& result) {
+    switch (result.status) {
+    case ApplyConfigStatus::NotAttempted:
+        ImGui::TextDisabled("Apply Global not run yet.");
+        break;
+    case ApplyConfigStatus::NoChanges:
+        ImGui::TextDisabled("No pending live-applicable config changes.");
+        break;
+    case ApplyConfigStatus::LiveApplyFailed:
+        ImGui::TextColored(BadColor(), "Live apply failed.");
+        break;
+    case ApplyConfigStatus::LiveApplied:
+        if (result.persistAttempted) {
+            if (result.persisted) {
+                ImGui::TextColored(GoodColor(), "Live applied and persisted.");
+            } else {
+                ImGui::TextColored(WarnColor(), "Live applied; persist failed (status=%u).", static_cast<unsigned int>(result.persistStatus));
+            }
+        } else {
+            ImGui::TextColored(GoodColor(), "Live applied.");
+        }
+        if (result.unpersistedLiveChanges) {
+            ImGui::TextColored(WarnColor(), "Unpersisted live config changes remain.");
+        }
+        break;
+    }
+}
+
 ImVec4 FpsColor(int fps) {
     switch (ClassifyFps(fps)) {
     case FpsStatusClass::Good: return GoodColor();
     case FpsStatusClass::Warn: return WarnColor();
     case FpsStatusClass::Bad:
     default: return BadColor();
-    }
-}
-
-const char* IpcStatusText(Ipc::IpcStatusCode status) {
-    switch (status) {
-    case Ipc::IpcStatusCode::Ok: return "Ok";
-    case Ipc::IpcStatusCode::UnsupportedCommand: return "UnsupportedCommand";
-    case Ipc::IpcStatusCode::InvalidRequest: return "InvalidRequest";
-    case Ipc::IpcStatusCode::InvalidState: return "InvalidState";
-    case Ipc::IpcStatusCode::NotFound: return "NotFound";
-    case Ipc::IpcStatusCode::PermissionDenied: return "PermissionDenied";
-    case Ipc::IpcStatusCode::InternalError: return "InternalError";
-    default: return "Unknown";
     }
 }
 
@@ -87,25 +102,7 @@ void DiagnosticsWorkbench::DrawApplyConfigResultStatus() const {
         return;
     }
 
-    const ApplyConfigResult result = m_proxy->GetLastApplyConfigResult();
-    if (result.liveApplied) {
-        ImGui::TextColored(GoodColor(), "Apply Global: live apply succeeded.");
-        if (result.persistAttempted && result.persisted) {
-            ImGui::TextColored(GoodColor(), "Persist: saved by Service.");
-        } else if (result.persistAttempted && result.persistStatus == Ipc::IpcStatusCode::UnsupportedCommand) {
-            ImGui::TextColored(WarnColor(), "Persist: unsupported by this Service/build; live changes are runtime-only.");
-        } else if (result.persistAttempted) {
-            ImGui::TextColored(WarnColor(), "Persist: failed (%s); live changes are not saved.", IpcStatusText(result.persistStatus));
-        } else if (result.unpersistedLiveChanges) {
-            ImGui::TextColored(WarnColor(), "Persist: not attempted; live changes are runtime-only.");
-        }
-    } else if (result.persistAttempted && result.persisted) {
-        ImGui::TextColored(GoodColor(), "Apply Global: persisted by Service.");
-    } else if (result.persistAttempted && result.persistStatus == Ipc::IpcStatusCode::UnsupportedCommand) {
-        ImGui::TextColored(WarnColor(), "Apply Global: persistence unsupported by this Service/build.");
-    } else {
-        ImGui::TextColored(WarnColor(), "Apply Global: no successful apply yet or last apply failed.");
-    }
+    ::App::DrawApplyConfigResultStatus(m_proxy->GetLastApplyConfigResult());
 }
 
 void DiagnosticsWorkbench::DrawInspectorPanel() {
@@ -606,7 +603,6 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
 #endif
             const auto& schema = m_proxy->GetConfigSchemaSnapshot();
             auto modules = CollectModuleTagsWithPrefix(schema, "Stylus /");
-            modules.erase(std::remove(modules.begin(), modules.end(), std::string{"Stylus / HPP2"}), modules.end());
             if (modules.empty()) {
                 ImGui::TextDisabled("No ConfigStore/ConfigBinder stylus parameters are registered.");
             } else if (ImGui::BeginTabBar("StylusConfigTabs")) {

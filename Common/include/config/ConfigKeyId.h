@@ -30,31 +30,7 @@ enum class ConfigKeyId : uint16_t {
     TouchBaselineRecoveryMaxStep  = 0x0106,
     TouchFrameParserEnabled       = 0x0107,
 
-    // ── Stylus: HPP2 (0x0200-0x022F) ──
-    StylusHpp2Enabled                     = 0x0200,
-    StylusHpp2SensorTxCount               = 0x0201,
-    StylusHpp2SensorRxCount               = 0x0202,
-    StylusHpp2CmfWindowRadius             = 0x0203,
-    StylusHpp2RawAbnormalLineSumThreshold = 0x0204,
-    StylusHpp2RawAbnormalEnergyRatioThreshold = 0x0205,
-    StylusHpp2CmnAbnormalSumThreshold     = 0x0206,
-    StylusHpp2CmnAbnormalMinThreshold     = 0x0207,
-    StylusHpp2ChargerNoiseClearFloor      = 0x0208,
-    StylusHpp2ChargerNoiseRatioThreshold  = 0x0209,
-    StylusHpp2ChargerNoiseSumThreshold    = 0x020A,
-    StylusHpp2ChargerNoiseMaxSampleThreshold  = 0x020B,
-    StylusHpp2ChargerNoiseAbnormalChannelThreshold = 0x020C,
-    StylusHpp2ChargerNoisePeakProtectRadius = 0x020D,
-    StylusHpp2ChargerNoiseMinRawSample    = 0x020E,
-    StylusHpp2PeakSignalFloor             = 0x020F,
-    StylusHpp2PeakSearchNeighborDist      = 0x0210,
-    StylusHpp2PeakMinWidth                = 0x0211,
-    StylusHpp2PeakMaxWidth                = 0x0212,
-    StylusHpp2PressureEdgeEnterThreshold  = 0x0213,
-    StylusHpp2PressureEdgeExitThreshold   = 0x0214,
-    StylusHpp2PressureDeltaNormal         = 0x0215,
-    StylusHpp2PressureDeltaTight          = 0x0216,
-    StylusHpp2UseTightPressureDelta       = 0x0217,
+    // ── Stylus: reserved legacy HPP2 config key range (0x0200-0x022F) ──
 
     // ── Stylus: SP (0x0230-0x027F) ──
     StylusSpFrameParserEnabled            = 0x0230,

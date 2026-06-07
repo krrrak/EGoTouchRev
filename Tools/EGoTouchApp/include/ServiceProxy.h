@@ -17,6 +17,7 @@
 #include "config/ConfigStore.h"
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -37,7 +38,15 @@ struct TouchPipelineModuleEnableState {
     bool gestureEnabled = true;
 };
 
+enum class ApplyConfigStatus : uint8_t {
+    NotAttempted = 0,
+    NoChanges,
+    LiveApplyFailed,
+    LiveApplied,
+};
+
 struct ApplyConfigResult {
+    ApplyConfigStatus status = ApplyConfigStatus::NotAttempted;
     bool liveApplied = false;
     bool persistAttempted = false;
     bool persisted = false;
@@ -188,6 +197,7 @@ private:
     Config::ConfigStore m_configStore;
     Config::ConfigStore m_configDefaults;
     std::unordered_set<std::string> m_dirtyConfigPaths;
+    std::atomic<ApplyConfigStatus> m_lastApplyConfigStatus{ApplyConfigStatus::NotAttempted};
     std::atomic<bool> m_lastApplyConfigLiveApplied{false};
     std::atomic<bool> m_lastApplyConfigPersistAttempted{false};
     std::atomic<bool> m_lastApplyConfigPersisted{false};

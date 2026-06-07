@@ -343,6 +343,7 @@ void ServiceProxy::MarkConfigPathsDirty(const std::vector<std::string>& paths) {
 
 ApplyConfigResult ServiceProxy::GetLastApplyConfigResult() const {
     ApplyConfigResult result{};
+    result.status = m_lastApplyConfigStatus.load(std::memory_order_relaxed);
     result.liveApplied = m_lastApplyConfigLiveApplied.load(std::memory_order_relaxed);
     result.persistAttempted = m_lastApplyConfigPersistAttempted.load(std::memory_order_relaxed);
     result.persisted = m_lastApplyConfigPersisted.load(std::memory_order_relaxed);
@@ -352,14 +353,19 @@ ApplyConfigResult ServiceProxy::GetLastApplyConfigResult() const {
 }
 
 bool ServiceProxy::ApplyConfigStoreGlobally() {
-    m_lastApplyConfigLiveApplied.store(false, std::memory_order_relaxed);
-    m_lastApplyConfigPersistAttempted.store(false, std::memory_order_relaxed);
-    m_lastApplyConfigPersisted.store(false, std::memory_order_relaxed);
-    m_lastApplyConfigPersistStatus.store(static_cast<uint8_t>(Ipc::IpcStatusCode::InternalError), std::memory_order_relaxed);
+    auto setApplyStatus = [this](ApplyConfigStatus status) {
+        m_lastApplyConfigStatus.store(status, std::memory_order_relaxed);
+        m_lastApplyConfigLiveApplied.store(status == ApplyConfigStatus::LiveApplied, std::memory_order_relaxed);
+        m_lastApplyConfigPersistAttempted.store(false, std::memory_order_relaxed);
+        m_lastApplyConfigPersisted.store(false, std::memory_order_relaxed);
+        m_lastApplyConfigPersistStatus.store(static_cast<uint8_t>(Ipc::IpcStatusCode::InternalError), std::memory_order_relaxed);
+    };
 #if !EGOTOUCH_CONFIG_ENABLED
+    setApplyStatus(ApplyConfigStatus::LiveApplyFailed);
     return false;
 #endif
     if (!IsLiveControlAllowed() || !m_client.IsConnected()) {
+        setApplyStatus(ApplyConfigStatus::LiveApplyFailed);
         LOG_WARN("App", __func__, "IPC", "Global config apply skipped; live control is not allowed or IPC is disconnected.");
         return false;
     }
@@ -385,19 +391,22 @@ bool ServiceProxy::ApplyConfigStoreGlobally() {
     }
 
     if (patch.entries.empty()) {
-        LOG_WARN("App", __func__, "Config", "Global config apply produced no TLV entries; skippedKeys={}", skippedKeys);
-        return false;
+        setApplyStatus(ApplyConfigStatus::NoChanges);
+        LOG_INFO("App", __func__, "Config", "Global config apply produced no TLV entries; skippedKeys={}", skippedKeys);
+        return true;
     }
 
     std::vector<uint8_t> payload;
     try {
         payload = Config::serializePatch(patch);
     } catch (const std::exception& ex) {
+        setApplyStatus(ApplyConfigStatus::LiveApplyFailed);
         LOG_WARN("App", __func__, "Config", "Failed to serialize global config patch: {}", ex.what());
         return false;
     }
 
     if (payload.size() > Ipc::kConfigTlvMaxPayloadBytes) {
+        setApplyStatus(ApplyConfigStatus::LiveApplyFailed);
         LOG_WARN("App", __func__, "IPC", "Global config patch too large: {} bytes", payload.size());
         return false;
     }
@@ -428,12 +437,14 @@ bool ServiceProxy::ApplyConfigStoreGlobally() {
 
         applyResp = m_client.ApplyConfigTlvChunk(chunk);
         if (!applyResp.success) {
+            setApplyStatus(ApplyConfigStatus::LiveApplyFailed);
             LOG_WARN("App", __func__, "IPC", "ApplyConfigTlvChunk failed with status={} offset={}", static_cast<unsigned int>(applyResp.status), offset);
             return false;
         }
         offset += take;
     }
 
+    m_lastApplyConfigStatus.store(ApplyConfigStatus::LiveApplied, std::memory_order_relaxed);
     m_lastApplyConfigLiveApplied.store(true, std::memory_order_relaxed);
 
     const auto persistResp = m_client.PersistConfig();
