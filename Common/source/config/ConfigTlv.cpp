@@ -1,5 +1,6 @@
 #include "config/ConfigTlv.h"
 
+#include "config/ConfigKeyMap.h"
 #include "Logger.h"
 
 #include <limits>
@@ -56,7 +57,7 @@ bool readUint8(const uint8_t* data, size_t size, size_t& offset, uint8_t& value)
 
 bool isKnownKeyId(ConfigKeyId keyId)
 {
-    return static_cast<uint16_t>(keyId) < static_cast<uint16_t>(ConfigKeyId::MaxKeyId);
+    return tryPathForKeyId(keyId).has_value();
 }
 
 bool isKnownValueType(ConfigValueType valueType)
@@ -236,6 +237,9 @@ ConfigTlvParseResult tryDeserializePatch(const uint8_t* data, size_t size)
         return fail(ConfigTlvParseStatus::UnsupportedVersion, 0, 0, version, 0);
     }
     if (entryCount == 0) {
+        if (offset != size) {
+            return fail(ConfigTlvParseStatus::TrailingBytes, offset);
+        }
         return fail(ConfigTlvParseStatus::EmptyPatch, offset);
     }
 

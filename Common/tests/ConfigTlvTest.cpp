@@ -76,6 +76,10 @@ int main() {
     AppendEntry(unknownKey, static_cast<uint16_t>(ConfigKeyId::MaxKeyId), static_cast<uint8_t>(ConfigValueType::Bool), "true");
     RequireStatus(unknownKey, ConfigTlvParseStatus::UnknownKeyId, "unknown key is structured");
 
+    auto unmappedKey = Header(1, 1);
+    AppendEntry(unmappedKey, 0x00FEu, static_cast<uint8_t>(ConfigValueType::Bool), "true");
+    RequireStatus(unmappedKey, ConfigTlvParseStatus::UnknownKeyId, "unmapped key below MaxKeyId is structured");
+
     auto unknownType = Header(1, 1);
     AppendEntry(unknownType, static_cast<uint16_t>(ConfigKeyId::SvcAutoMode), 0x7Fu, "true");
     RequireStatus(unknownType, ConfigTlvParseStatus::UnknownValueType, "unknown value type is structured");
@@ -87,6 +91,10 @@ int main() {
 
     auto empty = Header(1, 0);
     RequireStatus(empty, ConfigTlvParseStatus::EmptyPatch, "empty patch is structured");
+
+    auto emptyTrailing = Header(1, 0);
+    emptyTrailing.push_back(0xEE);
+    RequireStatus(emptyTrailing, ConfigTlvParseStatus::TrailingBytes, "empty patch trailing bytes are structured");
 
     auto truncatedEntry = Header(1, 1);
     AppendU16(truncatedEntry, static_cast<uint16_t>(ConfigKeyId::SvcAutoMode));
