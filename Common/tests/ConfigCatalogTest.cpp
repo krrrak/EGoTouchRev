@@ -202,6 +202,22 @@ void TestBinderDefaultsCompatibilityAndUnknownRuntimePath()
     Require(sawCurrentRuntimeValue, "BuildMergedSchema should preserve binder current value compatibility");
 }
 
+void TestIirRenamedKeysKeepLegacyAliases()
+{
+    Require(Config::tryPathForKeyId(Config::ConfigKeyId::StylusSpIirCoefLowHover).value_or("") ==
+                "stylus.sp.iir_coef_low_hover",
+            "hover low coefficient should expose the canonical renamed path");
+    Require(Config::tryPathForKeyId(Config::ConfigKeyId::StylusSpIirCoefLowWriting).value_or("") ==
+                "stylus.sp.iir_coef_low_writing",
+            "writing low coefficient should expose the canonical renamed path");
+    Require(Config::tryKeyIdForPath("stylus.sp.iir_coef_low_in_band").value_or(Config::ConfigKeyId::MaxKeyId) ==
+                Config::ConfigKeyId::StylusSpIirCoefLowHover,
+            "legacy in-band path should resolve to the hover key id");
+    Require(Config::tryKeyIdForPath("stylus.sp.iir_coef_low_edge").value_or(Config::ConfigKeyId::MaxKeyId) ==
+                Config::ConfigKeyId::StylusSpIirCoefLowWriting,
+            "legacy edge path should resolve to the writing key id");
+}
+
 } // namespace
 
 int main()
@@ -211,6 +227,7 @@ int main()
         TestRoundtripAndStableSort();
         TestConfigV3PayloadSerialization();
         TestBinderDefaultsCompatibilityAndUnknownRuntimePath();
+        TestIirRenamedKeysKeepLegacyAliases();
         std::cout << "[TEST] CommonConfigCatalogTest passed.\n";
         return 0;
     } catch (const std::exception& ex) {

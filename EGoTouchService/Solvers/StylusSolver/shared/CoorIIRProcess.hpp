@@ -12,15 +12,15 @@ public:
     bool m_enabled = true;
 
     // ── IIR coefficient selection (GetIIRCoef equivalent) ──
-    // In-band mode params (edge NOT active)
-    int32_t m_coefLowInBand = 12;     // asa[0xA5E]
-    int32_t m_coefHighInBand = 6;     // asa[0xA5F]
-    int32_t m_speedTholdInBand = 20;  // 0x14
+    // Hover mode params (no pressure)
+    int32_t m_coefLowHover = 12;     // asa[0xA5E]
+    int32_t m_coefHighHover = 6;     // asa[0xA5F]
+    int32_t m_speedTholdHover = 20;  // 0x14
 
-    // Edge mode params (edge active)
-    int32_t m_coefLowEdge = 6;        // asa[0xA5C]
-    int32_t m_coefHighEdge = 18;      // asa[0xA5D]
-    int32_t m_speedTholdEdge = 10;    // 0x0A
+    // Writing mode params (has pressure)
+    int32_t m_coefLowWriting = 6;        // asa[0xA5C]
+    int32_t m_coefHighWriting = 18;      // asa[0xA5D]
+    int32_t m_speedTholdWriting = 10;    // 0x0A
 
     int32_t m_speedMax = 140;  // 0xCD — speed value at which high coef is fully engaged
     int32_t m_maxCoef = 32;    // asa[0xA60] — denominator in IIR formula
@@ -35,7 +35,7 @@ public:
         m_prevFiltY = 0;
         m_prevInRange = false;
         m_frameCount = 0;
-        m_currentCoef = m_coefLowInBand;
+        m_currentCoef = m_coefLowHover;
         m_counterC = 0;
         m_counter8 = 0;
         m_counterA = 0;
@@ -108,27 +108,27 @@ private:
     int m_counter8 = 0;
     int m_counterA = 0;
 
-    inline uint16_t SelectCoef(int speedValue, bool writingMode, bool peakOnEdge) const {
+    inline uint16_t SelectCoef(int speedValue, bool writingMode, bool edgeActive) const {
         int32_t coefLow;
         int32_t coefHigh;
         int32_t speedThreshold;
 
         if (!writingMode) {
-            // Hover (no pressure) uses In-band params
-            coefLow = m_coefLowInBand;
-            coefHigh = m_coefHighInBand;
-            speedThreshold = m_speedTholdInBand;
+            // Hover (no pressure) uses hover params
+            coefLow = m_coefLowHover;
+            coefHigh = m_coefHighHover;
+            speedThreshold = m_speedTholdHover;
         } else {
-            // Writing (has pressure) uses Edge params
-            coefLow = m_coefLowEdge;
-            coefHigh = m_coefHighEdge;
-            speedThreshold = m_speedTholdEdge;
+            // Writing (has pressure) uses writing params
+            coefLow = m_coefLowWriting;
+            coefHigh = m_coefHighWriting;
+            speedThreshold = m_speedTholdWriting;
         }
 
-        // Peak-on-edge overrides coefficients
-        if (peakOnEdge) {
-            coefHigh = m_coefHighInBand >> 1; // 16 >> 1 = 8
-            coefLow = m_coefLowInBand >> 1;   // 2 >> 1 = 1
+        // True coordinate edge is an overlay; TSACore derives it from hover coefficients.
+        if (edgeActive) {
+            coefHigh = m_coefHighHover >> 1; // 16 >> 1 = 8
+            coefLow = m_coefLowHover >> 1;   // 2 >> 1 = 1
         }
 
         uint16_t selected;

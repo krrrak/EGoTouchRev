@@ -47,12 +47,12 @@ stylus:
     coor_revise_factor_dim2: 5                # 0..255 CoorRevise Factor Dim2
     coor_speed_enabled: true                  # Coor Speed Enabled
     iir_filter_enabled: true                  # IIR Filter Enabled
-    iir_coef_low_in_band: 2                   # 0..255 IIR Coef Low In-Band
-    iir_coef_high_in_band: 16                 # 0..255 IIR Coef High In-Band
-    iir_speed_thold_in_band: 20               # 0..255 IIR Speed Thold In-Band
-    iir_coef_low_edge: 6                      # 0..255 IIR Coef Low Edge
-    iir_coef_high_edge: 18                    # 0..255 IIR Coef High Edge
-    iir_speed_thold_edge: 10                  # 0..255 IIR Speed Thold Edge
+    iir_coef_low_hover: 2                     # 0..255 IIR Coef Low Hover
+    iir_coef_high_hover: 16                   # 0..255 IIR Coef High Hover
+    iir_speed_thold_hover: 20                 # 0..255 IIR Speed Thold Hover
+    iir_coef_low_writing: 6                   # 0..255 IIR Coef Low Writing
+    iir_coef_high_writing: 18                 # 0..255 IIR Coef High Writing
+    iir_speed_thold_writing: 10               # 0..255 IIR Speed Thold Writing
     iir_speed_max: 205                        # 0..1000 IIR Speed Max
     iir_max_coef: 32                          # 0..255 IIR Max Coef (Denominator)
     aft_coor_enabled: true                    # AFT Coor Process Enabled
