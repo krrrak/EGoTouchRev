@@ -341,7 +341,7 @@ target_include_directories(EGoTouchServiceCore PUBLIC
 target_compile_definitions(EGoTouchServiceCore PUBLIC
     EGOTOUCH_CONFIG_ENABLED=${EGO_SOLVERS_RUNTIME_CONFIG_ENABLED}
 )
-target_link_libraries(EGoTouchServiceCore PUBLIC Common Solvers advapi32)
+target_link_libraries(EGoTouchServiceCore PUBLIC Common Solvers IPCCore advapi32)
 
 add_executable(EGoTouchService
     "${SERVICE_ROOT}/source/ServiceEntry.cpp"
@@ -416,12 +416,9 @@ if (EGO_BUILD_TESTS)
 
     add_executable(ConfigRuntimeTest
         EGoTouchService/tests/unit/ConfigRuntimeTest.cpp
-        "${SERVICE_ROOT}/source/ConfigRuntime.cpp"
-        "${SERVICE_ROOT}/source/ServiceConfigCore.cpp"
     )
-    target_include_directories(ConfigRuntimeTest PRIVATE "${SERVICE_ROOT}/include")
-    target_compile_definitions(ConfigRuntimeTest PRIVATE EGOTOUCH_CONFIG_ENABLED=0)
-    target_link_libraries(ConfigRuntimeTest PRIVATE IPCCore Common Solvers)
+    target_link_libraries(ConfigRuntimeTest PRIVATE EGoTouchServiceCore)
+    ego_copy_config_to_output(ConfigRuntimeTest)
     add_test(NAME ConfigRuntimeTest COMMAND ConfigRuntimeTest)
     set_tests_properties(ConfigRuntimeTest PROPERTIES
         LABELS "service;config;unit;device-free"

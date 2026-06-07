@@ -7,6 +7,7 @@
 #include <optional>
 
 namespace Config {
+class ConfigBinder;
 class ConfigStore;
 }
 
@@ -45,6 +46,7 @@ constexpr uint8_t ToServiceConfigFieldBit(ServiceConfigField field) {
     return static_cast<uint8_t>(1u << static_cast<uint8_t>(field));
 }
 
+void RegisterServiceConfigBindings(Config::ConfigBinder& binder, ServiceConfigState& state);
 const char* ServiceModeToConfig(ServiceMode mode);
 std::optional<PenButtonMode> ParsePenButtonModeValue(const Config::ConfigValue& value);
 std::optional<PenButtonRoute> ParsePenButtonRouteValue(const Config::ConfigValue& value);

@@ -11,42 +11,12 @@
 #include <cmath>
 #include <cstring>
 #include <exception>
-#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 
 namespace Service {
 namespace {
-
-void RegisterServiceConfigBindings(Config::ConfigBinder& binder, ServiceConfigState& state) {
-    static const std::array<std::pair<ServiceMode, std::string>, 2> kModeMapping{{
-        {ServiceMode::Full, "full"},
-        {ServiceMode::TouchOnly, "touch_only"},
-    }};
-    static const std::array<std::pair<PenButtonMode, std::string>, 3> kPenButtonModeMapping{{
-        {PenButtonMode::OemCustom, "oem_custom"},
-        {PenButtonMode::NativeBarrel, "native_barrel"},
-        {PenButtonMode::NativeEraser, "native_eraser"},
-    }};
-    static const std::array<std::pair<PenButtonRoute, std::string>, 3> kPenButtonRouteMapping{{
-        {PenButtonRoute::VhfOnly, "vhf_only"},
-        {PenButtonRoute::Win32Only, "win32_only"},
-        {PenButtonRoute::VhfAndWin32, "vhf_and_win32"},
-    }};
-
-    constexpr auto runtimeBinding = Config::ConfigRuntimeBinding::ManualLiveApply;
-    binder.bindEnum("service.mode", &ServiceConfigState::mode, state,
-                    ServiceMode::Full, std::span<const std::pair<ServiceMode, std::string>>(kModeMapping), "Service runtime topology", runtimeBinding);
-    binder.bind("service.auto_mode", &ServiceConfigState::autoMode, state,
-                true, {}, "Enable automatic runtime start/init", runtimeBinding);
-    binder.bind("service.stylus_vhf_enabled", &ServiceConfigState::stylusVhfEnabled, state,
-                true, {}, "Enable stylus VHF output", runtimeBinding);
-    binder.bindEnum("service.pen_button_mode", &ServiceConfigState::penButtonMode, state,
-                    PenButtonMode::OemCustom, std::span<const std::pair<PenButtonMode, std::string>>(kPenButtonModeMapping), "Pen button semantic mode", runtimeBinding);
-    binder.bindEnum("service.pen_button_route", &ServiceConfigState::penButtonRoute, state,
-                    PenButtonRoute::VhfOnly, std::span<const std::pair<PenButtonRoute, std::string>>(kPenButtonRouteMapping), "Pen button injection route", runtimeBinding);
-}
 
 const char* ToConfigValue(PenButtonMode mode) {
     switch (mode) {
@@ -236,6 +206,8 @@ bool ConfigRuntime::Initialize(const std::string& configPath, const StartupValid
 }
 
 bool ConfigRuntime::ValidateStartupConfig(const Config::ConfigStore& store, const StartupValidator& validateStartupConfig) const {
+    // Phase 1 runs before DeviceRuntime exists: validate service-owned config keys here,
+    // then delegate pipeline validation to the startup callback when one is supplied.
     ServiceConfigState schemaState{};
     Config::ConfigBinder serviceBinder;
     RegisterServiceConfigBindings(serviceBinder, schemaState);
@@ -279,14 +251,22 @@ void ConfigRuntime::WriteServiceConfigStateToStoreLocked(const ServiceConfigStat
 
 bool ConfigRuntime::PersistServicePolicyConfig(const ServiceConfigState& config) {
 #if EGOTOUCH_CONFIG_ENABLED
-    std::lock_guard<std::mutex> lk(m_mutex);
-    if (!m_paths.has_value()) {
-        LOG_ERROR("Service", __func__, "Config", "Cannot persist config before startup paths are resolved.");
-        return false;
+    Config::ConfigStore storeToPersist;
+    Config::ConfigStore defaultsToPersist;
+    Config::ConfigPaths pathsToPersist;
+    {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        if (!m_paths.has_value()) {
+            LOG_ERROR("Service", __func__, "Config", "Cannot persist config before startup paths are resolved.");
+            return false;
+        }
+        WriteServiceConfigStateToStoreLocked(config);
+        storeToPersist = m_store;
+        defaultsToPersist = m_defaults;
+        pathsToPersist = *m_paths;
     }
     try {
-        WriteServiceConfigStateToStoreLocked(config);
-        m_store.saveOverrides(m_paths->overrideConfig, m_defaults);
+        storeToPersist.saveOverrides(pathsToPersist.overrideConfig, defaultsToPersist);
         return true;
     } catch (const std::exception& ex) {
         LOG_ERROR("Service", __func__, "Config", "PersistConfig failed: {}", ex.what());

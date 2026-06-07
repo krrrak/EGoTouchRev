@@ -39,7 +39,6 @@
 #include <filesystem>
 #include <mutex>
 #include <optional>
-#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -189,36 +188,6 @@ const char* ToConfigValue(PenButtonRoute route) {
     case PenButtonRoute::VhfAndWin32: return "vhf_and_win32";
     }
     return "vhf_only";
-}
-
-void RegisterServiceConfigBindings(Config::ConfigBinder& binder,
-                                   ServiceConfigState& state) {
-    static const std::array<std::pair<ServiceMode, std::string>, 2> kModeMapping{{
-        {ServiceMode::Full, "full"},
-        {ServiceMode::TouchOnly, "touch_only"},
-    }};
-    static const std::array<std::pair<PenButtonMode, std::string>, 3> kPenButtonModeMapping{{
-        {PenButtonMode::OemCustom, "oem_custom"},
-        {PenButtonMode::NativeBarrel, "native_barrel"},
-        {PenButtonMode::NativeEraser, "native_eraser"},
-    }};
-    static const std::array<std::pair<PenButtonRoute, std::string>, 3> kPenButtonRouteMapping{{
-        {PenButtonRoute::VhfOnly, "vhf_only"},
-        {PenButtonRoute::Win32Only, "win32_only"},
-        {PenButtonRoute::VhfAndWin32, "vhf_and_win32"},
-    }};
-
-    constexpr auto runtimeBinding = Config::ConfigRuntimeBinding::ManualLiveApply;
-    binder.bindEnum("service.mode", &ServiceConfigState::mode, state,
-                    ServiceMode::Full, std::span<const std::pair<ServiceMode, std::string>>(kModeMapping), "Service runtime topology", runtimeBinding);
-    binder.bind("service.auto_mode", &ServiceConfigState::autoMode, state,
-                true, {}, "Enable automatic runtime start/init", runtimeBinding);
-    binder.bind("service.stylus_vhf_enabled", &ServiceConfigState::stylusVhfEnabled, state,
-                true, {}, "Enable stylus VHF output", runtimeBinding);
-    binder.bindEnum("service.pen_button_mode", &ServiceConfigState::penButtonMode, state,
-                    PenButtonMode::OemCustom, std::span<const std::pair<PenButtonMode, std::string>>(kPenButtonModeMapping), "Pen button semantic mode", runtimeBinding);
-    binder.bindEnum("service.pen_button_route", &ServiceConfigState::penButtonRoute, state,
-                    PenButtonRoute::VhfOnly, std::span<const std::pair<PenButtonRoute, std::string>>(kPenButtonRouteMapping), "Pen button injection route", runtimeBinding);
 }
 
 constexpr uint8_t ToWireServiceMode(ServiceMode mode) {
@@ -620,6 +589,8 @@ bool ServiceHost::StartRuntimeAndPipeline(const std::string& configPath) {
         kDevicePathMaster, kDevicePathSlave, kDevicePathInterrupt);
 
     Config::ConfigStore startupConfig = m_configRuntime.SnapshotStore();
+    // Phase 2 runs after DeviceRuntime is constructed: validate pipeline keys against
+    // the runtime-owned binder before applying the config store.
     if (!ValidateStartupConfig(startupConfig)) {
         LOG_ERROR("Service", __func__, "Boot", "Startup config validation failed; runtime start blocked.");
         m_deviceRuntime.reset();

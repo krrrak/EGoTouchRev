@@ -1,11 +1,15 @@
 #include "ServiceConfigCore.h"
 
+#include "config/ConfigBinder.h"
 #include "config/ConfigStore.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <optional>
+#include <span>
 #include <string>
+#include <utility>
 #include <variant>
 
 namespace Service {
@@ -52,6 +56,35 @@ PenButtonRoute ParsePenButtonRoute(const Config::ConfigStore& store,
 }
 
 } // namespace
+
+void RegisterServiceConfigBindings(Config::ConfigBinder& binder, ServiceConfigState& state) {
+    static const std::array<std::pair<ServiceMode, std::string>, 2> kModeMapping{{
+        {ServiceMode::Full, "full"},
+        {ServiceMode::TouchOnly, "touch_only"},
+    }};
+    static const std::array<std::pair<PenButtonMode, std::string>, 3> kPenButtonModeMapping{{
+        {PenButtonMode::OemCustom, "oem_custom"},
+        {PenButtonMode::NativeBarrel, "native_barrel"},
+        {PenButtonMode::NativeEraser, "native_eraser"},
+    }};
+    static const std::array<std::pair<PenButtonRoute, std::string>, 3> kPenButtonRouteMapping{{
+        {PenButtonRoute::VhfOnly, "vhf_only"},
+        {PenButtonRoute::Win32Only, "win32_only"},
+        {PenButtonRoute::VhfAndWin32, "vhf_and_win32"},
+    }};
+
+    constexpr auto runtimeBinding = Config::ConfigRuntimeBinding::ManualLiveApply;
+    binder.bindEnum("service.mode", &ServiceConfigState::mode, state,
+                    ServiceMode::Full, std::span<const std::pair<ServiceMode, std::string>>(kModeMapping), "Service runtime topology", runtimeBinding);
+    binder.bind("service.auto_mode", &ServiceConfigState::autoMode, state,
+                true, {}, "Enable automatic runtime start/init", runtimeBinding);
+    binder.bind("service.stylus_vhf_enabled", &ServiceConfigState::stylusVhfEnabled, state,
+                true, {}, "Enable stylus VHF output", runtimeBinding);
+    binder.bindEnum("service.pen_button_mode", &ServiceConfigState::penButtonMode, state,
+                    PenButtonMode::OemCustom, std::span<const std::pair<PenButtonMode, std::string>>(kPenButtonModeMapping), "Pen button semantic mode", runtimeBinding);
+    binder.bindEnum("service.pen_button_route", &ServiceConfigState::penButtonRoute, state,
+                    PenButtonRoute::VhfOnly, std::span<const std::pair<PenButtonRoute, std::string>>(kPenButtonRouteMapping), "Pen button injection route", runtimeBinding);
+}
 
 const char* ServiceModeToConfig(ServiceMode mode) {
     return mode == ServiceMode::Full ? "full" : "touch_only";
