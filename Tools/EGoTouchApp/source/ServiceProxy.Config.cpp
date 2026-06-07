@@ -168,6 +168,27 @@ bool IsLivePatchableEntry(const Config::ConfigSchemaEntry& entry) {
             entry.runtimeBinding == Config::ConfigRuntimeBinding::ManualLiveApply);
 }
 
+Config::ConfigValue NormalizeSnapshotValueForSchema(const Config::ConfigSchemaEntry& schemaEntry,
+                                                    const Config::ConfigValue& value) {
+    if (schemaEntry.uiType != Config::ConfigUiType::Enum) {
+        return value;
+    }
+
+    const auto* numeric = std::get_if<int32_t>(&value);
+    if (numeric == nullptr) {
+        return value;
+    }
+
+    const auto it = std::ranges::find_if(schemaEntry.enumMapping, [numeric](const auto& item) {
+        return item.first == *numeric;
+    });
+    if (it == schemaEntry.enumMapping.end()) {
+        return value;
+    }
+
+    return Config::ConfigValue(it->second);
+}
+
 enum class ServiceModeSchema {
     Full,
     TouchOnly,
@@ -588,27 +609,29 @@ bool ServiceProxy::ApplyConfigV3CatalogBytes(const uint8_t* data, size_t size) {
 bool ServiceProxy::ApplyConfigV3SnapshotBytes(const uint8_t* data, size_t size) {
     try {
         const auto payload = Config::deserializeConfigV3Snapshot(data, size);
-        std::unordered_map<Config::ConfigKeyId, std::string> pathByKey;
+        std::unordered_map<Config::ConfigKeyId, const Config::ConfigSchemaEntry*> entryByKey;
         for (const auto& entry : m_configSchema.entries) {
             if (entry.keyId != Config::ConfigKeyId::MaxKeyId && !entry.yamlPath.empty()) {
-                pathByKey.emplace(entry.keyId, entry.yamlPath);
+                entryByKey.emplace(entry.keyId, &entry);
             }
         }
         size_t applied = 0;
         size_t dirtySkipped = 0;
         size_t unknownSkipped = 0;
         for (const auto& entry : payload.entries) {
-            const auto it = pathByKey.find(entry.keyId);
-            if (it == pathByKey.end()) {
+            const auto it = entryByKey.find(entry.keyId);
+            if (it == entryByKey.end()) {
                 ++unknownSkipped;
                 LOG_WARN("App", __func__, "Config", "Skipping config v3 snapshot entry with unknown keyId={}", static_cast<unsigned int>(entry.keyId));
                 continue;
             }
-            if (m_dirtyConfigPaths.contains(it->second)) {
+            const auto& schemaEntry = *it->second;
+            if (m_dirtyConfigPaths.contains(schemaEntry.yamlPath)) {
                 ++dirtySkipped;
                 continue;
             }
-            m_configStore.set<Config::ConfigValue>(it->second, entry.value);
+            m_configStore.set<Config::ConfigValue>(schemaEntry.yamlPath,
+                                                   NormalizeSnapshotValueForSchema(schemaEntry, entry.value));
             ++applied;
         }
         SyncServiceMirrorsFromStore(

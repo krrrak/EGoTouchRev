@@ -5,6 +5,7 @@
 #include "config/ConfigTlv.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -132,7 +133,7 @@ void TestV3SnapshotPayloadWritesConfigStore() {
     Config::ConfigV3SnapshotPayload snapshot{};
     snapshot.schemaVersion = 10;
     snapshot.snapshotVersion = 21;
-    snapshot.entries.push_back({Config::ConfigKeyId::SvcMode, std::string("touch_only")});
+    snapshot.entries.push_back({Config::ConfigKeyId::SvcMode, int32_t{1}});
     snapshot.entries.push_back({Config::ConfigKeyId::SvcAutoMode, false});
     const auto bytes = Config::serializeConfigV3Snapshot(snapshot);
 
