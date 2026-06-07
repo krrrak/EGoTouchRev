@@ -55,6 +55,8 @@ bool IsKnownCommand(IpcCommand command) noexcept {
     case IpcCommand::ApplyConfigPatch:
     case IpcCommand::PersistConfig:
     case IpcCommand::ApplyConfigTlvChunk:
+    case IpcCommand::GetConfigCatalogV3:
+    case IpcCommand::GetConfigSnapshotV3:
     case IpcCommand::GetLogs:
     case IpcCommand::GetPenBridgeStatus:
     case IpcCommand::GetPenIdentityStatus:

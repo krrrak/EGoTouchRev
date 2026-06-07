@@ -226,6 +226,69 @@ std::size_t Utf8TruncatedLength(std::string_view text, std::size_t capacity) noe
     return lastGood;
 }
 
+bool BuildConfigV3PageResponse(Ipc::IpcCommand command,
+                               const Ipc::IpcRequest& req,
+                               const ConfigRuntime::ConfigV3Blob& blob,
+                               Ipc::IpcResponse& resp) {
+    if (req.paramLen < sizeof(Ipc::ConfigV3PageRequestWire)) {
+        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidRequest);
+        return false;
+    }
+
+    Ipc::ConfigV3PageRequestWire pageRequest{};
+    std::memcpy(&pageRequest, req.param, sizeof(pageRequest));
+    if (pageRequest.wireVersion != Ipc::kIpcProtocolVersion || pageRequest.flags != 0) {
+        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidRequest);
+        return false;
+    }
+
+    const uint8_t expectedKind = command == Ipc::IpcCommand::GetConfigCatalogV3
+        ? static_cast<uint8_t>(Ipc::ConfigV3PayloadKind::Catalog)
+        : static_cast<uint8_t>(Ipc::ConfigV3PayloadKind::Snapshot);
+    if (pageRequest.payloadKind != expectedKind) {
+        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidRequest);
+        return false;
+    }
+
+    const uint32_t totalBytes = static_cast<uint32_t>(blob.bytes.size());
+    if (pageRequest.offset > totalBytes) {
+        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidRequest);
+        return false;
+    }
+
+    const uint32_t capacity = Ipc::ConfigV3PageCapacityBytes();
+    uint32_t requestedBytes = pageRequest.maxBytes == 0 ? capacity : pageRequest.maxBytes;
+    requestedBytes = std::min<uint32_t>(requestedBytes, capacity);
+    const uint32_t availableBytes = totalBytes - pageRequest.offset;
+    const uint32_t pageBytes = std::min<uint32_t>(requestedBytes, availableBytes);
+
+    Ipc::ConfigV3PageResponseHeaderWire header{};
+    header.wireVersion = Ipc::kIpcProtocolVersion;
+    header.payloadKind = expectedKind;
+    header.flags = 0;
+    header.headerBytes = static_cast<uint16_t>(sizeof(Ipc::ConfigV3PageResponseHeaderWire));
+    header.pageBytes = static_cast<uint16_t>(pageBytes);
+    header.totalBytes = totalBytes;
+    header.schemaVersion = blob.schemaVersion;
+    header.snapshotVersion = blob.snapshotVersion;
+    header.offset = pageRequest.offset;
+    header.checksum = blob.checksum;
+
+    const uint32_t dataLen = static_cast<uint32_t>(header.headerBytes) + pageBytes;
+    if (!Ipc::IsValidConfigV3PageResponse(header, dataLen)) {
+        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InternalError);
+        return false;
+    }
+
+    std::memcpy(resp.data, &header, sizeof(header));
+    if (pageBytes != 0) {
+        std::memcpy(resp.data + sizeof(header), blob.bytes.data() + pageRequest.offset, pageBytes);
+    }
+    resp.dataLen = static_cast<uint16_t>(dataLen);
+    Ipc::MarkSuccess(resp);
+    return true;
+}
+
 bool TryParseWireServiceMode(uint8_t wireValue, ServiceMode& out) {
     switch (static_cast<Ipc::ServiceModeWire>(wireValue)) {
     case Ipc::ServiceModeWire::Full:
@@ -1162,6 +1225,16 @@ void ServiceHost::HandleIpcGetConfigSnapshot(Ipc::IpcResponse& resp) {
     Ipc::MarkSuccess(resp);
 }
 
+void ServiceHost::HandleIpcGetConfigCatalogV3(const Ipc::IpcRequest& req, Ipc::IpcResponse& resp) {
+    const auto blob = m_configRuntime.BuildCatalogV3Blob();
+    BuildConfigV3PageResponse(Ipc::IpcCommand::GetConfigCatalogV3, req, blob, resp);
+}
+
+void ServiceHost::HandleIpcGetConfigSnapshotV3(const Ipc::IpcRequest& req, Ipc::IpcResponse& resp) {
+    const auto blob = m_configRuntime.BuildSnapshotV3Blob();
+    BuildConfigV3PageResponse(Ipc::IpcCommand::GetConfigSnapshotV3, req, blob, resp);
+}
+
 void ServiceHost::HandleIpcApplyConfigPatch(const Ipc::IpcRequest& req, Ipc::IpcResponse& resp) {
 #ifndef _DEBUG
     (void)req;
@@ -1560,6 +1633,14 @@ Ipc::IpcResponse ServiceHost::HandleIpcCommand(const Ipc::IpcRequest& req) {
 
     case Ipc::IpcCommand::GetConfigSnapshot:
         HandleIpcGetConfigSnapshot(resp);
+        break;
+
+    case Ipc::IpcCommand::GetConfigCatalogV3:
+        HandleIpcGetConfigCatalogV3(req, resp);
+        break;
+
+    case Ipc::IpcCommand::GetConfigSnapshotV3:
+        HandleIpcGetConfigSnapshotV3(req, resp);
         break;
 
     case Ipc::IpcCommand::ApplyConfigPatch:

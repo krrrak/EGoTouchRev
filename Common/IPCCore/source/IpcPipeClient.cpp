@@ -157,6 +157,22 @@ IpcResponse IpcPipeClient::ApplyConfigTlvChunk(const ConfigTlvChunkRequestWire& 
     return Send(req);
 }
 
+IpcResponse IpcPipeClient::GetConfigCatalogV3Page(const ConfigV3PageRequestWire& request) {
+    IpcRequest req{};
+    req.command = IpcCommand::GetConfigCatalogV3;
+    req.paramLen = static_cast<uint16_t>(sizeof(request));
+    std::memcpy(req.param, &request, sizeof(request));
+    return Send(req);
+}
+
+IpcResponse IpcPipeClient::GetConfigSnapshotV3Page(const ConfigV3PageRequestWire& request) {
+    IpcRequest req{};
+    req.command = IpcCommand::GetConfigSnapshotV3;
+    req.paramLen = static_cast<uint16_t>(sizeof(request));
+    std::memcpy(req.param, &request, sizeof(request));
+    return Send(req);
+}
+
 IpcResponse IpcPipeClient::PersistConfig() {
     IpcRequest req{}; req.command = IpcCommand::PersistConfig;
     return Send(req);

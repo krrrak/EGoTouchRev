@@ -91,6 +91,8 @@ private:
     void HandleIpcEnterDebugMode(Ipc::IpcResponse& resp);
     void HandleIpcExitDebugMode(Ipc::IpcResponse& resp);
     void HandleIpcGetConfigSnapshot(Ipc::IpcResponse& resp);
+    void HandleIpcGetConfigCatalogV3(const Ipc::IpcRequest& req, Ipc::IpcResponse& resp);
+    void HandleIpcGetConfigSnapshotV3(const Ipc::IpcRequest& req, Ipc::IpcResponse& resp);
     void HandleIpcApplyConfigPatch(const Ipc::IpcRequest& req, Ipc::IpcResponse& resp);
     void HandleIpcApplyConfigTlvChunk(const Ipc::IpcRequest& req, Ipc::IpcResponse& resp);
     void HandleIpcPersistConfig(Ipc::IpcResponse& resp);
