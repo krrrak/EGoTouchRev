@@ -95,6 +95,8 @@ private:
     void HandleIpcGetConfigSnapshotV3(const Ipc::IpcRequest& req, Ipc::IpcResponse& resp);
     void HandleIpcApplyConfigPatch(const Ipc::IpcRequest& req, Ipc::IpcResponse& resp);
     void HandleIpcApplyConfigTlvChunk(const Ipc::IpcRequest& req, Ipc::IpcResponse& resp);
+    void HandleIpcApplyConfigPatchV3(const Ipc::IpcRequest& req, Ipc::IpcResponse& resp);
+    void HandleIpcPersistConfigV3(Ipc::IpcResponse& resp);
     void HandleIpcPersistConfig(Ipc::IpcResponse& resp);
     void HandleIpcReloadConfig(Ipc::IpcResponse& resp);
     void HandleIpcSaveConfig(Ipc::IpcResponse& resp);

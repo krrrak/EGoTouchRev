@@ -547,6 +547,7 @@ bool isKnownConfigPersistPolicy(uint8_t policy) {
     case ConfigPersistPolicy::RuntimeOnly:
     case ConfigPersistPolicy::UserOverride:
     case ConfigPersistPolicy::GeneratedDefault:
+    case ConfigPersistPolicy::Deprecated:
         return true;
     default:
         return false;

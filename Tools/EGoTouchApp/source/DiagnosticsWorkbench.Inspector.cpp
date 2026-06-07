@@ -83,6 +83,15 @@ void DrawApplyConfigResultStatus(const ApplyConfigResult& result) {
             ImGui::TextColored(WarnColor(), "Unpersisted live config changes remain.");
         }
         break;
+    case ApplyConfigStatus::RestartRequired:
+        if (result.persistAttempted && result.persisted) {
+            ImGui::TextColored(WarnColor(), "Saved; restart required.");
+        } else if (result.persistAttempted) {
+            ImGui::TextColored(WarnColor(), "Restart required; persist failed (status=%u).", static_cast<unsigned int>(result.persistStatus));
+        } else {
+            ImGui::TextColored(WarnColor(), "Restart required.");
+        }
+        break;
     }
 }
 

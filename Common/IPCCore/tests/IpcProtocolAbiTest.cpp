@@ -41,6 +41,8 @@ int main() {
     Require(U(IpcCommand::ApplyConfigTlvChunk) == 45, "ApplyConfigTlvChunk command value remains stable");
     Require(U(IpcCommand::GetConfigCatalogV3) == 46, "GetConfigCatalogV3 command value is assigned");
     Require(U(IpcCommand::GetConfigSnapshotV3) == 47, "GetConfigSnapshotV3 command value is assigned");
+    Require(U(IpcCommand::ApplyConfigPatchV3) == 48, "ApplyConfigPatchV3 command value is assigned");
+    Require(U(IpcCommand::PersistConfigV3) == 49, "PersistConfigV3 command value is assigned");
     Require(U(IpcCommand::GetDebugSchema) == 61, "GetDebugSchema command value remains stable");
     Require(U(IpcCommand::SetMasterParserOnly) == 64, "SetMasterParserOnly command value remains stable");
     Require(U(IpcCommand::GetPenIdentityStatus) == 65, "GetPenIdentityStatus command value remains stable");
@@ -121,6 +123,40 @@ int main() {
     pageHeader.pageBytes = 4;
     pageHeader.totalBytes = 4;
     Require(!IsValidConfigV3PageResponse(pageHeader, sizeof(ConfigV3PageResponseHeaderWire) + 3), "Config v3 page header rejects mismatched data length");
+
+    ApplyConfigPatchV3RequestWire patchV3{};
+    Require(sizeof(ApplyConfigPatchV3RequestWire) == 256, "ApplyConfigPatchV3RequestWire layout remains fixed");
+    Require(sizeof(patchV3.bytes) == kConfigPatchV3PayloadBytes, "ApplyConfigPatchV3RequestWire payload capacity remains fixed");
+    Require(kConfigPatchV3PayloadBytes == 240, "Config v3 patch payload capacity remains stable");
+    Require(patchV3.wireVersion == kIpcProtocolVersion, "ApplyConfigPatchV3RequestWire version defaults to protocol version");
+    Require(patchV3.headerBytes == 16, "ApplyConfigPatchV3RequestWire headerBytes defaults to fixed header");
+    Require(patchV3.baseSchemaVersion == 0 && patchV3.baseSnapshotVersion == 0, "ApplyConfigPatchV3RequestWire baseline versions default zero");
+    Require(patchV3.payloadBytes == 0 && patchV3.flags == 0, "ApplyConfigPatchV3RequestWire payload metadata defaults zero");
+    Require(!IsValidApplyConfigPatchV3Request(patchV3), "ApplyConfigPatchV3RequestWire rejects empty payload");
+    patchV3.payloadBytes = 1;
+    Require(IsValidApplyConfigPatchV3Request(patchV3), "ApplyConfigPatchV3RequestWire accepts one-byte payload");
+    patchV3.payloadBytes = kConfigPatchV3PayloadBytes + 1;
+    Require(!IsValidApplyConfigPatchV3Request(patchV3), "ApplyConfigPatchV3RequestWire rejects oversized payload");
+    patchV3 = ApplyConfigPatchV3RequestWire{};
+    patchV3.payloadBytes = 1;
+    patchV3.flags = 1;
+    Require(!IsValidApplyConfigPatchV3Request(patchV3), "ApplyConfigPatchV3RequestWire rejects flags");
+
+    ConfigV3ApplyResultWire applyV3{};
+    Require(sizeof(ConfigV3ApplyResultWire) == 16, "ConfigV3ApplyResultWire layout remains fixed");
+    Require(applyV3.wireVersion == kIpcProtocolVersion, "ConfigV3ApplyResultWire version defaults to protocol version");
+    Require(applyV3.status == U(ConfigV3MutationStatus::Ok), "ConfigV3ApplyResultWire status defaults Ok");
+    Require(applyV3.changedCount == 0 && applyV3.appliedCount == 0 && applyV3.restartRequiredCount == 0,
+            "ConfigV3ApplyResultWire counters default zero");
+    Require(applyV3.rejectedCount == 0 && applyV3.failedKeyId == 0 && applyV3.failedValueType == 0,
+            "ConfigV3ApplyResultWire failure fields default zero");
+
+    PersistConfigV3ResponseWire persistV3{};
+    Require(sizeof(PersistConfigV3ResponseWire) == 10, "PersistConfigV3ResponseWire layout remains fixed");
+    Require(persistV3.wireVersion == kIpcProtocolVersion, "PersistConfigV3ResponseWire version defaults to protocol version");
+    Require(persistV3.status == U(ConfigV3MutationStatus::Ok), "PersistConfigV3ResponseWire status defaults Ok");
+    Require(persistV3.persistedCount == 0 && persistV3.skippedCount == 0 && persistV3.failedCount == 0,
+            "PersistConfigV3ResponseWire counters default zero");
 
     PenIdentityStatusWire penIdentity{};
     Require(sizeof(PenIdentityStatusWire) == 140, "PenIdentityStatusWire layout remains fixed");

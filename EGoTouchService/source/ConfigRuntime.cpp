@@ -23,6 +23,9 @@
 #include <utility>
 
 namespace Service {
+
+uint32_t HashBytes(std::span<const uint8_t> bytes) noexcept;
+
 namespace {
 
 const char* ToConfigValue(PenButtonMode mode) {
@@ -162,6 +165,17 @@ bool ConfigValueAllowedBySchema(std::string_view path,
     return false;
 }
 
+const Config::ConfigSchemaEntry* FindSchemaEntry(const Config::ConfigSchemaSnapshot& schema,
+                                                 std::string_view path) {
+    const auto it = std::find_if(schema.entries.begin(), schema.entries.end(),
+        [path](const Config::ConfigSchemaEntry& entry) { return entry.yamlPath == path; });
+    return it == schema.entries.end() ? nullptr : &*it;
+}
+
+bool IsPatchableV3Timing(Config::ConfigApplyTiming timing) {
+    return Config::isLiveApplyTiming(timing) || timing == Config::ConfigApplyTiming::RestartRequired;
+}
+
 ConfigTargetResult MakeTargetResult(std::string_view targetName, ConfigApplyPhase phase, bool ok, std::string message = {}) {
     ConfigTargetResult result{};
     result.targetName = std::string(targetName);
@@ -169,6 +183,42 @@ ConfigTargetResult MakeTargetResult(std::string_view targetName, ConfigApplyPhas
     result.ok = ok;
     result.message = std::move(message);
     return result;
+}
+
+Config::ConfigV3CatalogPayload BuildCatalogPayloadFromSchema(const Config::ConfigSchemaSnapshot& schema) {
+    Config::ConfigV3CatalogPayload payload{};
+    payload.entries = Config::ConfigCatalogBuilder::fromSnapshot(schema).descriptors();
+    payload.entries.erase(std::remove_if(payload.entries.begin(), payload.entries.end(),
+        [](const Config::ConfigDescriptor& entry) { return entry.keyId == Config::ConfigKeyId::MaxKeyId; }),
+        payload.entries.end());
+    return payload;
+}
+
+Config::ConfigV3SnapshotPayload BuildSnapshotPayloadFromStore(const Config::ConfigStore& store,
+                                                              const Config::ConfigSchemaSnapshot& schema) {
+    Config::ConfigV3SnapshotPayload payload{};
+    auto descriptors = Config::ConfigCatalogBuilder::fromSnapshot(schema).descriptors();
+    for (const auto& descriptor : descriptors) {
+        if (descriptor.keyId == Config::ConfigKeyId::MaxKeyId) continue;
+        Config::ConfigV3SnapshotEntry entry{};
+        entry.keyId = descriptor.keyId;
+        entry.value = store.getOr<Config::ConfigValue>(descriptor.path, descriptor.defaultValue);
+        payload.entries.push_back(std::move(entry));
+    }
+    return payload;
+}
+
+uint32_t SchemaVersionFor(const Config::ConfigSchemaSnapshot& schema) {
+    auto payload = BuildCatalogPayloadFromSchema(schema);
+    return HashBytes(Config::serializeConfigV3Catalog(payload));
+}
+
+uint32_t SnapshotVersionFor(const Config::ConfigStore& store,
+                            const Config::ConfigSchemaSnapshot& schema,
+                            uint32_t schemaVersion) {
+    auto payload = BuildSnapshotPayloadFromStore(store, schema);
+    payload.schemaVersion = schemaVersion;
+    return HashBytes(Config::serializeConfigV3Snapshot(payload));
 }
 
 class ServicePolicyTarget final : public IConfigTarget {
@@ -363,14 +413,8 @@ ConfigRuntime::ConfigV3Blob ConfigRuntime::BuildCatalogV3Blob() const {
         schema = m_schema;
     }
 
-    Config::ConfigV3CatalogPayload payload{};
-    payload.entries = Config::ConfigCatalogBuilder::fromSnapshot(schema).descriptors();
-    payload.entries.erase(std::remove_if(payload.entries.begin(), payload.entries.end(),
-        [](const Config::ConfigDescriptor& entry) { return entry.keyId == Config::ConfigKeyId::MaxKeyId; }),
-        payload.entries.end());
-
-    const auto schemaBytes = Config::serializeConfigV3Catalog(payload);
-    payload.schemaVersion = HashBytes(schemaBytes);
+    auto payload = BuildCatalogPayloadFromSchema(schema);
+    payload.schemaVersion = SchemaVersionFor(schema);
     payload.snapshotVersion = 0;
     auto bytes = Config::serializeConfigV3Catalog(payload);
     const uint32_t checksum = HashBytes(bytes);
@@ -386,23 +430,9 @@ ConfigRuntime::ConfigV3Blob ConfigRuntime::BuildSnapshotV3Blob() const {
         schema = m_schema;
     }
 
-    Config::ConfigV3SnapshotPayload payload{};
-    auto descriptors = Config::ConfigCatalogBuilder::fromSnapshot(schema).descriptors();
-    for (const auto& descriptor : descriptors) {
-        if (descriptor.keyId == Config::ConfigKeyId::MaxKeyId) continue;
-        Config::ConfigV3SnapshotEntry entry{};
-        entry.keyId = descriptor.keyId;
-        entry.value = store.getOr<Config::ConfigValue>(descriptor.path, descriptor.defaultValue);
-        payload.entries.push_back(std::move(entry));
-    }
-
-    Config::ConfigV3CatalogPayload catalogPayload{};
-    catalogPayload.entries = std::move(descriptors);
-    catalogPayload.entries.erase(std::remove_if(catalogPayload.entries.begin(), catalogPayload.entries.end(),
-        [](const Config::ConfigDescriptor& entry) { return entry.keyId == Config::ConfigKeyId::MaxKeyId; }),
-        catalogPayload.entries.end());
-    payload.schemaVersion = HashBytes(Config::serializeConfigV3Catalog(catalogPayload));
-    payload.snapshotVersion = HashBytes(Config::serializeConfigV3Snapshot(payload));
+    auto payload = BuildSnapshotPayloadFromStore(store, schema);
+    payload.schemaVersion = SchemaVersionFor(schema);
+    payload.snapshotVersion = SnapshotVersionFor(store, schema, payload.schemaVersion);
     auto bytes = Config::serializeConfigV3Snapshot(payload);
     const uint32_t checksum = HashBytes(bytes);
     return ConfigV3Blob{std::move(bytes), payload.schemaVersion, payload.snapshotVersion, checksum};
@@ -524,71 +554,147 @@ ConfigRuntime::TlvApplyResult ConfigRuntime::ApplyTlvChunk(const Ipc::ConfigTlvC
 }
 
 bool ConfigRuntime::ApplyCompletedTlvPayloadLocked(const std::vector<uint8_t>& payload, TlvApplyResult& result) {
-    const auto parseResult = Config::deserializePatchDetailed(payload.data(), payload.size());
+    V3ApplyResult v3Result{};
+    if (!ApplyPatchPayloadLocked(payload.data(), payload.size(), true, v3Result)) {
+        result.status = v3Result.ipcStatus == Ipc::IpcStatusCode::Ok
+            ? Ipc::IpcStatusCode::InvalidRequest
+            : v3Result.ipcStatus;
+        result.entryCount = v3Result.entryCount;
+        result.changedCount = v3Result.changedCount;
+        result.targetResults = std::move(v3Result.targetResults);
+        return false;
+    }
+
+    result.status = v3Result.ipcStatus;
+    result.entryCount = v3Result.entryCount;
+    result.changedCount = v3Result.changedCount;
+    result.desiredServiceConfig = v3Result.desiredServiceConfig;
+    result.pipelineConfig = std::move(v3Result.pipelineConfig);
+    result.targetResults = std::move(v3Result.targetResults);
+    result.applyActions = std::move(v3Result.applyActions);
+    return true;
+}
+
+bool ConfigRuntime::ApplyPatchPayloadLocked(const uint8_t* data,
+                                            size_t size,
+                                            bool requireLiveApply,
+                                            V3ApplyResult& result) {
+    const auto parseResult = Config::deserializePatchDetailed(data, size);
     if (!parseResult.ok()) {
-        result.status = parseResult.status == Config::ConfigTlvParseStatus::InvalidArgument
+        result.ipcStatus = parseResult.status == Config::ConfigTlvParseStatus::InvalidArgument
             ? Ipc::IpcStatusCode::InternalError
             : Ipc::IpcStatusCode::InvalidRequest;
-        LOG_WARN("Service", __func__, "Config", "Rejected config TLV patch: status={} offset={} entryIndex={} keyId=0x{:04X} valueType=0x{:02X}",
+        result.status = Ipc::ConfigV3MutationStatus::Rejected;
+        result.rejectedCount = 1;
+        result.failedKeyId = static_cast<Config::ConfigKeyId>(parseResult.issue.rawKeyId);
+        result.failedValueType = static_cast<Config::ConfigValueType>(parseResult.issue.rawValueType);
+        LOG_WARN("Service", __func__, "Config", "Rejected config v3 patch: status={} offset={} entryIndex={} keyId=0x{:04X} valueType=0x{:02X}",
                  Config::toString(parseResult.status), parseResult.issue.offset, parseResult.issue.entryIndex,
                  parseResult.issue.rawKeyId, parseResult.issue.rawValueType);
         return false;
     }
+
     const auto& patch = parseResult.patch;
     bool penButtonRouteTouched = false;
     Config::ConfigStore candidate = m_store;
-    ConfigChangeSet changeSet{};
-    changeSet.entryCount = patch.entries.size();
+    ConfigChangeSet liveChangeSet{};
+    ConfigChangeSet restartChangeSet{};
+    liveChangeSet.entryCount = patch.entries.size();
+    restartChangeSet.entryCount = patch.entries.size();
+
+    auto rejectEntry = [&](const Config::ConfigTlvEntry& entry) {
+        result.ipcStatus = Ipc::IpcStatusCode::Ok;
+        result.status = Ipc::ConfigV3MutationStatus::Rejected;
+        result.rejectedCount = 1;
+        result.failedKeyId = entry.keyId;
+        result.failedValueType = entry.valueType;
+    };
+
     for (const auto& entry : patch.entries) {
         const auto path = Config::tryPathForKeyId(entry.keyId);
-        if (!path.has_value()) { result.status = Ipc::IpcStatusCode::InvalidRequest; return false; }
+        if (!path.has_value()) {
+            rejectEntry(entry);
+            return false;
+        }
+
         bool valueOk = false;
         const Config::ConfigValue value = ConfigValueFromTlvEntry(entry, valueOk);
-        if (!valueOk) { result.status = Ipc::IpcStatusCode::InvalidRequest; return false; }
+        if (!valueOk) {
+            rejectEntry(entry);
+            return false;
+        }
+
         const std::string pathString(*path);
+        const auto* schemaEntry = FindSchemaEntry(m_schema, pathString);
+        if (schemaEntry == nullptr ||
+            !schemaEntry->boundToRuntime ||
+            (schemaEntry->runtimeBinding != Config::ConfigRuntimeBinding::LiveSetter &&
+             schemaEntry->runtimeBinding != Config::ConfigRuntimeBinding::ManualLiveApply) ||
+            (requireLiveApply
+                ? !Config::isLiveApplyTiming(schemaEntry->applyTiming)
+                : !IsPatchableV3Timing(schemaEntry->applyTiming)) ||
+            !ConfigValueAllowedBySchema(pathString, value, m_schema, false)) {
+            rejectEntry(entry);
+            return false;
+        }
+
         if (pathString == "service.pen_button_route") penButtonRouteTouched = true;
-        if (!ConfigValueAllowedBySchema(pathString, value, m_schema, true)) { result.status = Ipc::IpcStatusCode::InvalidRequest; return false; }
         const bool hadPreviousValue = candidate.has(pathString);
         const Config::ConfigValue previousValue = hadPreviousValue
             ? candidate.get<Config::ConfigValue>(pathString)
             : Config::ConfigValue(std::string{});
         const bool changed = !hadPreviousValue || previousValue != value;
         candidate.set<Config::ConfigValue>(pathString, value);
-        if (changed) {
-            ConfigChange change{};
-            change.path = pathString;
-            change.keyId = entry.keyId;
-            change.previousValue = previousValue;
-            change.newValue = value;
-            change.hadPreviousValue = hadPreviousValue;
-            changeSet.changes.push_back(std::move(change));
+        if (!changed) continue;
+
+        ConfigChange change{};
+        change.path = pathString;
+        change.keyId = entry.keyId;
+        change.previousValue = previousValue;
+        change.newValue = value;
+        change.hadPreviousValue = hadPreviousValue;
+
+        if (!requireLiveApply && schemaEntry->applyTiming == Config::ConfigApplyTiming::RestartRequired) {
+            restartChangeSet.changes.push_back(std::move(change));
+        } else {
+            liveChangeSet.changes.push_back(std::move(change));
         }
     }
-    result.changedCount = changeSet.changedCount();
+
+    result.entryCount = patch.entries.size();
+    result.appliedCount = liveChangeSet.changedCount();
+    result.restartRequiredCount = restartChangeSet.changedCount();
+    result.changedCount = result.appliedCount + result.restartRequiredCount;
 
     for (const auto& target : m_targets) {
-        if (!target->isInterested(changeSet)) continue;
-        auto validation = target->validateConfig(candidate, changeSet);
+        if (!target->isInterested(liveChangeSet)) continue;
+        auto validation = target->validateConfig(candidate, liveChangeSet);
         result.targetResults.push_back(validation);
         if (!validation.ok) {
-            result.status = Ipc::IpcStatusCode::InvalidRequest;
-            LOG_WARN("Service", __func__, "Config", "Rejected config TLV patch by {}: {}",
+            result.ipcStatus = Ipc::IpcStatusCode::Ok;
+            result.status = Ipc::ConfigV3MutationStatus::Rejected;
+            result.rejectedCount = liveChangeSet.changedCount();
+            LOG_WARN("Service", __func__, "Config", "Rejected config v3 patch by {}: {}",
                      validation.targetName, validation.message);
             return false;
         }
     }
 
-    result.desiredServiceConfig = ReadServiceConfigStateFromStoreLocked();
-    result.desiredServiceConfig.penButtonRouteExplicit = m_penButtonRouteExplicit;
+    const auto currentServiceConfig = ReadServiceConfigStateFromStoreLocked();
+    result.desiredServiceConfig = currentServiceConfig;
     ApplyConfig(result.desiredServiceConfig, candidate);
     result.desiredServiceConfig.penButtonRouteExplicit = m_penButtonRouteExplicit || penButtonRouteTouched;
+    if (restartChangeSet.containsPath("service.mode")) {
+        result.desiredServiceConfig.mode = currentServiceConfig.mode;
+    }
+
     m_store = candidate;
-    m_penButtonRouteExplicit = result.desiredServiceConfig.penButtonRouteExplicit;
+    m_penButtonRouteExplicit = m_penButtonRouteExplicit || penButtonRouteTouched;
     result.pipelineConfig = m_store;
 
     for (const auto& target : m_targets) {
-        if (!target->isInterested(changeSet)) continue;
-        auto applyResult = target->applyConfig(m_store, changeSet, ConfigApplyPhase::Live);
+        if (!target->isInterested(liveChangeSet)) continue;
+        auto applyResult = target->applyConfig(m_store, liveChangeSet, ConfigApplyPhase::Live);
         for (auto& action : applyResult.actions) {
             if (action.kind == ConfigApplyActionKind::ServicePolicy) {
                 action.serviceConfig = result.desiredServiceConfig;
@@ -599,9 +705,97 @@ bool ConfigRuntime::ApplyCompletedTlvPayloadLocked(const std::vector<uint8_t>& p
         }
         result.targetResults.push_back(std::move(applyResult));
     }
-    result.entryCount = patch.entries.size();
-    result.status = Ipc::IpcStatusCode::Ok;
+
+    result.ipcStatus = Ipc::IpcStatusCode::Ok;
+    result.status = result.changedCount == 0 ? Ipc::ConfigV3MutationStatus::NoChanges : Ipc::ConfigV3MutationStatus::Ok;
     return true;
+}
+
+ConfigRuntime::V3ApplyResult ConfigRuntime::ApplyConfigPatchV3(uint32_t baseSchemaVersion,
+                                                               uint32_t baseSnapshotVersion,
+                                                               const uint8_t* data,
+                                                               size_t size) {
+    V3ApplyResult result{};
+    if (data == nullptr || size == 0 || size > Ipc::kConfigPatchV3PayloadBytes) {
+        result.ipcStatus = Ipc::IpcStatusCode::InvalidRequest;
+        result.status = Ipc::ConfigV3MutationStatus::Rejected;
+        result.rejectedCount = 1;
+        return result;
+    }
+
+    std::lock_guard<std::mutex> lk(m_mutex);
+    const uint32_t currentSchemaVersion = SchemaVersionFor(m_schema);
+    const uint32_t currentSnapshotVersion = SnapshotVersionFor(m_store, m_schema, currentSchemaVersion);
+    if (baseSchemaVersion != currentSchemaVersion || baseSnapshotVersion != currentSnapshotVersion) {
+        result.ipcStatus = Ipc::IpcStatusCode::Ok;
+        result.status = Ipc::ConfigV3MutationStatus::VersionMismatch;
+        return result;
+    }
+
+    (void)ApplyPatchPayloadLocked(data, size, false, result);
+    return result;
+}
+
+ConfigRuntime::V3PersistResult ConfigRuntime::PersistConfigV3() {
+    V3PersistResult result{};
+#if EGOTOUCH_CONFIG_ENABLED
+    Config::ConfigStore storeToPersist;
+    Config::ConfigStore defaultsToPersist;
+    Config::ConfigPaths pathsToPersist;
+    {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        if (!m_paths.has_value()) {
+            result.ipcStatus = Ipc::IpcStatusCode::InvalidState;
+            result.status = Ipc::ConfigV3MutationStatus::PersistFailed;
+            result.failedCount = 1;
+            LOG_ERROR("Service", __func__, "Config", "Cannot persist config before startup paths are resolved.");
+            return result;
+        }
+
+        for (const auto& entry : m_schema.entries) {
+            if (entry.keyId == Config::ConfigKeyId::MaxKeyId || entry.yamlPath.empty()) {
+                ++result.skippedCount;
+                continue;
+            }
+            if (entry.persistPolicy != Config::ConfigPersistPolicy::UserOverride) {
+                ++result.skippedCount;
+                continue;
+            }
+            if (!m_store.has(entry.yamlPath)) {
+                ++result.skippedCount;
+                continue;
+            }
+
+            const auto currentValue = m_store.get<Config::ConfigValue>(entry.yamlPath);
+            storeToPersist.set<Config::ConfigValue>(entry.yamlPath, currentValue);
+            const Config::ConfigValue defaultValue = m_defaults.has(entry.yamlPath)
+                ? m_defaults.get<Config::ConfigValue>(entry.yamlPath)
+                : entry.defaultValue;
+            defaultsToPersist.set<Config::ConfigValue>(entry.yamlPath, defaultValue);
+            if (currentValue != defaultValue) {
+                ++result.persistedCount;
+            }
+        }
+        pathsToPersist = *m_paths;
+    }
+
+    try {
+        storeToPersist.saveOverrides(pathsToPersist.overrideConfig, defaultsToPersist);
+        result.ipcStatus = Ipc::IpcStatusCode::Ok;
+        result.status = Ipc::ConfigV3MutationStatus::Ok;
+    } catch (const std::exception& ex) {
+        result.ipcStatus = Ipc::IpcStatusCode::InternalError;
+        result.status = Ipc::ConfigV3MutationStatus::PersistFailed;
+        result.failedCount = result.persistedCount == 0 ? 1 : result.persistedCount;
+        LOG_ERROR("Service", __func__, "Config", "PersistConfigV3 failed: {}", ex.what());
+    }
+    return result;
+#else
+    result.ipcStatus = Ipc::IpcStatusCode::UnsupportedCommand;
+    result.status = Ipc::ConfigV3MutationStatus::PersistFailed;
+    result.failedCount = 1;
+    return result;
+#endif
 }
 
 } // namespace Service

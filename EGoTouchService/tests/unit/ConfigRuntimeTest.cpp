@@ -5,7 +5,10 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <initializer_list>
 #include <memory>
 #include <string>
@@ -30,7 +33,19 @@ bool HasAction(const Service::ConfigRuntime::TlvApplyResult& result, Service::Co
         [kind](const Service::ConfigApplyAction& action) { return action.kind == kind; });
 }
 
+bool HasAction(const Service::ConfigRuntime::V3ApplyResult& result, Service::ConfigApplyActionKind kind) {
+    return std::any_of(result.applyActions.begin(), result.applyActions.end(),
+        [kind](const Service::ConfigApplyAction& action) { return action.kind == kind; });
+}
+
 bool HasFailedTargetResult(const Service::ConfigRuntime::TlvApplyResult& result, std::string_view targetName) {
+    return std::any_of(result.targetResults.begin(), result.targetResults.end(),
+        [targetName](const Service::ConfigTargetResult& targetResult) {
+            return targetResult.targetName == targetName && !targetResult.ok;
+        });
+}
+
+bool HasFailedTargetResult(const Service::ConfigRuntime::V3ApplyResult& result, std::string_view targetName) {
     return std::any_of(result.targetResults.begin(), result.targetResults.end(),
         [targetName](const Service::ConfigTargetResult& targetResult) {
             return targetResult.targetName == targetName && !targetResult.ok;
@@ -52,6 +67,44 @@ std::vector<uint8_t> MakePatchPayload(std::initializer_list<Config::ConfigTlvEnt
     Config::ConfigPatchTlv patch{};
     patch.entries.insert(patch.entries.end(), entries.begin(), entries.end());
     return Config::serializePatch(patch);
+}
+
+struct TempConfigDir {
+    std::filesystem::path path;
+
+    TempConfigDir() {
+        const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
+        path = std::filesystem::temp_directory_path() / ("egotouch-config-runtime-" + std::to_string(unique));
+        std::filesystem::create_directories(path);
+    }
+
+    ~TempConfigDir() {
+        std::error_code ec;
+        std::filesystem::remove_all(path, ec);
+    }
+};
+
+void CopyDefaultYamlTo(const std::filesystem::path& dir) {
+    const auto source = std::filesystem::current_path() / "config" / "default.yaml";
+    assert(std::filesystem::exists(source));
+    std::filesystem::copy_file(source, dir / "default.yaml", std::filesystem::copy_options::overwrite_existing);
+}
+
+Config::ConfigValue ReadOverrideValue(const std::filesystem::path& dir, std::string_view path) {
+    Config::ConfigStore overrides;
+    overrides.loadFromYaml((dir / "overrides.yaml").string());
+    assert(overrides.has(path));
+    return overrides.get<Config::ConfigValue>(path);
+}
+
+Service::ConfigRuntime::V3ApplyResult ApplyV3Patch(Service::ConfigRuntime& runtime,
+                                                   const std::vector<uint8_t>& payload) {
+    const auto baseline = runtime.BuildSnapshotV3Blob();
+    return runtime.ApplyConfigPatchV3(
+        baseline.schemaVersion,
+        baseline.snapshotVersion,
+        payload.data(),
+        payload.size());
 }
 
 class RejectAutoModeTarget final : public Service::IConfigTarget {
@@ -176,6 +229,63 @@ int main() {
     assert(afterIirReject.bytes == beforeIirReject.bytes);
     assert(afterIirReject.snapshotVersion == beforeIirReject.snapshotVersion);
     assert(afterIirReject.checksum == beforeIirReject.checksum);
+
+    Service::ConfigRuntime v3Runtime;
+    assert(v3Runtime.Initialize("", [](const Config::ConfigStore&) { return true; }));
+    const auto v3AutoModeKeyId = Config::tryKeyIdForPath("service.auto_mode");
+    assert(v3AutoModeKeyId.has_value());
+    const auto v3LivePayload = MakePatchPayload({Config::ConfigTlvEntry{*v3AutoModeKeyId, Config::ConfigValueType::Bool, "false"}});
+    const auto v3LiveApplied = ApplyV3Patch(v3Runtime, v3LivePayload);
+    assert(v3LiveApplied.ipcStatus == Ipc::IpcStatusCode::Ok);
+    assert(v3LiveApplied.status == Ipc::ConfigV3MutationStatus::Ok);
+    assert(v3LiveApplied.changedCount == 1);
+    assert(v3LiveApplied.appliedCount == 1);
+    assert(v3LiveApplied.restartRequiredCount == 0);
+    assert(!v3Runtime.ServiceState().autoMode);
+    assert(HasAction(v3LiveApplied, Service::ConfigApplyActionKind::ServicePolicy));
+
+    Service::ConfigRuntime restartRuntime;
+    assert(restartRuntime.Initialize("", [](const Config::ConfigStore&) { return true; }));
+    const auto serviceModeKeyId2 = Config::tryKeyIdForPath("service.mode");
+    assert(serviceModeKeyId2.has_value());
+    const auto restartPayload = MakePatchPayload({Config::ConfigTlvEntry{*serviceModeKeyId2, Config::ConfigValueType::String, "touch_only"}});
+    const auto restartApplied = ApplyV3Patch(restartRuntime, restartPayload);
+    assert(restartApplied.ipcStatus == Ipc::IpcStatusCode::Ok);
+    assert(restartApplied.status == Ipc::ConfigV3MutationStatus::Ok);
+    assert(restartApplied.changedCount == 1);
+    assert(restartApplied.appliedCount == 0);
+    assert(restartApplied.restartRequiredCount == 1);
+    assert(restartApplied.desiredServiceConfig.mode == Service::ServiceMode::Full);
+    assert(!HasAction(restartApplied, Service::ConfigApplyActionKind::ServicePolicy));
+    assert(restartRuntime.SnapshotStore().getOr<std::string>("service.mode", "") == "touch_only");
+
+    TempConfigDir tempConfig;
+    CopyDefaultYamlTo(tempConfig.path);
+    Service::ConfigRuntime persistRuntime;
+    assert(persistRuntime.Initialize(tempConfig.path.string(), [](const Config::ConfigStore&) { return true; }));
+    const auto persistedRestart = ApplyV3Patch(persistRuntime, restartPayload);
+    assert(persistedRestart.ipcStatus == Ipc::IpcStatusCode::Ok);
+    assert(persistedRestart.restartRequiredCount == 1);
+    const auto persistResult = persistRuntime.PersistConfigV3();
+    assert(persistResult.ipcStatus == Ipc::IpcStatusCode::Ok);
+    assert(persistResult.status == Ipc::ConfigV3MutationStatus::Ok);
+    assert(persistResult.persistedCount >= 1);
+    assert(Config::getValue<std::string>(ReadOverrideValue(tempConfig.path, "service.mode")) == "touch_only");
+    assert(std::filesystem::file_size(tempConfig.path / "overrides.yaml") != 0);
+
+    Service::ConfigRuntime v3RejectRuntime;
+    assert(v3RejectRuntime.Initialize("", [](const Config::ConfigStore&) { return true; }));
+    const auto beforeV3Reject = v3RejectRuntime.BuildSnapshotV3Blob();
+    const auto startupOnlyRejected = ApplyV3Patch(
+        v3RejectRuntime,
+        MakePatchPayload({Config::ConfigTlvEntry{*serviceModeKeyId2, Config::ConfigValueType::String, "invalid_mode"}}));
+    assert(startupOnlyRejected.ipcStatus == Ipc::IpcStatusCode::Ok);
+    assert(startupOnlyRejected.status == Ipc::ConfigV3MutationStatus::Rejected);
+    assert(startupOnlyRejected.rejectedCount == 1);
+    const auto afterV3Reject = v3RejectRuntime.BuildSnapshotV3Blob();
+    assert(afterV3Reject.bytes == beforeV3Reject.bytes);
+    assert(afterV3Reject.snapshotVersion == beforeV3Reject.snapshotVersion);
+    assert(afterV3Reject.checksum == beforeV3Reject.checksum);
 
     Service::ConfigRuntime rejectingRuntime;
     rejectingRuntime.RegisterConfigTarget(std::make_unique<RejectAutoModeTarget>());

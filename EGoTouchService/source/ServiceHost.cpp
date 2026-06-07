@@ -1347,6 +1347,81 @@ void ServiceHost::HandleIpcApplyConfigTlvChunk(const Ipc::IpcRequest& req, Ipc::
     Ipc::MarkSuccess(resp);
     LOG_INFO("Service", __func__, "Config", "Applied global config TLV entries={} changed={}", apply.entryCount, apply.changedCount);
 }
+
+void ServiceHost::HandleIpcApplyConfigPatchV3(const Ipc::IpcRequest& req, Ipc::IpcResponse& resp) {
+    if (!m_deviceRuntime) {
+        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidState);
+        return;
+    }
+    if (req.paramLen < sizeof(Ipc::ApplyConfigPatchV3RequestWire)) {
+        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidRequest);
+        return;
+    }
+
+    Ipc::ApplyConfigPatchV3RequestWire request{};
+    std::memcpy(&request, req.param, sizeof(request));
+    if (!Ipc::IsValidApplyConfigPatchV3Request(request)) {
+        Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidRequest);
+        return;
+    }
+
+    const auto apply = m_configRuntime.ApplyConfigPatchV3(
+        request.baseSchemaVersion,
+        request.baseSnapshotVersion,
+        request.bytes,
+        request.payloadBytes);
+
+    if (apply.ipcStatus != Ipc::IpcStatusCode::Ok) {
+        Ipc::MarkFailure(resp, apply.ipcStatus);
+        return;
+    }
+
+    for (const auto& action : apply.applyActions) {
+        switch (action.kind) {
+        case ConfigApplyActionKind::ServicePolicy:
+            (void)HandleReloadServiceConfig(action.serviceConfig);
+            break;
+        case ConfigApplyActionKind::PipelineRuntime:
+            m_deviceRuntime->ApplyPipelineConfig(action.configStore);
+            break;
+        }
+    }
+
+    Ipc::ConfigV3ApplyResultWire result{};
+    result.status = static_cast<uint8_t>(apply.status);
+    result.changedCount = static_cast<uint16_t>(std::min<size_t>(apply.changedCount, UINT16_MAX));
+    result.appliedCount = static_cast<uint16_t>(std::min<size_t>(apply.appliedCount, UINT16_MAX));
+    result.restartRequiredCount = static_cast<uint16_t>(std::min<size_t>(apply.restartRequiredCount, UINT16_MAX));
+    result.rejectedCount = static_cast<uint16_t>(std::min<size_t>(apply.rejectedCount, UINT16_MAX));
+    result.failedKeyId = static_cast<uint16_t>(apply.failedKeyId);
+    result.failedValueType = static_cast<uint8_t>(apply.failedValueType);
+    std::memcpy(resp.data, &result, sizeof(result));
+    resp.dataLen = static_cast<uint16_t>(sizeof(result));
+    Ipc::MarkSuccess(resp);
+    LOG_INFO("Service", __func__, "Config", "Applied config v3 patch entries={} changed={} applied={} restartRequired={} status={}",
+             apply.entryCount, apply.changedCount, apply.appliedCount, apply.restartRequiredCount,
+             static_cast<unsigned int>(apply.status));
+}
+
+void ServiceHost::HandleIpcPersistConfigV3(Ipc::IpcResponse& resp) {
+    const auto persist = m_configRuntime.PersistConfigV3();
+    if (persist.ipcStatus != Ipc::IpcStatusCode::Ok) {
+        Ipc::MarkFailure(resp, persist.ipcStatus);
+        return;
+    }
+
+    Ipc::PersistConfigV3ResponseWire result{};
+    result.status = static_cast<uint8_t>(persist.status);
+    result.persistedCount = static_cast<uint16_t>(std::min<size_t>(persist.persistedCount, UINT16_MAX));
+    result.skippedCount = static_cast<uint16_t>(std::min<size_t>(persist.skippedCount, UINT16_MAX));
+    result.failedCount = static_cast<uint16_t>(std::min<size_t>(persist.failedCount, UINT16_MAX));
+    std::memcpy(resp.data, &result, sizeof(result));
+    resp.dataLen = static_cast<uint16_t>(sizeof(result));
+    Ipc::MarkSuccess(resp);
+    LOG_INFO("Service", __func__, "IPC", "PersistConfigV3 saved overrides persisted={} skipped={} failed={}",
+             persist.persistedCount, persist.skippedCount, persist.failedCount);
+}
+
 void ServiceHost::HandleIpcPersistConfig(Ipc::IpcResponse& resp) {
 #ifndef _DEBUG
     Ipc::MarkFailure(resp, Ipc::IpcStatusCode::UnsupportedCommand);
@@ -1664,6 +1739,14 @@ Ipc::IpcResponse ServiceHost::HandleIpcCommand(const Ipc::IpcRequest& req) {
 
     case Ipc::IpcCommand::ApplyConfigTlvChunk:
         HandleIpcApplyConfigTlvChunk(req, resp);
+        break;
+
+    case Ipc::IpcCommand::ApplyConfigPatchV3:
+        HandleIpcApplyConfigPatchV3(req, resp);
+        break;
+
+    case Ipc::IpcCommand::PersistConfigV3:
+        HandleIpcPersistConfigV3(resp);
         break;
 
     case Ipc::IpcCommand::PersistConfig:

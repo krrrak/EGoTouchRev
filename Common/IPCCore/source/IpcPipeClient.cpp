@@ -173,6 +173,19 @@ IpcResponse IpcPipeClient::GetConfigSnapshotV3Page(const ConfigV3PageRequestWire
     return Send(req);
 }
 
+IpcResponse IpcPipeClient::ApplyConfigPatchV3(const ApplyConfigPatchV3RequestWire& request) {
+    IpcRequest req{};
+    req.command = IpcCommand::ApplyConfigPatchV3;
+    req.paramLen = static_cast<uint16_t>(sizeof(request));
+    std::memcpy(req.param, &request, sizeof(request));
+    return Send(req);
+}
+
+IpcResponse IpcPipeClient::PersistConfigV3() {
+    IpcRequest req{}; req.command = IpcCommand::PersistConfigV3;
+    return Send(req);
+}
+
 IpcResponse IpcPipeClient::PersistConfig() {
     IpcRequest req{}; req.command = IpcCommand::PersistConfig;
     return Send(req);

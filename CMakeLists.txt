@@ -567,6 +567,7 @@ if (EGO_BUILD_TESTS)
     )
     target_compile_definitions(EGoTouchApp_ServiceProxyCatalogSchemaTest PRIVATE
         EGOTOUCH_CONFIG_ENABLED=${EGO_SOLVERS_RUNTIME_CONFIG_ENABLED}
+        EGOTOUCH_APP_SERVICE_PROXY_TEST=1
     )
     target_include_directories(EGoTouchApp_ServiceProxyCatalogSchemaTest PRIVATE
         "${APP_ROOT}/include"

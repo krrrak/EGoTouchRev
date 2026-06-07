@@ -35,6 +35,30 @@ public:
         std::vector<ConfigApplyAction> applyActions;
     };
 
+    struct V3ApplyResult {
+        Ipc::IpcStatusCode ipcStatus = Ipc::IpcStatusCode::Ok;
+        Ipc::ConfigV3MutationStatus status = Ipc::ConfigV3MutationStatus::Ok;
+        size_t entryCount = 0;
+        size_t changedCount = 0;
+        size_t appliedCount = 0;
+        size_t restartRequiredCount = 0;
+        size_t rejectedCount = 0;
+        Config::ConfigKeyId failedKeyId = Config::ConfigKeyId::MaxKeyId;
+        Config::ConfigValueType failedValueType = Config::ConfigValueType::Null;
+        ServiceConfigState desiredServiceConfig{};
+        Config::ConfigStore pipelineConfig{};
+        std::vector<ConfigTargetResult> targetResults;
+        std::vector<ConfigApplyAction> applyActions;
+    };
+
+    struct V3PersistResult {
+        Ipc::IpcStatusCode ipcStatus = Ipc::IpcStatusCode::Ok;
+        Ipc::ConfigV3MutationStatus status = Ipc::ConfigV3MutationStatus::Ok;
+        size_t persistedCount = 0;
+        size_t skippedCount = 0;
+        size_t failedCount = 0;
+    };
+
     struct ConfigV3Blob {
         std::vector<uint8_t> bytes;
         uint32_t schemaVersion = 0;
@@ -56,12 +80,21 @@ public:
     void WriteServiceState(const ServiceConfigState& config);
     bool PersistServicePolicyConfig(const ServiceConfigState& config);
     TlvApplyResult ApplyTlvChunk(const Ipc::ConfigTlvChunkRequestWire& chunk);
+    V3ApplyResult ApplyConfigPatchV3(uint32_t baseSchemaVersion,
+                                     uint32_t baseSnapshotVersion,
+                                     const uint8_t* data,
+                                     size_t size);
+    V3PersistResult PersistConfigV3();
 
 private:
     bool ValidateStartupConfig(const Config::ConfigStore& store, const StartupValidator& validateStartupConfig) const;
     ServiceConfigState ReadServiceConfigStateFromStoreLocked() const;
     void WriteServiceConfigStateToStoreLocked(const ServiceConfigState& config);
     bool ApplyCompletedTlvPayloadLocked(const std::vector<uint8_t>& payload, TlvApplyResult& result);
+    bool ApplyPatchPayloadLocked(const uint8_t* data,
+                                 size_t size,
+                                 bool requireLiveApply,
+                                 V3ApplyResult& result);
     void RegisterDefaultConfigTargets();
 
     // Lock boundary: ConfigRuntime owns config store/schema/paths/TLV session state.

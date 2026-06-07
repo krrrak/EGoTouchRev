@@ -43,11 +43,13 @@ enum class ApplyConfigStatus : uint8_t {
     NoChanges,
     LiveApplyFailed,
     LiveApplied,
+    RestartRequired,
 };
 
 struct ApplyConfigResult {
     ApplyConfigStatus status = ApplyConfigStatus::NotAttempted;
     bool liveApplied = false;
+    bool restartRequired = false;
     bool persistAttempted = false;
     bool persisted = false;
     bool unpersistedLiveChanges = false;
@@ -127,6 +129,19 @@ public:
     bool ApplyConfigV3CatalogBytesForTest(const uint8_t* data, size_t size);
     bool ApplyConfigV3SnapshotBytesForTest(const uint8_t* data, size_t size);
     ConfigV3BaselineVersions GetConfigV3BaselineVersionsForTest() const;
+#if defined(EGOTOUCH_APP_SERVICE_PROXY_TEST)
+    void SetConfigV3IpcTestResponses(bool connected,
+                                     const Ipc::IpcResponse& applyResponse,
+                                     const Ipc::IpcResponse& persistResponse);
+    void SetConfigV3IpcTestResponses(bool connected,
+                                     std::vector<Ipc::IpcResponse> applyResponses,
+                                     const Ipc::IpcResponse& persistResponse,
+                                     std::vector<uint8_t> snapshotBytes = {});
+    bool HasLastConfigV3ApplyRequestForTest() const { return m_hasLastConfigV3ApplyRequestForTest; }
+    Ipc::ApplyConfigPatchV3RequestWire GetLastConfigV3ApplyRequestForTest() const { return m_lastConfigV3ApplyRequestForTest; }
+    int GetConfigV3ApplyRequestCountForTest() const { return m_configV3ApplyRequestCountForTest; }
+    int GetConfigV3PersistRequestCountForTest() const { return m_configV3PersistRequestCountForTest; }
+#endif
     // Applies ConfigStore edits to the app-local preview pipelines only.
     // Does not live-apply Service-side pipelines; no-op when runtime config is disabled.
     void ApplyConfigStoreToLocalRuntime();
@@ -198,6 +213,9 @@ private:
     std::optional<std::vector<uint8_t>> FetchConfigV3Bytes(Ipc::ConfigV3PayloadKind payloadKind);
     bool ApplyConfigV3CatalogBytes(const uint8_t* data, size_t size);
     bool ApplyConfigV3SnapshotBytes(const uint8_t* data, size_t size);
+    bool IsConfigIpcConnectedForApply() const;
+    Ipc::IpcResponse SendApplyConfigPatchV3Request(const Ipc::ApplyConfigPatchV3RequestWire& request);
+    Ipc::IpcResponse SendPersistConfigV3Request();
 
     static constexpr const wchar_t* kSharedMemName =
         L"Global\\EGoTouchSharedFrame";
@@ -218,10 +236,23 @@ private:
     std::unordered_set<std::string> m_dirtyConfigPaths;
     std::atomic<ApplyConfigStatus> m_lastApplyConfigStatus{ApplyConfigStatus::NotAttempted};
     std::atomic<bool> m_lastApplyConfigLiveApplied{false};
+    std::atomic<bool> m_lastApplyConfigRestartRequired{false};
     std::atomic<bool> m_lastApplyConfigPersistAttempted{false};
     std::atomic<bool> m_lastApplyConfigPersisted{false};
     std::atomic<bool> m_hasUnpersistedLiveConfigChanges{false};
     std::atomic<uint8_t> m_lastApplyConfigPersistStatus{static_cast<uint8_t>(Ipc::IpcStatusCode::InternalError)};
+#if defined(EGOTOUCH_APP_SERVICE_PROXY_TEST)
+    bool m_configV3IpcTestConnected = false;
+    Ipc::IpcResponse m_configV3IpcTestApplyResponse{};
+    std::vector<Ipc::IpcResponse> m_configV3IpcTestApplyResponses;
+    size_t m_configV3IpcTestApplyResponseIndex = 0;
+    Ipc::IpcResponse m_configV3IpcTestPersistResponse{};
+    std::vector<uint8_t> m_configV3IpcTestSnapshotBytes;
+    Ipc::ApplyConfigPatchV3RequestWire m_lastConfigV3ApplyRequestForTest{};
+    bool m_hasLastConfigV3ApplyRequestForTest = false;
+    int m_configV3ApplyRequestCountForTest = 0;
+    int m_configV3PersistRequestCountForTest = 0;
+#endif
 
     // Latest frame snapshot for GUI
     std::mutex m_frameMutex;

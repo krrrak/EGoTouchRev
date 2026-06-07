@@ -49,6 +49,7 @@ enum class ConfigPersistPolicy : uint8_t {
     RuntimeOnly,
     UserOverride,
     GeneratedDefault,
+    Deprecated,
 };
 
 // ── 单个配置键的完整元数据 ──

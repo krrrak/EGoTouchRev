@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -132,6 +133,66 @@ void ApplyCatalog(App::ServiceProxy& proxy) {
             "v3 catalog payload should apply");
 }
 
+Ipc::IpcResponse MakeApplyConfigPatchV3Response(Ipc::ConfigV3MutationStatus status,
+                                                uint16_t changedCount,
+                                                uint16_t appliedCount,
+                                                uint16_t restartRequiredCount,
+                                                uint16_t rejectedCount = 0,
+                                                Config::ConfigKeyId failedKeyId = Config::ConfigKeyId::MaxKeyId) {
+    Ipc::IpcResponse response{};
+    Ipc::ConfigV3ApplyResultWire result{};
+    result.status = static_cast<uint8_t>(status);
+    result.changedCount = changedCount;
+    result.appliedCount = appliedCount;
+    result.restartRequiredCount = restartRequiredCount;
+    result.rejectedCount = rejectedCount;
+    result.failedKeyId = static_cast<uint16_t>(failedKeyId);
+    std::memcpy(response.data, &result, sizeof(result));
+    response.dataLen = static_cast<uint16_t>(sizeof(result));
+    Ipc::MarkSuccess(response);
+    return response;
+}
+
+Ipc::IpcResponse MakeInvalidApplyConfigPatchV3WireVersionResponse() {
+    Ipc::IpcResponse response = MakeApplyConfigPatchV3Response(Ipc::ConfigV3MutationStatus::Ok, 1, 1, 0);
+    Ipc::ConfigV3ApplyResultWire result{};
+    std::memcpy(&result, response.data, sizeof(result));
+    result.wireVersion = Ipc::kIpcProtocolVersion + 1;
+    std::memcpy(response.data, &result, sizeof(result));
+    return response;
+}
+
+Ipc::IpcResponse MakePersistConfigV3Response(uint16_t persistedCount, uint16_t skippedCount) {
+    Ipc::IpcResponse response{};
+    Ipc::PersistConfigV3ResponseWire result{};
+    result.status = static_cast<uint8_t>(Ipc::ConfigV3MutationStatus::Ok);
+    result.persistedCount = persistedCount;
+    result.skippedCount = skippedCount;
+    std::memcpy(response.data, &result, sizeof(result));
+    response.dataLen = static_cast<uint16_t>(sizeof(result));
+    Ipc::MarkSuccess(response);
+    return response;
+}
+
+void ApplySnapshotWithBaseline(App::ServiceProxy& proxy, uint32_t schemaVersion, uint32_t snapshotVersion) {
+    Config::ConfigV3SnapshotPayload snapshot{};
+    snapshot.schemaVersion = schemaVersion;
+    snapshot.snapshotVersion = snapshotVersion;
+    snapshot.entries.push_back({Config::ConfigKeyId::SvcMode, std::string("full")});
+    snapshot.entries.push_back({Config::ConfigKeyId::SvcAutoMode, true});
+    const auto bytes = Config::serializeConfigV3Snapshot(snapshot);
+    Require(proxy.ApplyConfigV3SnapshotBytesForTest(bytes.data(), bytes.size()), "v3 snapshot baseline should apply");
+}
+
+std::vector<uint8_t> MakeSnapshotBytes(uint32_t schemaVersion, uint32_t snapshotVersion) {
+    Config::ConfigV3SnapshotPayload snapshot{};
+    snapshot.schemaVersion = schemaVersion;
+    snapshot.snapshotVersion = snapshotVersion;
+    snapshot.entries.push_back({Config::ConfigKeyId::SvcMode, std::string("full")});
+    snapshot.entries.push_back({Config::ConfigKeyId::SvcAutoMode, true});
+    return Config::serializeConfigV3Snapshot(snapshot);
+}
+
 void TestV3CatalogPayloadAppliesSchemaAndDefaults() {
     App::ServiceProxy proxy;
     ApplyCatalog(proxy);
@@ -144,6 +205,108 @@ void TestV3CatalogPayloadAppliesSchemaAndDefaults() {
     const auto versions = proxy.GetConfigV3BaselineVersionsForTest();
     Require(versions.catalogSchemaVersion == 10, "v3 catalog schemaVersion should be recorded");
     Require(versions.catalogSnapshotVersion == 20, "v3 catalog snapshotVersion should be recorded");
+}
+
+void TestConnectedApplyUsesConfigPatchV3() {
+    App::ServiceProxy proxy;
+    ApplyCatalog(proxy);
+    ApplySnapshotWithBaseline(proxy, 10, 31);
+    proxy.GetConfigStore().set<Config::ConfigValue>("service.auto_mode", false);
+    proxy.MarkConfigPathsDirty({"service.auto_mode"});
+    proxy.SetConfigV3IpcTestResponses(
+        true,
+        MakeApplyConfigPatchV3Response(Ipc::ConfigV3MutationStatus::Ok, 1, 1, 0),
+        MakePersistConfigV3Response(1, 0));
+
+    Require(proxy.ApplyConfigStoreGlobally(), "connected apply should succeed through v3");
+    Require(proxy.GetConfigV3ApplyRequestCountForTest() == 1, "connected apply should send one v3 patch request");
+    Require(proxy.GetConfigV3PersistRequestCountForTest() == 1, "connected apply should persist through v3");
+    Require(proxy.HasLastConfigV3ApplyRequestForTest(), "v3 patch request should be captured");
+    const auto request = proxy.GetLastConfigV3ApplyRequestForTest();
+    Require(Ipc::IsValidApplyConfigPatchV3Request(request), "captured v3 patch request should be ABI-valid");
+    Require(request.baseSchemaVersion == 10, "v3 patch should use snapshot schema baseline");
+    Require(request.baseSnapshotVersion == 31, "v3 patch should use snapshot version baseline");
+    const auto patch = Config::deserializePatch(request.bytes, request.payloadBytes);
+    Require(patch.entries.size() == 1, "v3 patch should contain one dirty entry");
+    Require(patch.entries.front().keyId == Config::ConfigKeyId::SvcAutoMode, "v3 patch should contain service.auto_mode");
+    const auto result = proxy.GetLastApplyConfigResult();
+    Require(result.status == App::ApplyConfigStatus::LiveApplied, "live v3 apply should report LiveApplied");
+    Require(result.liveApplied, "live v3 apply should set liveApplied");
+    Require(!result.restartRequired, "live v3 apply should not require restart");
+    Require(result.persistAttempted && result.persisted, "live v3 apply should persist through v3");
+}
+
+void TestConnectedRestartRequiredApplyUsesConfigPatchV3() {
+    App::ServiceProxy proxy;
+    ApplyCatalog(proxy);
+    ApplySnapshotWithBaseline(proxy, 10, 32);
+    proxy.GetConfigStore().set<Config::ConfigValue>("service.mode", std::string("touch_only"));
+    proxy.MarkConfigPathsDirty({"service.mode"});
+    proxy.SetConfigV3IpcTestResponses(
+        true,
+        MakeApplyConfigPatchV3Response(Ipc::ConfigV3MutationStatus::Ok, 1, 0, 1),
+        MakePersistConfigV3Response(1, 0));
+
+    Require(proxy.ApplyConfigStoreGlobally(), "restart-required v3 apply should succeed");
+    Require(proxy.GetConfigV3ApplyRequestCountForTest() == 1, "restart-required apply should send one v3 patch request");
+    const auto request = proxy.GetLastConfigV3ApplyRequestForTest();
+    const auto patch = Config::deserializePatch(request.bytes, request.payloadBytes);
+    Require(patch.entries.size() == 1, "restart-required v3 patch should contain one dirty entry");
+    Require(patch.entries.front().keyId == Config::ConfigKeyId::SvcMode, "restart-required v3 patch should include service.mode");
+    const auto result = proxy.GetLastApplyConfigResult();
+    Require(result.status == App::ApplyConfigStatus::RestartRequired, "restart-required v3 apply should report RestartRequired");
+    Require(!result.liveApplied, "restart-required-only patch should not report liveApplied");
+    Require(result.restartRequired, "restart-required v3 apply should set restartRequired");
+    Require(result.persistAttempted && result.persisted, "restart-required v3 apply should persist staged value");
+}
+
+void TestConnectedRejectedApplyResultIsPropagated() {
+    App::ServiceProxy proxy;
+    ApplyCatalog(proxy);
+    ApplySnapshotWithBaseline(proxy, 10, 34);
+    proxy.GetConfigStore().set<Config::ConfigValue>("service.auto_mode", false);
+    proxy.MarkConfigPathsDirty({"service.auto_mode"});
+    proxy.SetConfigV3IpcTestResponses(
+        true,
+        MakeApplyConfigPatchV3Response(
+            Ipc::ConfigV3MutationStatus::Rejected,
+            0,
+            0,
+            0,
+            1,
+            Config::ConfigKeyId::SvcAutoMode),
+        MakePersistConfigV3Response(0, 0));
+
+    Require(!proxy.ApplyConfigStoreGlobally(), "rejected v3 apply result should fail the app apply");
+    Require(proxy.GetConfigV3ApplyRequestCountForTest() == 1, "rejected v3 apply should send one patch request");
+    Require(proxy.GetConfigV3PersistRequestCountForTest() == 0, "rejected v3 apply should not persist");
+    const auto result = proxy.GetLastApplyConfigResult();
+    Require(result.status == App::ApplyConfigStatus::LiveApplyFailed, "rejected v3 result should map to LiveApplyFailed");
+    Require(!result.liveApplied && !result.restartRequired, "rejected v3 result should not report applied state");
+}
+
+void TestVersionMismatchRetryRejectsInvalidWireVersion() {
+    App::ServiceProxy proxy;
+    ApplyCatalog(proxy);
+    ApplySnapshotWithBaseline(proxy, 10, 35);
+    proxy.GetConfigStore().set<Config::ConfigValue>("service.auto_mode", false);
+    proxy.MarkConfigPathsDirty({"service.auto_mode"});
+    proxy.SetConfigV3IpcTestResponses(
+        true,
+        std::vector<Ipc::IpcResponse>{
+            MakeApplyConfigPatchV3Response(Ipc::ConfigV3MutationStatus::VersionMismatch, 0, 0, 0),
+            MakeInvalidApplyConfigPatchV3WireVersionResponse(),
+        },
+        MakePersistConfigV3Response(0, 0),
+        MakeSnapshotBytes(10, 36));
+
+    Require(!proxy.ApplyConfigStoreGlobally(), "retry response with invalid wireVersion should fail");
+    Require(proxy.GetConfigV3ApplyRequestCountForTest() == 2, "version mismatch should retry once after snapshot refresh");
+    Require(proxy.GetConfigV3PersistRequestCountForTest() == 0, "invalid retry response should not persist");
+    const auto versions = proxy.GetConfigV3BaselineVersionsForTest();
+    Require(versions.snapshotVersion == 36, "version mismatch path should refresh snapshot baseline before retry");
+    const auto result = proxy.GetLastApplyConfigResult();
+    Require(result.status == App::ApplyConfigStatus::LiveApplyFailed, "invalid retry wireVersion should map to LiveApplyFailed");
 }
 
 void TestLocalFallbackInitializesSchemaAndDefaultStore() {
@@ -271,6 +434,10 @@ int main() {
         TestV3SnapshotSkipsUnknownKeyId();
         TestV3SnapshotSkipsUnmappedNumericEnum();
         TestInvalidV3PayloadDoesNotClearSchemaOrStore();
+        TestConnectedApplyUsesConfigPatchV3();
+        TestConnectedRestartRequiredApplyUsesConfigPatchV3();
+        TestConnectedRejectedApplyResultIsPropagated();
+        TestVersionMismatchRetryRejectsInvalidWireVersion();
         std::cout << "[TEST] ServiceProxy catalog schema tests passed.\n";
         return 0;
     } catch (const std::exception& ex) {

@@ -173,6 +173,14 @@ bool IsLivePatchableEntry(const Config::ConfigSchemaEntry& entry) {
            Config::isLiveApplyTiming(entry.applyTiming);
 }
 
+bool IsV3PatchableEntry(const Config::ConfigSchemaEntry& entry) {
+    return entry.boundToRuntime &&
+           (entry.runtimeBinding == Config::ConfigRuntimeBinding::LiveSetter ||
+            entry.runtimeBinding == Config::ConfigRuntimeBinding::ManualLiveApply) &&
+           (Config::isLiveApplyTiming(entry.applyTiming) ||
+            entry.applyTiming == Config::ConfigApplyTiming::RestartRequired);
+}
+
 std::optional<Config::ConfigValue> NormalizeSnapshotValueForSchema(const Config::ConfigSchemaEntry& schemaEntry,
                                                                  const Config::ConfigValue& value) {
     if (schemaEntry.uiType != Config::ConfigUiType::Enum && schemaEntry.enumMapping.empty()) {
@@ -194,6 +202,31 @@ std::optional<Config::ConfigValue> NormalizeSnapshotValueForSchema(const Config:
     }
 
     return Config::ConfigValue(it->second);
+}
+
+bool IsKnownConfigV3MutationStatus(uint8_t status) {
+    switch (static_cast<Ipc::ConfigV3MutationStatus>(status)) {
+    case Ipc::ConfigV3MutationStatus::Ok:
+    case Ipc::ConfigV3MutationStatus::NoChanges:
+    case Ipc::ConfigV3MutationStatus::VersionMismatch:
+    case Ipc::ConfigV3MutationStatus::Rejected:
+    case Ipc::ConfigV3MutationStatus::PersistFailed:
+        return true;
+    }
+    return false;
+}
+
+std::optional<Ipc::ConfigV3ApplyResultWire> DecodeConfigV3ApplyResult(const Ipc::IpcResponse& response) {
+    if (!response.success || response.dataLen < sizeof(Ipc::ConfigV3ApplyResultWire)) {
+        return std::nullopt;
+    }
+
+    Ipc::ConfigV3ApplyResultWire result{};
+    std::memcpy(&result, response.data, sizeof(result));
+    if (result.wireVersion != Ipc::kIpcProtocolVersion || !IsKnownConfigV3MutationStatus(result.status)) {
+        return std::nullopt;
+    }
+    return result;
 }
 
 enum class ServiceModeSchema {
@@ -390,6 +423,7 @@ ApplyConfigResult ServiceProxy::GetLastApplyConfigResult() const {
     ApplyConfigResult result{};
     result.status = m_lastApplyConfigStatus.load(std::memory_order_relaxed);
     result.liveApplied = m_lastApplyConfigLiveApplied.load(std::memory_order_relaxed);
+    result.restartRequired = m_lastApplyConfigRestartRequired.load(std::memory_order_relaxed);
     result.persistAttempted = m_lastApplyConfigPersistAttempted.load(std::memory_order_relaxed);
     result.persisted = m_lastApplyConfigPersisted.load(std::memory_order_relaxed);
     result.unpersistedLiveChanges = m_hasUnpersistedLiveConfigChanges.load(std::memory_order_relaxed);
@@ -398,25 +432,22 @@ ApplyConfigResult ServiceProxy::GetLastApplyConfigResult() const {
 }
 
 bool ServiceProxy::ApplyConfigStoreGlobally() {
-    auto setApplyStatus = [this](ApplyConfigStatus status) {
+    auto setApplyOutcome = [this](ApplyConfigStatus status, bool liveApplied, bool restartRequired) {
         m_lastApplyConfigStatus.store(status, std::memory_order_relaxed);
-        m_lastApplyConfigLiveApplied.store(status == ApplyConfigStatus::LiveApplied, std::memory_order_relaxed);
+        m_lastApplyConfigLiveApplied.store(liveApplied, std::memory_order_relaxed);
+        m_lastApplyConfigRestartRequired.store(restartRequired, std::memory_order_relaxed);
         m_lastApplyConfigPersistAttempted.store(false, std::memory_order_relaxed);
         m_lastApplyConfigPersisted.store(false, std::memory_order_relaxed);
         m_lastApplyConfigPersistStatus.store(static_cast<uint8_t>(Ipc::IpcStatusCode::InternalError), std::memory_order_relaxed);
     };
 #if !EGOTOUCH_CONFIG_ENABLED
-    setApplyStatus(ApplyConfigStatus::LiveApplyFailed);
+    setApplyOutcome(ApplyConfigStatus::LiveApplyFailed, false, false);
     return false;
 #endif
-    if (!IsLiveControlAllowed() || !m_client.IsConnected()) {
-        setApplyStatus(ApplyConfigStatus::LiveApplyFailed);
-        LOG_WARN("App", __func__, "IPC", "Global config apply skipped; live control is not allowed or IPC is disconnected.");
-        return false;
-    }
 
     Config::ConfigPatchTlv patch{};
     size_t skippedKeys = 0;
+    bool hasRestartRequiredEntry = false;
     std::vector<std::string> appliedPaths;
     std::vector<std::string> dirtyPaths(m_dirtyConfigPaths.begin(), m_dirtyConfigPaths.end());
     std::sort(dirtyPaths.begin(), dirtyPaths.end());
@@ -425,19 +456,31 @@ bool ServiceProxy::ApplyConfigStoreGlobally() {
             [&path](const Config::ConfigSchemaEntry& entry) { return entry.yamlPath == path; });
         if (schemaIt == m_configSchema.entries.end() ||
             schemaIt->keyId == Config::ConfigKeyId::MaxKeyId ||
-            !m_configStore.has(path) || !IsLivePatchableEntry(*schemaIt)) {
+            !m_configStore.has(path) || !IsV3PatchableEntry(*schemaIt)) {
             ++skippedKeys;
             continue;
         }
 
         const Config::ConfigValue value = m_configStore.get<Config::ConfigValue>(path);
         patch.entries.push_back(BuildTlvEntry(schemaIt->keyId, value));
+        hasRestartRequiredEntry = hasRestartRequiredEntry ||
+            schemaIt->applyTiming == Config::ConfigApplyTiming::RestartRequired;
         appliedPaths.push_back(path);
     }
 
     if (patch.entries.empty()) {
-        setApplyStatus(ApplyConfigStatus::NoChanges);
+        setApplyOutcome(ApplyConfigStatus::NoChanges, false, false);
         LOG_INFO("App", __func__, "Config", "Global config apply produced no TLV entries; skippedKeys={}", skippedKeys);
+        return true;
+    }
+
+    if (!IsLiveControlAllowed() || !IsConfigIpcConnectedForApply()) {
+        ApplyConfigStoreToLocalRuntime();
+        setApplyOutcome(hasRestartRequiredEntry ? ApplyConfigStatus::RestartRequired : ApplyConfigStatus::LiveApplied,
+                        !hasRestartRequiredEntry,
+                        hasRestartRequiredEntry);
+        m_hasUnpersistedLiveConfigChanges.store(true, std::memory_order_relaxed);
+        LOG_WARN("App", __func__, "IPC", "Global config apply used app-local fallback; live control unavailable or IPC disconnected.");
         return true;
     }
 
@@ -445,65 +488,96 @@ bool ServiceProxy::ApplyConfigStoreGlobally() {
     try {
         payload = Config::serializePatch(patch);
     } catch (const std::exception& ex) {
-        setApplyStatus(ApplyConfigStatus::LiveApplyFailed);
+        setApplyOutcome(ApplyConfigStatus::LiveApplyFailed, false, false);
         LOG_WARN("App", __func__, "Config", "Failed to serialize global config patch: {}", ex.what());
         return false;
     }
 
-    if (payload.size() > Ipc::kConfigTlvMaxPayloadBytes) {
-        setApplyStatus(ApplyConfigStatus::LiveApplyFailed);
-        LOG_WARN("App", __func__, "IPC", "Global config patch too large: {} bytes", payload.size());
+    if (payload.empty() || payload.size() > Ipc::kConfigPatchV3PayloadBytes) {
+        setApplyOutcome(ApplyConfigStatus::LiveApplyFailed, false, false);
+        LOG_WARN("App", __func__, "IPC", "Global config v3 patch too large: {} bytes", payload.size());
         return false;
     }
 
-    static std::atomic<uint16_t> nextSession{1};
-    uint16_t sessionId = nextSession.fetch_add(1, std::memory_order_relaxed);
-    if (sessionId == 0) {
-        sessionId = nextSession.fetch_add(1, std::memory_order_relaxed);
-    }
-
-    size_t offset = 0;
-    Ipc::IpcResponse applyResp{};
-    while (offset < payload.size()) {
-        const size_t take = std::min<size_t>(Ipc::kConfigTlvChunkPayloadBytes, payload.size() - offset);
-        Ipc::ConfigTlvChunkRequestWire chunk{};
-        chunk.sessionId = sessionId;
-        chunk.totalLen = static_cast<uint16_t>(payload.size());
-        chunk.offset = static_cast<uint16_t>(offset);
-        chunk.chunkLen = static_cast<uint16_t>(take);
-        chunk.flags = 0;
-        if (offset == 0) {
-            chunk.flags |= Ipc::kConfigTlvChunkFirst;
-        }
-        if (offset + take == payload.size()) {
-            chunk.flags |= Ipc::kConfigTlvChunkLast;
-        }
-        std::memcpy(chunk.bytes, payload.data() + offset, take);
-
-        applyResp = m_client.ApplyConfigTlvChunk(chunk);
-        if (!applyResp.success) {
-            setApplyStatus(ApplyConfigStatus::LiveApplyFailed);
-            LOG_WARN("App", __func__, "IPC", "ApplyConfigTlvChunk failed with status={} offset={}; dirty paths retained for retry", static_cast<unsigned int>(applyResp.status), offset);
+    if (m_configV3SnapshotSchemaVersion == 0 || m_configV3SnapshotVersion == 0) {
+        if (!RefreshConfigSnapshotV3()) {
+            setApplyOutcome(ApplyConfigStatus::LiveApplyFailed, false, false);
+            LOG_WARN("App", __func__, "Config", "Cannot apply config v3 patch without a snapshot baseline.");
             return false;
         }
-        offset += take;
     }
 
-    m_lastApplyConfigStatus.store(ApplyConfigStatus::LiveApplied, std::memory_order_relaxed);
-    m_lastApplyConfigLiveApplied.store(true, std::memory_order_relaxed);
+    auto sendApply = [&]() {
+        Ipc::ApplyConfigPatchV3RequestWire request{};
+        request.baseSchemaVersion = m_configV3SnapshotSchemaVersion;
+        request.baseSnapshotVersion = m_configV3SnapshotVersion;
+        request.payloadBytes = static_cast<uint16_t>(payload.size());
+        std::memcpy(request.bytes, payload.data(), payload.size());
+        return SendApplyConfigPatchV3Request(request);
+    };
 
-    const auto persistResp = m_client.PersistConfig();
+    auto applyResp = sendApply();
+    auto decodedApply = DecodeConfigV3ApplyResult(applyResp);
+    if (!decodedApply.has_value()) {
+        setApplyOutcome(ApplyConfigStatus::LiveApplyFailed, false, false);
+        LOG_WARN("App", __func__, "IPC", "ApplyConfigPatchV3 failed with status={}; dirty paths retained for retry",
+                 static_cast<unsigned int>(applyResp.status));
+        return false;
+    }
+    Ipc::ConfigV3ApplyResultWire applyResult = *decodedApply;
+
+    if (static_cast<Ipc::ConfigV3MutationStatus>(applyResult.status) == Ipc::ConfigV3MutationStatus::VersionMismatch) {
+        if (!RefreshConfigSnapshotV3()) {
+            setApplyOutcome(ApplyConfigStatus::LiveApplyFailed, false, false);
+            LOG_WARN("App", __func__, "Config", "ApplyConfigPatchV3 version mismatch and snapshot refresh failed.");
+            return false;
+        }
+        applyResp = sendApply();
+        decodedApply = DecodeConfigV3ApplyResult(applyResp);
+        if (!decodedApply.has_value()) {
+            setApplyOutcome(ApplyConfigStatus::LiveApplyFailed, false, false);
+            LOG_WARN("App", __func__, "IPC", "ApplyConfigPatchV3 retry failed with status={}", static_cast<unsigned int>(applyResp.status));
+            return false;
+        }
+        applyResult = *decodedApply;
+    }
+
+    const auto mutationStatus = static_cast<Ipc::ConfigV3MutationStatus>(applyResult.status);
+    if (mutationStatus != Ipc::ConfigV3MutationStatus::Ok &&
+        mutationStatus != Ipc::ConfigV3MutationStatus::NoChanges) {
+        setApplyOutcome(ApplyConfigStatus::LiveApplyFailed, false, false);
+        LOG_WARN("App", __func__, "IPC", "ApplyConfigPatchV3 rejected status={} failedKeyId=0x{:04X}",
+                 static_cast<unsigned int>(applyResult.status), applyResult.failedKeyId);
+        return false;
+    }
+
+    const bool liveApplied = applyResult.appliedCount != 0;
+    const bool restartRequired = applyResult.restartRequiredCount != 0;
+    const auto applyStatus = mutationStatus == Ipc::ConfigV3MutationStatus::NoChanges
+        ? ApplyConfigStatus::NoChanges
+        : (restartRequired ? ApplyConfigStatus::RestartRequired : ApplyConfigStatus::LiveApplied);
+    setApplyOutcome(applyStatus, liveApplied, restartRequired);
+
+    const auto persistResp = SendPersistConfigV3Request();
     m_lastApplyConfigPersistAttempted.store(true, std::memory_order_relaxed);
-    m_lastApplyConfigPersisted.store(persistResp.success, std::memory_order_relaxed);
     m_lastApplyConfigPersistStatus.store(static_cast<uint8_t>(persistResp.status), std::memory_order_relaxed);
-    if (!persistResp.success) {
+    bool persisted = false;
+    Ipc::PersistConfigV3ResponseWire persistResult{};
+    if (persistResp.success && persistResp.dataLen >= sizeof(Ipc::PersistConfigV3ResponseWire)) {
+        std::memcpy(&persistResult, persistResp.data, sizeof(persistResult));
+        persisted = persistResult.wireVersion == Ipc::kIpcProtocolVersion &&
+            static_cast<Ipc::ConfigV3MutationStatus>(persistResult.status) == Ipc::ConfigV3MutationStatus::Ok;
+    }
+    m_lastApplyConfigPersisted.store(persisted, std::memory_order_relaxed);
+    if (!persisted) {
         m_hasUnpersistedLiveConfigChanges.store(true, std::memory_order_relaxed);
-        LOG_WARN("App", __func__, "IPC", "PersistConfig failed after live apply with status={}; keeping live apply success and dirty paths for retry", static_cast<unsigned int>(persistResp.status));
+        LOG_WARN("App", __func__, "IPC", "PersistConfigV3 failed after apply with status={}; keeping dirty paths for retry",
+                 static_cast<unsigned int>(persistResp.status));
     }
 
     RefreshConfigSnapshot();
     ApplyConfigStoreToLocalRuntime();
-    if (persistResp.success) {
+    if (persisted) {
         for (const auto& path : appliedPaths) {
             m_dirtyConfigPaths.erase(path);
         }
@@ -511,8 +585,9 @@ bool ServiceProxy::ApplyConfigStoreGlobally() {
             m_hasUnpersistedLiveConfigChanges.store(false, std::memory_order_relaxed);
         }
     }
-    LOG_INFO("App", __func__, "IPC", "Global config live-applied entries={} skippedKeys={} payloadBytes={} persisted={} unpersistedLiveChanges={}",
-             patch.entries.size(), skippedKeys, payload.size(), persistResp.success ? 1 : 0,
+    LOG_INFO("App", __func__, "IPC", "Global config v3 applied entries={} skippedKeys={} payloadBytes={} liveApplied={} restartRequired={} persisted={} persistedCount={} skippedPersist={} unpersistedLiveChanges={}",
+             patch.entries.size(), skippedKeys, payload.size(), liveApplied ? 1 : 0, restartRequired ? 1 : 0,
+             persisted ? 1 : 0, persistResult.persistedCount, persistResult.skippedCount,
              m_hasUnpersistedLiveConfigChanges.load(std::memory_order_relaxed) ? 1 : 0);
     return true;
 }
@@ -520,6 +595,66 @@ bool ServiceProxy::ApplyConfigStoreGlobally() {
 void ServiceProxy::SaveConfig() {
     (void)ApplyConfigStoreGlobally();
 }
+
+bool ServiceProxy::IsConfigIpcConnectedForApply() const {
+#if defined(EGOTOUCH_APP_SERVICE_PROXY_TEST)
+    if (m_configV3IpcTestConnected) {
+        return true;
+    }
+#endif
+    return m_client.IsConnected();
+}
+
+Ipc::IpcResponse ServiceProxy::SendApplyConfigPatchV3Request(const Ipc::ApplyConfigPatchV3RequestWire& request) {
+#if defined(EGOTOUCH_APP_SERVICE_PROXY_TEST)
+    if (m_configV3IpcTestConnected) {
+        m_lastConfigV3ApplyRequestForTest = request;
+        m_hasLastConfigV3ApplyRequestForTest = true;
+        ++m_configV3ApplyRequestCountForTest;
+        if (m_configV3IpcTestApplyResponseIndex < m_configV3IpcTestApplyResponses.size()) {
+            return m_configV3IpcTestApplyResponses[m_configV3IpcTestApplyResponseIndex++];
+        }
+        return m_configV3IpcTestApplyResponse;
+    }
+#endif
+    return m_client.ApplyConfigPatchV3(request);
+}
+
+Ipc::IpcResponse ServiceProxy::SendPersistConfigV3Request() {
+#if defined(EGOTOUCH_APP_SERVICE_PROXY_TEST)
+    if (m_configV3IpcTestConnected) {
+        ++m_configV3PersistRequestCountForTest;
+        return m_configV3IpcTestPersistResponse;
+    }
+#endif
+    return m_client.PersistConfigV3();
+}
+
+#if defined(EGOTOUCH_APP_SERVICE_PROXY_TEST)
+void ServiceProxy::SetConfigV3IpcTestResponses(bool connected,
+                                               const Ipc::IpcResponse& applyResponse,
+                                               const Ipc::IpcResponse& persistResponse) {
+    SetConfigV3IpcTestResponses(connected, std::vector<Ipc::IpcResponse>{applyResponse}, persistResponse);
+}
+
+void ServiceProxy::SetConfigV3IpcTestResponses(bool connected,
+                                               std::vector<Ipc::IpcResponse> applyResponses,
+                                               const Ipc::IpcResponse& persistResponse,
+                                               std::vector<uint8_t> snapshotBytes) {
+    m_configV3IpcTestConnected = connected;
+    m_configV3IpcTestApplyResponses = std::move(applyResponses);
+    m_configV3IpcTestApplyResponseIndex = 0;
+    m_configV3IpcTestApplyResponse = m_configV3IpcTestApplyResponses.empty()
+        ? Ipc::IpcResponse{}
+        : m_configV3IpcTestApplyResponses.back();
+    m_configV3IpcTestPersistResponse = persistResponse;
+    m_configV3IpcTestSnapshotBytes = std::move(snapshotBytes);
+    m_hasLastConfigV3ApplyRequestForTest = false;
+    m_lastConfigV3ApplyRequestForTest = Ipc::ApplyConfigPatchV3RequestWire{};
+    m_configV3ApplyRequestCountForTest = 0;
+    m_configV3PersistRequestCountForTest = 0;
+}
+#endif
 
 uint32_t HashBytes(std::span<const uint8_t> bytes) noexcept {
     uint32_t hash = 2166136261u;
@@ -531,6 +666,13 @@ uint32_t HashBytes(std::span<const uint8_t> bytes) noexcept {
 }
 
 std::optional<std::vector<uint8_t>> ServiceProxy::FetchConfigV3Bytes(Ipc::ConfigV3PayloadKind payloadKind) {
+#if defined(EGOTOUCH_APP_SERVICE_PROXY_TEST)
+    if (m_configV3IpcTestConnected &&
+        payloadKind == Ipc::ConfigV3PayloadKind::Snapshot &&
+        !m_configV3IpcTestSnapshotBytes.empty()) {
+        return m_configV3IpcTestSnapshotBytes;
+    }
+#endif
     constexpr uint32_t kMaxBytes = 1024u * 1024u;
     const uint8_t rawKind = static_cast<uint8_t>(payloadKind);
     std::vector<uint8_t> bytes;
@@ -690,7 +832,7 @@ bool ServiceProxy::RefreshConfigCatalogV3() {
 }
 
 bool ServiceProxy::RefreshConfigSnapshotV3() {
-    if (!m_client.IsConnected()) return false;
+    if (!IsConfigIpcConnectedForApply()) return false;
     const auto bytes = FetchConfigV3Bytes(Ipc::ConfigV3PayloadKind::Snapshot);
     return bytes.has_value() && ApplyConfigV3SnapshotBytes(bytes->data(), bytes->size());
 }

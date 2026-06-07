@@ -40,6 +40,8 @@ public:
     IpcResponse ApplyConfigTlvChunk(const ConfigTlvChunkRequestWire& chunk);
     IpcResponse GetConfigCatalogV3Page(const ConfigV3PageRequestWire& request);
     IpcResponse GetConfigSnapshotV3Page(const ConfigV3PageRequestWire& request);
+    IpcResponse ApplyConfigPatchV3(const ApplyConfigPatchV3RequestWire& request);
+    IpcResponse PersistConfigV3();
     IpcResponse PersistConfig();
 
 private:

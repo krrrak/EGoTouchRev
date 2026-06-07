@@ -40,6 +40,8 @@ enum class IpcCommand : uint8_t {
     ApplyConfigTlvChunk = 45,
     GetConfigCatalogV3 = 46,
     GetConfigSnapshotV3 = 47,
+    ApplyConfigPatchV3 = 48,
+    PersistConfigV3 = 49,
     // Logs
     GetLogs        = 50,  // App requests recent log lines from Service
     // PenBridge (BT MCU)
@@ -204,6 +206,55 @@ constexpr bool IsValidConfigV3PageResponse(const ConfigV3PageResponseHeaderWire&
 
 constexpr bool IsValidConfigV3PageResponse(const ConfigV3PageResponseHeaderWire& header) noexcept {
     return IsValidConfigV3PageResponse(header, static_cast<uint32_t>(header.headerBytes) + header.pageBytes);
+}
+
+constexpr uint16_t kConfigPatchV3PayloadBytes = 240;
+
+enum class ConfigV3MutationStatus : uint8_t {
+    Ok = 0,
+    NoChanges = 1,
+    VersionMismatch = 2,
+    Rejected = 3,
+    PersistFailed = 4,
+};
+
+struct ApplyConfigPatchV3RequestWire {
+    uint16_t wireVersion = kIpcProtocolVersion;
+    uint16_t headerBytes = 16;
+    uint32_t baseSchemaVersion = 0;
+    uint32_t baseSnapshotVersion = 0;
+    uint16_t payloadBytes = 0;
+    uint16_t flags = 0;
+    uint8_t bytes[kConfigPatchV3PayloadBytes]{};
+};
+
+struct ConfigV3ApplyResultWire {
+    uint16_t wireVersion = kIpcProtocolVersion;
+    uint8_t status = static_cast<uint8_t>(ConfigV3MutationStatus::Ok);
+    uint8_t failedValueType = 0;
+    uint16_t changedCount = 0;
+    uint16_t appliedCount = 0;
+    uint16_t restartRequiredCount = 0;
+    uint16_t rejectedCount = 0;
+    uint16_t failedKeyId = 0;
+    uint16_t reserved = 0;
+};
+
+struct PersistConfigV3ResponseWire {
+    uint16_t wireVersion = kIpcProtocolVersion;
+    uint8_t status = static_cast<uint8_t>(ConfigV3MutationStatus::Ok);
+    uint8_t reserved = 0;
+    uint16_t persistedCount = 0;
+    uint16_t skippedCount = 0;
+    uint16_t failedCount = 0;
+};
+
+constexpr bool IsValidApplyConfigPatchV3Request(const ApplyConfigPatchV3RequestWire& request) noexcept {
+    return request.wireVersion == kIpcProtocolVersion &&
+           request.headerBytes == 16 &&
+           request.flags == 0 &&
+           request.payloadBytes > 0 &&
+           request.payloadBytes <= kConfigPatchV3PayloadBytes;
 }
 
 enum class DebugValueType : uint8_t {
@@ -400,8 +451,16 @@ static_assert(sizeof(ConfigTlvChunkRequestWire) <= 256,
     "Config TLV chunk must fit in IpcRequest::param");
 static_assert(sizeof(ConfigV3PageRequestWire) <= 256,
     "Config v3 page request must fit in IpcRequest::param");
+static_assert(sizeof(ApplyConfigPatchV3RequestWire) <= 256,
+    "Config v3 patch request must fit in IpcRequest::param");
 static_assert(sizeof(ConfigV3PageResponseHeaderWire) < kIpcResponseDataBytes,
     "Config v3 response header must leave room for page bytes");
+static_assert(sizeof(ConfigV3ApplyResultWire) < kIpcResponseDataBytes,
+    "Config v3 apply result must fit in IpcResponse::data");
+static_assert(sizeof(PersistConfigV3ResponseWire) < kIpcResponseDataBytes,
+    "Config v3 persist result must fit in IpcResponse::data");
+static_assert(kConfigPatchV3PayloadBytes == 240,
+    "Config v3 patch payload capacity changed");
 static_assert(ConfigV3PageCapacityBytes() == kIpcResponseDataBytes - sizeof(ConfigV3PageResponseHeaderWire),
     "Config v3 page capacity calculation changed");
 
