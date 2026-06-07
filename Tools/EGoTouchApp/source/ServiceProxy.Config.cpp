@@ -35,6 +35,10 @@ Config::ConfigValue ToConfigValue(std::string_view value) {
     return Config::ConfigValue(std::string(value));
 }
 
+Config::ConfigValue ToConfigValue(const char* value) {
+    return Config::ConfigValue(std::string(value));
+}
+
 const char* ToServiceModeConfig(bool full) {
     return full ? "full" : "touch_only";
 }
@@ -168,9 +172,9 @@ bool IsLivePatchableEntry(const Config::ConfigSchemaEntry& entry) {
             entry.runtimeBinding == Config::ConfigRuntimeBinding::ManualLiveApply);
 }
 
-Config::ConfigValue NormalizeSnapshotValueForSchema(const Config::ConfigSchemaEntry& schemaEntry,
-                                                    const Config::ConfigValue& value) {
-    if (schemaEntry.uiType != Config::ConfigUiType::Enum) {
+std::optional<Config::ConfigValue> NormalizeSnapshotValueForSchema(const Config::ConfigSchemaEntry& schemaEntry,
+                                                                 const Config::ConfigValue& value) {
+    if (schemaEntry.uiType != Config::ConfigUiType::Enum && schemaEntry.enumMapping.empty()) {
         return value;
     }
 
@@ -183,7 +187,9 @@ Config::ConfigValue NormalizeSnapshotValueForSchema(const Config::ConfigSchemaEn
         return item.first == *numeric;
     });
     if (it == schemaEntry.enumMapping.end()) {
-        return value;
+        LOG_WARN("App", __func__, "Config", "Skipping unmapped numeric enum snapshot value path={} value={}",
+                 schemaEntry.yamlPath, *numeric);
+        return std::nullopt;
     }
 
     return Config::ConfigValue(it->second);
@@ -630,8 +636,11 @@ bool ServiceProxy::ApplyConfigV3SnapshotBytes(const uint8_t* data, size_t size) 
                 ++dirtySkipped;
                 continue;
             }
-            m_configStore.set<Config::ConfigValue>(schemaEntry.yamlPath,
-                                                   NormalizeSnapshotValueForSchema(schemaEntry, entry.value));
+            const auto normalizedValue = NormalizeSnapshotValueForSchema(schemaEntry, entry.value);
+            if (!normalizedValue.has_value()) {
+                continue;
+            }
+            m_configStore.set<Config::ConfigValue>(schemaEntry.yamlPath, *normalizedValue);
             ++applied;
         }
         SyncServiceMirrorsFromStore(

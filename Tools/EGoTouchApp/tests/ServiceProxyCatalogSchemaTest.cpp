@@ -134,12 +134,15 @@ void TestV3SnapshotPayloadWritesConfigStore() {
     snapshot.schemaVersion = 10;
     snapshot.snapshotVersion = 21;
     snapshot.entries.push_back({Config::ConfigKeyId::SvcMode, int32_t{1}});
+    snapshot.entries.push_back({Config::ConfigKeyId::SvcPenButtonRoute, std::string("win32_only")});
     snapshot.entries.push_back({Config::ConfigKeyId::SvcAutoMode, false});
     const auto bytes = Config::serializeConfigV3Snapshot(snapshot);
 
     Require(proxy.ApplyConfigV3SnapshotBytesForTest(bytes.data(), bytes.size()), "v3 snapshot payload should apply");
     Require(proxy.GetConfigStore().getOr<std::string>("service.mode", "") == "touch_only",
-            "v3 snapshot should write string value to ConfigStore");
+            "v3 snapshot should write numeric enum as string value to ConfigStore");
+    Require(proxy.GetConfigStore().getOr<std::string>("service.pen_button_route", "") == "win32_only",
+            "v3 snapshot should write string enum value to ConfigStore");
     Require(proxy.GetConfigStore().getOr<bool>("service.auto_mode", true) == false,
             "v3 snapshot should write bool value to ConfigStore");
 }
@@ -169,13 +172,33 @@ void TestV3SnapshotSkipsUnknownKeyId() {
     Config::ConfigV3SnapshotPayload snapshot{};
     snapshot.schemaVersion = 10;
     snapshot.snapshotVersion = 23;
-    snapshot.entries.push_back({Config::ConfigKeyId::MaxKeyId, false});
+    snapshot.entries.push_back({static_cast<Config::ConfigKeyId>(0x0200), int32_t{0}});
     snapshot.entries.push_back({Config::ConfigKeyId::SvcAutoMode, false});
     const auto bytes = Config::serializeConfigV3Snapshot(snapshot);
 
     Require(proxy.ApplyConfigV3SnapshotBytesForTest(bytes.data(), bytes.size()), "unknown keyId should be skipped safely");
     Require(proxy.GetConfigStore().getOr<bool>("service.auto_mode", true) == false,
             "known key after unknown keyId should still apply");
+}
+
+void TestV3SnapshotSkipsUnmappedNumericEnum() {
+    App::ServiceProxy proxy;
+    ApplyCatalog(proxy);
+    proxy.GetConfigStore().set<Config::ConfigValue>("service.mode", std::string("full"));
+    proxy.GetConfigStore().set<Config::ConfigValue>("service.auto_mode", true);
+
+    Config::ConfigV3SnapshotPayload snapshot{};
+    snapshot.schemaVersion = 10;
+    snapshot.snapshotVersion = 24;
+    snapshot.entries.push_back({Config::ConfigKeyId::SvcMode, int32_t{999}});
+    snapshot.entries.push_back({Config::ConfigKeyId::SvcAutoMode, false});
+    const auto bytes = Config::serializeConfigV3Snapshot(snapshot);
+
+    Require(proxy.ApplyConfigV3SnapshotBytesForTest(bytes.data(), bytes.size()), "unmapped enum snapshot should not fail payload apply");
+    Require(proxy.GetConfigStore().getOr<std::string>("service.mode", "") == "full",
+            "unmapped numeric enum should not overwrite existing string enum value");
+    Require(proxy.GetConfigStore().getOr<bool>("service.auto_mode", true) == false,
+            "valid entry after unmapped numeric enum should still apply");
 }
 
 void TestInvalidV3PayloadDoesNotClearSchemaOrStore() {
@@ -205,6 +228,7 @@ int main() {
         TestV3SnapshotPayloadWritesConfigStore();
         TestV3SnapshotPreservesDirtyPath();
         TestV3SnapshotSkipsUnknownKeyId();
+        TestV3SnapshotSkipsUnmappedNumericEnum();
         TestInvalidV3PayloadDoesNotClearSchemaOrStore();
         std::cout << "[TEST] ServiceProxy catalog schema tests passed.\n";
         return 0;
