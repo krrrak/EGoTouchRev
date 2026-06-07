@@ -44,6 +44,9 @@ public:
 
     ConfigRuntime();
 
+    static Config::ConfigStore BuildFactoryDefaultStore();
+    static Config::ConfigSchemaSnapshot BuildFactoryDefaultSchema();
+
     void RegisterConfigTarget(std::unique_ptr<IConfigTarget> target);
     bool Initialize(const std::string& configPath, const StartupValidator& validateStartupConfig);
     ConfigV3Blob BuildCatalogV3Blob() const;

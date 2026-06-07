@@ -79,10 +79,21 @@ ConfigValue scalarToConfigValue(const YAML::Node& node) {
     return scalar;
 }
 
-void assignConfigValue(YAML::Node node, const ConfigValue& value) {
-    std::visit([&node](const auto& typedValue) {
-        node = typedValue;
+void assignConfigValue(YAML::Node node, const std::string& key, const ConfigValue& value) {
+    std::visit([&node, &key](const auto& typedValue) {
+        node[key] = typedValue;
     }, value);
+}
+
+void assignConfigValueAtPath(YAML::Node node,
+                             const std::vector<std::string>& parts,
+                             size_t index,
+                             const ConfigValue& value) {
+    if (index + 1 == parts.size()) {
+        assignConfigValue(node, parts[index], value);
+        return;
+    }
+    assignConfigValueAtPath(node[parts[index]], parts, index + 1, value);
 }
 
 std::optional<double> numericValue(const ConfigValue& value) {
@@ -218,11 +229,7 @@ YAML::Node ConfigStore::unflattenToYaml() const {
             continue;
         }
 
-        YAML::Node current = root;
-        for (size_t i = 0; i + 1 < parts.size(); ++i) {
-            current = current[parts[i]];
-        }
-        assignConfigValue(current[parts.back()], m_entries.at(path).value);
+        assignConfigValueAtPath(root, parts, 0, m_entries.at(path).value);
     }
 
     return root;

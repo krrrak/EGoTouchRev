@@ -19,6 +19,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 
 namespace Service {
@@ -97,6 +98,32 @@ void ClampStylusIirCoefficients(Config::ConfigStore& store) {
     for (const auto [canonicalPath, legacyPath] : kStylusIirCoefficientPathPairs) {
         const auto path = store.has(canonicalPath) ? canonicalPath : legacyPath;
         if (store.has(path)) store.set<int32_t>(path, std::clamp(store.get<int32_t>(path), int32_t{0}, maxCoef));
+    }
+}
+
+template<typename Callback>
+decltype(auto) WithRuntimeConfigDefaults(Callback&& callback) {
+    Config::ConfigBinder binder;
+    ServiceConfigState serviceDefaults;
+    Solvers::TouchPipeline touchDefaults;
+    Solvers::StylusPipeline stylusDefaults;
+    RegisterServiceConfigBindings(binder, serviceDefaults);
+    touchDefaults.registerBindings(binder);
+    stylusDefaults.registerBindings(binder);
+    Config::registerRuntimeKeyMappings(binder);
+
+    Config::ConfigStore defaults;
+    defaults.set<std::string>("service.mode", "full");
+    defaults.set<bool>("service.auto_mode", true);
+    defaults.set<bool>("service.stylus_vhf_enabled", true);
+    defaults.set<std::string>("service.pen_button_mode", "oem_custom");
+    defaults.set<std::string>("service.pen_button_route", "vhf_only");
+    binder.writeDefaults(defaults);
+
+    if constexpr (std::is_void_v<std::invoke_result_t<Callback, Config::ConfigBinder&, Config::ConfigStore&>>) {
+        std::forward<Callback>(callback)(binder, defaults);
+    } else {
+        return std::forward<Callback>(callback)(binder, defaults);
     }
 }
 
@@ -236,24 +263,21 @@ void ConfigRuntime::RegisterDefaultConfigTargets() {
     m_targets.push_back(std::make_unique<PipelineConfigTarget>());
 }
 
+Config::ConfigStore ConfigRuntime::BuildFactoryDefaultStore() {
+    return WithRuntimeConfigDefaults([](Config::ConfigBinder&, Config::ConfigStore& defaults) {
+        return defaults;
+    });
+}
+
+Config::ConfigSchemaSnapshot ConfigRuntime::BuildFactoryDefaultSchema() {
+    return WithRuntimeConfigDefaults([](Config::ConfigBinder& binder, Config::ConfigStore& defaults) {
+        return Config::BuildMergedSchema(defaults, binder);
+    });
+}
+
 bool ConfigRuntime::Initialize(const std::string& configPath, const StartupValidator& validateStartupConfig) {
-    Config::ConfigBinder binder;
-    ServiceConfigState serviceDefaults;
-    Solvers::TouchPipeline touchDefaults;
-    Solvers::StylusPipeline stylusDefaults;
-    RegisterServiceConfigBindings(binder, serviceDefaults);
-    touchDefaults.registerBindings(binder);
-    stylusDefaults.registerBindings(binder);
-    Config::registerRuntimeKeyMappings(binder);
-
     Config::ConfigStore defaults;
-    defaults.set<std::string>("service.mode", "full");
-    defaults.set<bool>("service.auto_mode", true);
-    defaults.set<bool>("service.stylus_vhf_enabled", true);
-    defaults.set<std::string>("service.pen_button_mode", "oem_custom");
-    defaults.set<std::string>("service.pen_button_route", "vhf_only");
-    binder.writeDefaults(defaults);
-
+    Config::ConfigSchemaSnapshot schema;
     std::optional<std::string> cliConfigPath;
     if (!configPath.empty()) cliConfigPath = configPath;
     auto paths = Config::resolve(cliConfigPath);
@@ -273,6 +297,12 @@ bool ConfigRuntime::Initialize(const std::string& configPath, const StartupValid
             LOG_WARN("Service", __func__, "Config", "Failed to load default config '{}': {}", paths->defaultConfig, ex.what());
         }
     }
+
+    WithRuntimeConfigDefaults([&defaults, &schema](Config::ConfigBinder& binder, Config::ConfigStore& factoryDefaults) {
+        factoryDefaults.mergeFrom(defaults);
+        defaults = factoryDefaults;
+        schema = Config::BuildMergedSchema(defaults, binder);
+    });
 
     Config::ConfigStore current;
     current.mergeFrom(defaults);
@@ -294,7 +324,6 @@ bool ConfigRuntime::Initialize(const std::string& configPath, const StartupValid
         return false;
     }
 
-    auto schema = Config::BuildMergedSchema(defaults, binder);
     for (const auto& path : current.allPaths()) {
         const auto value = current.get<Config::ConfigValue>(path);
         if (!ConfigValueAllowedBySchema(path, value, schema, false) && defaults.has(path)) {

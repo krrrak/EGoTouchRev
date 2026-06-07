@@ -444,6 +444,20 @@ if (EGO_BUILD_TESTS)
         WORKING_DIRECTORY "$<TARGET_FILE_DIR:ConfigRuntimeTest>"
     )
 
+    add_executable(ConfigDefaultYamlDriftTest
+        EGoTouchService/tests/unit/ConfigDefaultYamlDriftTest.cpp
+    )
+    target_compile_definitions(ConfigDefaultYamlDriftTest PRIVATE
+        EGO_REPO_DEFAULT_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/default.yaml"
+    )
+    target_link_libraries(ConfigDefaultYamlDriftTest PRIVATE EGoTouchServiceCore)
+    add_test(NAME ConfigDefaultYamlDriftTest COMMAND ConfigDefaultYamlDriftTest)
+    set_tests_properties(ConfigDefaultYamlDriftTest PROPERTIES
+        LABELS "service;config;unit;device-free"
+        TIMEOUT 10
+        WORKING_DIRECTORY "$<TARGET_FILE_DIR:ConfigDefaultYamlDriftTest>"
+    )
+
     add_subdirectory(EGoTouchService/Solvers/tests)
 
 
