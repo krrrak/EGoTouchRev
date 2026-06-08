@@ -32,6 +32,11 @@ private:
 
     // Content panels (drawn inside Inspector tabs)
     void DrawStylusControlPanel();
+    void DrawStylusOverviewPanel();
+    void DrawStylusServicePolicyPanel();
+    void DrawStylusPipelineConfigPanel();
+    void DrawStylusCoordinatePanel();
+    void DrawStylusPacketDetails();
     void DrawHeatmap();
     void DrawCoordinateTable();
     void DrawTouchInspectorPanel();
@@ -73,6 +78,7 @@ private:
     bool m_dockLayoutApplied = false;
     int m_activeInspectorTab = 0;
     int m_touchConfigModuleIndex = 0;
+    int m_stylusConfigModuleIndex = 0;
 
     // Export
     int m_autoExportTargetPeaks = 0;

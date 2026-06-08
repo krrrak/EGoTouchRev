@@ -141,6 +141,73 @@ ConfigUIRenderer::ConfigPathStateProvider MakeConfigPathStateProvider(ServicePro
     };
 }
 
+const char* YesNo(bool value) {
+    return value ? "Y" : "N";
+}
+
+const char* PenModuleModelName(uint32_t modelId) {
+    switch (modelId) {
+    case 0x00011B: return "CD54";
+    case 0x01011B: return "CD54R";
+    case 0x443002: return "CD54S";
+    default: return "Unknown";
+    }
+}
+
+std::string PenModuleModelText(const PenIdentityStatus& pen) {
+    if (!pen.hasPenModuleModelId) {
+        return "Unknown";
+    }
+
+    char buffer[64]{};
+    std::snprintf(
+        buffer,
+        sizeof(buffer),
+        "%s (0x%06X)",
+        PenModuleModelName(pen.penModuleModelId),
+        static_cast<unsigned int>(pen.penModuleModelId));
+    return std::string(buffer);
+}
+
+std::string PenIdentitySummary(const PenIdentityStatus& pen) {
+    std::string summary = pen.connected ? "connected" : "disconnected/unknown";
+    summary += " | stylusId=";
+    summary += pen.hasStylusId ? std::to_string(static_cast<unsigned int>(pen.stylusId)) : "Unknown";
+    summary += " | modelId=";
+    summary += PenModuleModelText(pen);
+    summary += " | hardwareVersion=";
+    summary += (pen.hasHardwareVersion && !pen.hardwareVersion.empty()) ? pen.hardwareVersion : "Unknown";
+    return summary;
+}
+
+std::string StylusPacketBytes(const Solvers::StylusPacket& packet) {
+    std::string result;
+    result.reserve(packet.bytes.size() * 3);
+    char byteText[4]{};
+    for (size_t i = 0; i < packet.bytes.size(); ++i) {
+        std::snprintf(byteText, sizeof(byteText), "%02x", static_cast<unsigned int>(packet.bytes[i]));
+        result += byteText;
+        if (i + 1 < packet.bytes.size()) {
+            result += ' ';
+        }
+    }
+    return result;
+}
+
+template <typename FourValueArray>
+std::string FourU16ValuesText(const FourValueArray& values) {
+    char buffer[96]{};
+    std::snprintf(
+        buffer,
+        sizeof(buffer),
+        "%u / %u / %u / %u",
+        static_cast<unsigned int>(values[0]),
+        static_cast<unsigned int>(values[1]),
+        static_cast<unsigned int>(values[2]),
+        static_cast<unsigned int>(values[3]));
+    return std::string(buffer);
+}
+
 } // namespace
 
 void DiagnosticsWorkbench::DrawApplyConfigResultStatus() const {
@@ -479,17 +546,180 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
         return;
     }
 
+    const bool connected = m_proxy->IsConnected();
     const bool masterParserOnly = m_proxy->IsMasterParserOnlyMode();
-    if (masterParserOnly) {
-        ImGui::TextUnformatted("Master Parser Only is enabled.");
-        ImGui::BeginDisabled();
+    const bool stylusVhfEnabled = m_proxy->IsSrvStylusVhfEnabled();
+    const auto pen = m_proxy->GetPenIdentityStatus();
+    const auto& stylus = m_currentFrame.stylus;
+    const auto& output = stylus.output;
+    const std::string modelText = PenModuleModelText(pen);
+
+    if (ImGui::BeginTable("StylusStatusStrip", 4, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchSame)) {
+        ImGui::TableNextRow();
+
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextDisabled("Service");
+        ImGui::TextColored(StatusColor(connected), "%s", connected ? "● Connected" : "● Disconnected");
+        ImGui::TextDisabled("%s", FrameSourceModeLabel(m_proxy->GetFrameSourceMode()));
+
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextDisabled("Pipeline");
+        ImGui::TextColored(masterParserOnly ? WarnColor() : GoodColor(), "%s", masterParserOnly ? "Master Parser Only" : "Full Pipeline");
+        ImGui::TextColored(StatusColor(stylusVhfEnabled), "Stylus VHF: %s", stylusVhfEnabled ? "Enabled" : "Disabled");
+
+        ImGui::TableSetColumnIndex(2);
+        ImGui::TextDisabled("Pen");
+        ImGui::TextColored(StatusColor(pen.connected), "%s", pen.connected ? "Connected" : "Disconnected / Unknown");
+        ImGui::TextDisabled("Model: %s", modelText.c_str());
+
+        ImGui::TableSetColumnIndex(3);
+        ImGui::TextDisabled("Current Sample");
+        ImGui::TextColored(StatusColor(output.valid), "%s", output.valid ? "Valid" : "Invalid");
+        ImGui::SameLine();
+        ImGui::Text("%s%s", output.inRange ? " | InRange" : " | OutOfRange", output.tipDown ? " | TipDown" : "");
+        ImGui::Text("Pressure: %u  Stage: %u", static_cast<unsigned int>(output.pressure), static_cast<unsigned int>(output.pipelineStage));
+        ImGui::EndTable();
     }
 
+    if (masterParserOnly) {
+        ImGui::TextColored(WarnColor(), "Master Parser Only is enabled. Read-only diagnostics remain available; stylus pipeline parameter controls are disabled.");
+    }
+
+    ImGui::Separator();
+    if (ImGui::BeginTabBar("StylusInspectorTabs")) {
+        if (ImGui::BeginTabItem("Overview")) {
+            DrawStylusOverviewPanel();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Pipeline Config")) {
+            DrawStylusPipelineConfigPanel();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Coordinates")) {
+            DrawStylusCoordinatePanel();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Packets")) {
+            DrawStylusPacketDetails();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+}
+
+void DiagnosticsWorkbench::DrawStylusOverviewPanel() {
+    if (!m_proxy) {
+        ImGui::TextUnformatted("ServiceProxy unavailable.");
+        return;
+    }
+
+    const auto pen = m_proxy->GetPenIdentityStatus();
+    const auto& stylus = m_currentFrame.stylus;
+    const auto& output = stylus.output;
+    const auto& interop = stylus.interop;
+    const auto& diag = stylus.debug.coord;
+
+    if (ImGui::BeginTable("StylusOverviewColumns", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchSame)) {
+        ImGui::TableNextRow();
+
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextColored(InfoColor(), "Runtime");
+        if (ImGui::BeginTable("StylusRuntimeTable", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+            ImGui::TableSetupColumn("Item", ImGuiTableColumnFlags_WidthFixed, 130.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableHeadersRow();
+
+            auto drawRow = [](const char* label, const auto& drawValue) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(label);
+                ImGui::TableSetColumnIndex(1);
+                drawValue();
+            };
+
+            drawRow("Service", [&] { ImGui::TextColored(StatusColor(m_proxy->IsConnected()), "%s", m_proxy->IsConnected() ? "Connected" : "Disconnected"); });
+            drawRow("Source", [&] { ImGui::TextUnformatted(FrameSourceModeLabel(m_proxy->GetFrameSourceMode())); });
+            drawRow("Pipeline", [&] { ImGui::TextColored(m_proxy->IsMasterParserOnlyMode() ? WarnColor() : GoodColor(), "%s", m_proxy->IsMasterParserOnlyMode() ? "Master Parser Only" : "Full Pipeline"); });
+            drawRow("Stylus VHF", [&] { ImGui::TextColored(StatusColor(m_proxy->IsSrvStylusVhfEnabled()), "%s", m_proxy->IsSrvStylusVhfEnabled() ? "Enabled" : "Disabled"); });
+            drawRow("Pen Button Mode", [&] { ImGui::TextUnformatted(ToString(m_proxy->GetPenButtonMode())); });
+            drawRow("Injection Route", [&] { ImGui::TextUnformatted(ToString(m_proxy->GetPenButtonRoute())); });
+            drawRow("Pen Identity", [&] {
+                const std::string summary = PenIdentitySummary(pen);
+                ImGui::TextWrapped("%s", summary.c_str());
+            });
+            ImGui::EndTable();
+        }
+
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextColored(InfoColor(), "Frame");
+        if (ImGui::BeginTable("StylusFrameTable", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+            ImGui::TableSetupColumn("Item", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableHeadersRow();
+
+            auto drawRow = [](const char* label, const auto& drawValue) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(label);
+                ImGui::TableSetColumnIndex(1);
+                drawValue();
+            };
+
+            drawRow("Service Timestamp", [&] { ImGui::Text("%llu", static_cast<unsigned long long>(m_currentFrame.timestamp)); });
+            drawRow("App Receive Epoch", [&] { ImGui::Text("%llu", static_cast<unsigned long long>(m_currentFrame.receiveSystemEpochUs)); });
+            drawRow("Raw Length", [&] { ImGui::Text("%llu bytes", static_cast<unsigned long long>(m_currentFrame.rawLen)); });
+            drawRow("Master Suffix", [&] { ImGui::TextColored(StatusColor(m_currentFrame.masterSuffixValid), "%s", m_currentFrame.masterSuffixValid ? "Valid" : "Invalid"); });
+            drawRow("Slave Suffix", [&] { ImGui::TextColored(StatusColor(m_currentFrame.slaveSuffixValid), "%s", m_currentFrame.slaveSuffixValid ? "Valid" : "Invalid"); });
+            drawRow("Stylus Output", [&] {
+                ImGui::TextColored(StatusColor(output.valid), "%s", output.valid ? "Valid" : "Invalid");
+                ImGui::SameLine();
+                ImGui::Text("%s | %s | %s", output.inRange ? "InRange" : "OutOfRange", output.tipDown ? "TipDown" : "TipUp", output.buttonActive ? "Button" : "NoButton");
+            });
+            drawRow("Pressure", [&] {
+                ImGui::Text("final=%u  raw=%u  mapped=%u  real=%s  age=%u",
+                    static_cast<unsigned int>(output.pressure),
+                    static_cast<unsigned int>(diag.rawPressure),
+                    static_cast<unsigned int>(diag.mappedPressure),
+                    diag.pressureIsReal ? "yes" : "no",
+                    static_cast<unsigned int>(diag.predictedAgeFrames));
+            });
+            drawRow("Confidence", [&] { ImGui::Text("%.3f", output.confidence); });
+            drawRow("Pipeline Stage", [&] { ImGui::Text("%u", static_cast<unsigned int>(output.pipelineStage)); });
+            drawRow("Interop Recheck", [&] {
+                ImGui::Text("%s / %s / %s  th=%u multi=%u",
+                    interop.recheckEnabled ? "Enabled" : "Disabled",
+                    interop.recheckPassed ? "Pass" : "Fail",
+                    interop.recheckOverlap ? "Overlap" : "NoOverlap",
+                    static_cast<unsigned int>(interop.recheckThreshold),
+                    static_cast<unsigned int>(interop.recheckThresholdMulti));
+            });
+            drawRow("Touch Suppress", [&] {
+                ImGui::Text("active=%s  nullLike=%s  frames=%u",
+                    YesNo(interop.touchSuppressActive),
+                    YesNo(interop.touchNullLike),
+                    static_cast<unsigned int>(interop.touchSuppressFrames));
+            });
+            drawRow("Signal TX1/TX2", [&] { ImGui::Text("%u / %u", static_cast<unsigned int>(interop.signalX), static_cast<unsigned int>(interop.signalY)); });
+            drawRow("Max Raw Peak", [&] { ImGui::Text("%u", static_cast<unsigned int>(interop.maxRawPeak)); });
+            ImGui::EndTable();
+        }
+        ImGui::EndTable();
+    }
+
+    ImGui::Separator();
+    DrawStylusServicePolicyPanel();
+}
+
+void DiagnosticsWorkbench::DrawStylusServicePolicyPanel() {
+    if (!m_proxy) {
+        return;
+    }
+
+    ImGui::TextColored(InfoColor(), "Service Policy");
+#ifdef _DEBUG
     const char* modeItems[] = {"OEM Custom", "Native Barrel", "Native Eraser"};
     const char* routeItems[] = {"VHF Only", "Win32 Only", "VHF + Win32"};
 
-#ifdef _DEBUG
-    // Global VHF Output Switch
     ImGui::TextUnformatted("Windows INK Output (VHF)");
     bool vhfStylus = m_proxy->IsSrvStylusVhfEnabled();
     if (ImGui::Checkbox("Enable Stylus Native Output", &vhfStylus)) {
@@ -499,179 +729,305 @@ void DiagnosticsWorkbench::DrawStylusControlPanel() {
 
     ImGui::Separator();
     ImGui::TextUnformatted("Pen Button Injection");
-    {
-        int curMode = static_cast<int>(m_proxy->GetPenButtonMode());
-        if (ImGui::Combo("Button Mode", &curMode, modeItems, IM_ARRAYSIZE(modeItems))) {
-            m_proxy->SetPenButtonMode(static_cast<PenButtonMode>(curMode));
+    int curMode = static_cast<int>(m_proxy->GetPenButtonMode());
+    if (ImGui::Combo("Button Mode", &curMode, modeItems, IM_ARRAYSIZE(modeItems))) {
+        m_proxy->SetPenButtonMode(static_cast<PenButtonMode>(curMode));
+    }
+
+    int curRoute = static_cast<int>(m_proxy->GetPenButtonRoute());
+    if (ImGui::Combo("Injection Route", &curRoute, routeItems, IM_ARRAYSIZE(routeItems))) {
+        m_proxy->SetPenButtonRoute(static_cast<PenButtonRoute>(curRoute));
+    }
+    ImGui::TextDisabled("Button policy changes are staged; click Apply Global to live-apply service policy.");
+    if (ImGui::Button("Apply Global##StylusServicePolicy")) {
+        m_proxy->ApplyConfigStoreGlobally();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("Live-applies supported keys; persistence depends on Service/YAML availability.");
+    DrawApplyConfigResultStatus();
+#else
+    ImGui::TextWrapped("Release builds show the live Service policy snapshot without mutating Service configuration.");
+    ImGui::TextDisabled("Stylus Native Output: %s", m_proxy->IsSrvStylusVhfEnabled() ? "Enabled" : "Disabled");
+    ImGui::TextDisabled("Button Mode: %s", ToString(m_proxy->GetPenButtonMode()));
+    ImGui::TextDisabled("Injection Route: %s", ToString(m_proxy->GetPenButtonRoute()));
+    DrawApplyConfigResultStatus();
+#endif
+}
+
+void DiagnosticsWorkbench::DrawStylusPipelineConfigPanel() {
+    if (!m_proxy) {
+        ImGui::TextUnformatted("ServiceProxy unavailable.");
+        return;
+    }
+
+    const auto& schema = m_proxy->GetConfigSchemaSnapshot();
+    const auto modules = CollectModuleTagsWithPrefix(schema, "Stylus /");
+    if (modules.empty()) {
+        ImGui::TextDisabled("No ConfigStore/ConfigBinder stylus parameters are registered.");
+        return;
+    }
+
+    const int moduleCount = static_cast<int>(modules.size());
+    m_stylusConfigModuleIndex = std::clamp(m_stylusConfigModuleIndex, 0, moduleCount - 1);
+    const bool masterParserOnly = m_proxy->IsMasterParserOnlyMode();
+
+    ImGui::TextWrapped("Edit stylus pipeline parameters by processing stage. Apply Global sends supported keys to the Service for live apply; persistence depends on Service/build support.");
+    if (masterParserOnly) {
+        ImGui::TextColored(WarnColor(), "Master Parser Only is enabled. Parameter editing is disabled; module selection and status remain readable.");
+    }
+    ImGui::Separator();
+
+    const float availableWidth = ImGui::GetContentRegionAvail().x;
+    const float desiredSelectorWidth = ImGui::CalcTextSize("Signal Conditioning").x + ImGui::GetStyle().FramePadding.x * 4.0f;
+    const float maxSelectorWidth = std::max(140.0f, availableWidth * 0.42f);
+    const float selectorWidth = std::min(std::max(desiredSelectorWidth, 150.0f), maxSelectorWidth);
+
+    if (ImGui::BeginTable("StylusConfigLayout", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_Resizable)) {
+        ImGui::TableSetupColumn("Modules", ImGuiTableColumnFlags_WidthFixed, selectorWidth);
+        ImGui::TableSetupColumn("Parameters", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableNextRow();
+
+        ImGui::TableSetColumnIndex(0);
+        const float moduleItemWidth = std::max(1.0f, ImGui::GetContentRegionAvail().x);
+        for (int i = 0; i < moduleCount; ++i) {
+            if (ImGui::Selectable(ModuleDisplayName(modules[static_cast<size_t>(i)]), m_stylusConfigModuleIndex == i, 0, ImVec2(moduleItemWidth, 0.0f))) {
+                m_stylusConfigModuleIndex = i;
+            }
         }
 
-        int curRoute = static_cast<int>(m_proxy->GetPenButtonRoute());
-        if (ImGui::Combo("Injection Route", &curRoute, routeItems, IM_ARRAYSIZE(routeItems))) {
-            m_proxy->SetPenButtonRoute(static_cast<PenButtonRoute>(curRoute));
+        ImGui::TableSetColumnIndex(1);
+        const std::string& activeModule = modules[static_cast<size_t>(m_stylusConfigModuleIndex)];
+        ImGui::TextColored(InfoColor(), "%s", activeModule.c_str());
+        ImGui::Separator();
+
+        if (masterParserOnly) {
+            ImGui::BeginDisabled();
         }
-        ImGui::TextDisabled("Button policy changes are staged; click Apply Global to live-apply service policy.");
-        if (ImGui::Button("Apply Global")) {
+        std::vector<std::string> changedPaths;
+        Config::ConfigStore& draftView = m_proxy->GetMutableConfigDraftStoreForUi();
+        ConfigUIRenderer::RenderConfigStoreByModule(
+            schema,
+            draftView,
+            activeModule,
+            &changedPaths,
+            MakeConfigPathStateProvider(m_proxy));
+        m_proxy->CommitConfigDraftEdits(changedPaths);
+        if (masterParserOnly) {
+            ImGui::EndDisabled();
+        }
+
+        if (ImGui::Button("Apply Global##StylusPipelineConfig")) {
             m_proxy->ApplyConfigStoreGlobally();
         }
+        ImGui::SameLine();
+        ImGui::TextDisabled("Live-applies supported keys; persistence depends on Service/YAML availability.");
         DrawApplyConfigResultStatus();
+
+        ImGui::EndTable();
     }
-#else
-    ImGui::TextUnformatted("Windows INK Output (VHF)");
-    ImGui::TextWrapped("Supported service policy keys can be live-applied with Apply Global; persistence depends on Service/build support.");
-    ImGui::TextDisabled("Stylus Native Output: %s", m_proxy->IsSrvStylusVhfEnabled() ? "Enabled" : "Disabled");
+}
 
-    ImGui::Separator();
-    ImGui::TextUnformatted("Pen Button Injection");
-    {
-        const int curMode = static_cast<int>(m_proxy->GetPenButtonMode());
-        const int curRoute = static_cast<int>(m_proxy->GetPenButtonRoute());
-        const char* modeText = (curMode >= 0 && curMode < IM_ARRAYSIZE(modeItems)) ? modeItems[curMode] : "Unknown";
-        const char* routeText = (curRoute >= 0 && curRoute < IM_ARRAYSIZE(routeItems)) ? routeItems[curRoute] : "Unknown";
-        ImGui::TextDisabled("Button Mode: %s", modeText);
-        ImGui::TextDisabled("Injection Route: %s", routeText);
+void DiagnosticsWorkbench::DrawStylusCoordinatePanel() {
+    if (!m_proxy) {
+        ImGui::TextUnformatted("ServiceProxy unavailable.");
+        return;
     }
-#endif
-    ImGui::Separator();
 
-    if (ImGui::BeginTabBar("StylusSubTabs")) {
-        const auto& sd = m_currentFrame.stylus;
-        const auto& diag = sd.debug.coord;
-        const auto& point = sd.output.point;
+    const auto& sd = m_currentFrame.stylus;
+    const auto& diag = sd.debug.coord;
+    const auto& point = sd.output.point;
 
-        const float activeRows = std::max(1.0f, static_cast<float>(std::max(m_proxy->GetStylusPipeline().GetPacketSensorRows(), 1)) * static_cast<float>(Asa::kCoorUnit));
-        const float activeCols = std::max(1.0f, static_cast<float>(std::max(m_proxy->GetStylusPipeline().GetPacketSensorCols(), 1)) * static_cast<float>(Asa::kCoorUnit));
-        const float clampedY = std::clamp(point.y, 0.0f, activeRows);
-        const float clampedX = std::clamp(point.x, 0.0f, activeCols);
-        const uint16_t screenX = static_cast<uint16_t>(std::clamp(static_cast<int>(std::lround((clampedY / activeRows) * 16000.0f)), 0, 65535));
-        const uint16_t screenY = static_cast<uint16_t>(std::clamp(static_cast<int>(std::lround((1.0f - (clampedX / activeCols)) * 25600.0f)), 0, 65535));
-        const bool finalPointMismatch = diag.valid &&
-            (std::abs(point.x - static_cast<float>(diag.finalDim1)) > 0.5f ||
-             std::abs(point.y - static_cast<float>(diag.finalDim2)) > 0.5f);
+    const float activeRows = std::max(1.0f, static_cast<float>(std::max(m_proxy->GetStylusPipeline().GetPacketSensorRows(), 1)) * static_cast<float>(Asa::kCoorUnit));
+    const float activeCols = std::max(1.0f, static_cast<float>(std::max(m_proxy->GetStylusPipeline().GetPacketSensorCols(), 1)) * static_cast<float>(Asa::kCoorUnit));
+    const float clampedY = std::clamp(point.y, 0.0f, activeRows);
+    const float clampedX = std::clamp(point.x, 0.0f, activeCols);
+    const uint16_t screenX = static_cast<uint16_t>(std::clamp(static_cast<int>(std::lround((clampedY / activeRows) * 16000.0f)), 0, 65535));
+    const uint16_t screenY = static_cast<uint16_t>(std::clamp(static_cast<int>(std::lround((1.0f - (clampedX / activeCols)) * 25600.0f)), 0, 65535));
+    const bool finalPointMismatch = diag.valid &&
+        (std::abs(point.x - static_cast<float>(diag.finalDim1)) > 0.5f ||
+         std::abs(point.y - static_cast<float>(diag.finalDim2)) > 0.5f);
 
-        if (ImGui::BeginTabItem("Live Summary")) {
-            ImGui::TextColored(sd.output.valid ? ImVec4(0.2f,0.9f,0.3f,1) : ImVec4(1.0f,0.45f,0.25f,1),
-                "State: %s%s%s",
+    ImGui::BeginChild("StylusCoordinatesScroll", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
+
+    ImGui::TextColored(InfoColor(), "Output Coordinate");
+    if (ImGui::BeginTable("StylusOutputCoordinateTable", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+        ImGui::TableSetupColumn("Item", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableHeadersRow();
+        auto drawRow = [](const char* label, const auto& drawValue) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(label);
+            ImGui::TableSetColumnIndex(1);
+            drawValue();
+        };
+
+        drawRow("State", [&] {
+            ImGui::TextColored(sd.output.valid ? GoodColor() : BadColor(), "%s%s%s",
                 sd.output.valid ? "Valid" : "Invalid",
                 sd.output.inRange ? " | InRange" : "",
                 sd.output.tipDown ? " | TipDown" : "");
-            ImGui::Text("Pipeline Stage: %u", static_cast<unsigned int>(sd.output.pipelineStage));
-            ImGui::Text("Pressure: final=%u  raw=%u  mapped=%u  real=%s  age=%u",
-                sd.output.pressure,
-                diag.rawPressure,
-                diag.mappedPressure,
-                diag.pressureIsReal ? "yes" : "no",
-                static_cast<unsigned int>(diag.predictedAgeFrames));
-            ImGui::Text("Signal: peak=%u  tx1=%u  tx2=%u", diag.peakSignal, sd.interop.signalX, sd.interop.signalY);
-
-            ImGui::Separator();
-            ImGui::TextColored(ImVec4(0.4f,0.85f,1.0f,1.f), "Output Coordinate");
-            ImGui::Text("Sensor: X=%.1f / %.1f  Y=%.1f / %.1f", point.x, activeCols, point.y, activeRows);
-            ImGui::Text("Report: X=%u  Y=%u", static_cast<unsigned int>(point.reportX), static_cast<unsigned int>(point.reportY));
-            ImGui::Text("Screen: X=%u / 16000  Y=%u / 25600", static_cast<unsigned int>(screenX), static_cast<unsigned int>(screenY));
-            if (finalPointMismatch) {
-                ImGui::TextColored(ImVec4(1.0f,0.35f,0.25f,1),
-                    "Final coordinate and output point differ: final=(%d,%d) point=(%.1f,%.1f)",
-                    diag.finalDim1, diag.finalDim2, point.x, point.y);
-            }
-            ImGui::EndTabItem();
+        });
+        drawRow("Sensor", [&] { ImGui::Text("X=%.1f / %.1f  Y=%.1f / %.1f", point.x, activeCols, point.y, activeRows); });
+        drawRow("Report", [&] { ImGui::Text("X=%u  Y=%u", static_cast<unsigned int>(point.reportX), static_cast<unsigned int>(point.reportY)); });
+        drawRow("Screen", [&] { ImGui::Text("X=%u / 16000  Y=%u / 25600", static_cast<unsigned int>(screenX), static_cast<unsigned int>(screenY)); });
+        drawRow("TX1/TX2", [&] { ImGui::Text("TX1=(%.3f, %.3f)  TX2=(%.3f, %.3f)", point.tx1X, point.tx1Y, point.tx2X, point.tx2Y); });
+        drawRow("Composite Signal", [&] { ImGui::Text("TX1=%u  TX2=%u", static_cast<unsigned int>(point.peakTx1), static_cast<unsigned int>(point.peakTx2)); });
+        if (finalPointMismatch) {
+            drawRow("Final Mismatch", [&] {
+                ImGui::TextColored(BadColor(), "final=(%d,%d)  point=(%.1f,%.1f)", diag.finalDim1, diag.finalDim2, point.x, point.y);
+            });
         }
-
-        if (ImGui::BeginTabItem("Coordinate Pipeline")) {
-            ImGui::TextColored(ImVec4(0.4f,0.85f,1.0f,1.f), "Coordinate Stages (dim1=X/Col, dim2=Y/Row)");
-            ImGui::Text("Anchor: row=%u  col=%u", diag.anchorRow, diag.anchorCol);
-            ImGui::Text("Local:  dim1=%d  dim2=%d", diag.localCoorDim1, diag.localCoorDim2);
-            ImGui::Text("Raw:    dim1=%d  dim2=%d", diag.rawDim1, diag.rawDim2);
-            ImGui::Text("3PtAvg: dim1=%d  dim2=%d", diag.avg3PtDim1, diag.avg3PtDim2);
-            ImGui::Text("Final:  dim1=%d  dim2=%d", diag.finalDim1, diag.finalDim2);
-            ImGui::Text("Point:  x=%.1f  y=%.1f", point.x, point.y);
-            if (finalPointMismatch) {
-                ImGui::TextColored(ImVec4(1.0f,0.35f,0.25f,1), "Final/Point mismatch: downstream finalCoor changes may not be reflected in output.point.");
-            }
-
-            ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f,0.85f,0.4f,1.f), "Post Filters");
-            ImGui::Text("Speed: instant=%.1f  short=%.1f  full=%.1f", diag.speedInstant, diag.speedShortAvg, diag.speedFullAvg);
-            ImGui::Text("IIR: coef=%.0f", diag.iirCoef);
-            ImGui::Text("Linear Filter: state=%u", static_cast<unsigned int>(diag.linearFilterState));
-            ImGui::Text("CoorRevise: %s  delta=(%.1f, %.1f)",
-                diag.coorReviserActive ? "on" : "off",
-                diag.coorRevDeltaX,
-                diag.coorRevDeltaY);
-            ImGui::EndTabItem();
-        }
-
-        if (ImGui::BeginTabItem("Tilt / Edge")) {
-            ImGui::TextColored(ImVec4(0.8f,0.6f,1.0f,1.f), "Tilt");
-            ImGui::Text("TX1/TX2 diff: filtered=(%.1f, %.1f)  raw=(%d, %d)",
-                diag.tiltDiffX, diag.tiltDiffY, diag.tiltRawDiffDim1, diag.tiltRawDiffDim2);
-            ImGui::Text("Tilt angle: pre=(%d, %d)  report=(%d, %d)",
-                static_cast<int>(diag.preTiltDim1),
-                static_cast<int>(diag.preTiltDim2),
-                static_cast<int>(diag.reportTiltDim1),
-                static_cast<int>(diag.reportTiltDim2));
-            ImGui::Text("Signal ratio TX2/TX1: %u%%  lenLimit=%u",
-                static_cast<unsigned int>(diag.signalRatio),
-                static_cast<unsigned int>(diag.tiltLenLimit));
-            if (diag.tiltAnomalyDamped) {
-                ImGui::TextColored(ImVec4(1.0f,0.4f,0.4f,1), "Tilt anomaly damping active");
-            }
-
-            ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f,0.85f,0.4f,1.f), "Edge / Signal Gates");
-            ImGui::Text("Mode: %s%s", diag.isHover ? "Hover" : "Writing", diag.isEdge ? " + Edge" : "");
-            ImGui::Text("Edge flags: dim1=%s  dim2=%s", diag.dim1Edge ? "yes" : "no", diag.dim2Edge ? "yes" : "no");
-            ImGui::Text("Peak: tx1=%u sum3x3=%u  tx2=%u sum3x3=%u tx2Valid=%s",
-                diag.tx1PeakValue,
-                diag.tx1Sum3x3,
-                diag.tx2PeakValue,
-                diag.tx2Sum3x3,
-                diag.tx2Valid ? "yes" : "no");
-            ImGui::Text("BT press suppress: %s", diag.btPressSuppressActive ? "active" : "inactive");
-            ImGui::Text("Edge signal low latch: %s", diag.edgeSignalTooLowLatched ? "active" : "inactive");
-            ImGui::Text("Fake pressure decrease: %s  framesLeft=%u",
-                diag.fakePressureDecreaseActive ? "active" : "inactive",
-                static_cast<unsigned int>(diag.fakePressureDecreaseFramesLeft));
-            ImGui::EndTabItem();
-        }
-
-        if (ImGui::BeginTabItem("Config")) {
-            ImGui::TextWrapped("Edit stylus pipeline parameters by module. Apply Global sends supported keys to the Service for live apply; persistence depends on Service/YAML availability.");
-            const auto& schema = m_proxy->GetConfigSchemaSnapshot();
-            auto modules = CollectModuleTagsWithPrefix(schema, "Stylus /");
-            if (modules.empty()) {
-                ImGui::TextDisabled("No ConfigStore/ConfigBinder stylus parameters are registered.");
-            } else if (ImGui::BeginTabBar("StylusConfigTabs")) {
-                const auto pathStateProvider = MakeConfigPathStateProvider(m_proxy);
-                for (const auto& module : modules) {
-                    if (ImGui::BeginTabItem(ModuleDisplayName(module))) {
-                        std::vector<std::string> changedPaths;
-                        Config::ConfigStore& draftView = m_proxy->GetMutableConfigDraftStoreForUi();
-                        ConfigUIRenderer::RenderConfigStoreByModule(
-                            schema,
-                            draftView,
-                            module,
-                            &changedPaths,
-                            pathStateProvider);
-                        m_proxy->CommitConfigDraftEdits(changedPaths);
-                        if (ImGui::Button("Apply Global")) {
-                            m_proxy->ApplyConfigStoreGlobally();
-                        }
-                        ImGui::SameLine();
-                        ImGui::TextDisabled("Live-applies supported keys; persistence depends on Service/YAML availability.");
-                        DrawApplyConfigResultStatus();
-                        ImGui::EndTabItem();
-                    }
-                }
-                ImGui::EndTabBar();
-            }
-            ImGui::EndTabItem();
-        }
-        ImGui::EndTabBar();
+        ImGui::EndTable();
     }
 
-    // Stylus-Touch Interop settings are now accessible via the Touch Tracking tab's TrackTracker config.
+    ImGui::Separator();
+    ImGui::TextColored(InfoColor(), "Coordinate Pipeline");
+    if (ImGui::BeginTable("StylusCoordinatePipelineTable", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+        ImGui::TableSetupColumn("Stage", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableHeadersRow();
+        auto drawRow = [](const char* label, const auto& drawValue) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(label);
+            ImGui::TableSetColumnIndex(1);
+            drawValue();
+        };
 
-    if (masterParserOnly) ImGui::EndDisabled();
+        drawRow("Anchor", [&] { ImGui::Text("row=%u  col=%u", static_cast<unsigned int>(diag.anchorRow), static_cast<unsigned int>(diag.anchorCol)); });
+        drawRow("Local", [&] { ImGui::Text("dim1=%d  dim2=%d", diag.localCoorDim1, diag.localCoorDim2); });
+        drawRow("Raw", [&] { ImGui::Text("dim1=%d  dim2=%d", diag.rawDim1, diag.rawDim2); });
+        drawRow("3PtAvg", [&] { ImGui::Text("dim1=%d  dim2=%d", diag.avg3PtDim1, diag.avg3PtDim2); });
+        drawRow("Final", [&] { ImGui::Text("dim1=%d  dim2=%d", diag.finalDim1, diag.finalDim2); });
+        drawRow("Point", [&] { ImGui::Text("x=%.1f  y=%.1f", point.x, point.y); });
+        drawRow("Speed", [&] { ImGui::Text("instant=%.1f  short=%.1f  full=%.1f", diag.speedInstant, diag.speedShortAvg, diag.speedFullAvg); });
+        drawRow("IIR", [&] { ImGui::Text("coef=%.0f", diag.iirCoef); });
+        drawRow("Linear Filter", [&] { ImGui::Text("state=%u", static_cast<unsigned int>(diag.linearFilterState)); });
+        drawRow("CoorRevise", [&] { ImGui::Text("%s  delta=(%.1f, %.1f)", diag.coorReviserActive ? "on" : "off", diag.coorRevDeltaX, diag.coorRevDeltaY); });
+        ImGui::EndTable();
+    }
+
+    ImGui::Separator();
+    ImGui::TextColored(InfoColor(), "Tilt / Edge");
+    if (ImGui::BeginTable("StylusTiltEdgeTable", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+        ImGui::TableSetupColumn("Item", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableHeadersRow();
+        auto drawRow = [](const char* label, const auto& drawValue) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(label);
+            ImGui::TableSetColumnIndex(1);
+            drawValue();
+        };
+
+        drawRow("TX1/TX2 Diff", [&] { ImGui::Text("filtered=(%.1f, %.1f)  raw=(%d, %d)", diag.tiltDiffX, diag.tiltDiffY, diag.tiltRawDiffDim1, diag.tiltRawDiffDim2); });
+        drawRow("Tilt Angle", [&] { ImGui::Text("pre=(%d, %d)  report=(%d, %d)", static_cast<int>(diag.preTiltDim1), static_cast<int>(diag.preTiltDim2), static_cast<int>(diag.reportTiltDim1), static_cast<int>(diag.reportTiltDim2)); });
+        drawRow("Signal Ratio", [&] { ImGui::Text("TX2/TX1=%u%%  lenLimit=%u", static_cast<unsigned int>(diag.signalRatio), static_cast<unsigned int>(diag.tiltLenLimit)); });
+        drawRow("Mode", [&] { ImGui::Text("%s%s", diag.isHover ? "Hover" : "Writing", diag.isEdge ? " + Edge" : ""); });
+        drawRow("Edge Flags", [&] { ImGui::Text("dim1=%s  dim2=%s", diag.dim1Edge ? "yes" : "no", diag.dim2Edge ? "yes" : "no"); });
+        drawRow("Peak", [&] { ImGui::Text("tx1=%u sum3x3=%u  tx2=%u sum3x3=%u  tx2Valid=%s", diag.tx1PeakValue, diag.tx1Sum3x3, diag.tx2PeakValue, diag.tx2Sum3x3, diag.tx2Valid ? "yes" : "no"); });
+        drawRow("BT Press Suppress", [&] { ImGui::TextUnformatted(diag.btPressSuppressActive ? "active" : "inactive"); });
+        drawRow("Edge Signal Low", [&] { ImGui::TextUnformatted(diag.edgeSignalTooLowLatched ? "active" : "inactive"); });
+        drawRow("Fake Pressure", [&] { ImGui::Text("%s  framesLeft=%u", diag.fakePressureDecreaseActive ? "active" : "inactive", static_cast<unsigned int>(diag.fakePressureDecreaseFramesLeft)); });
+        if (diag.tiltAnomalyDamped) {
+            drawRow("Tilt Anomaly", [&] { ImGui::TextColored(BadColor(), "damping active"); });
+        }
+        ImGui::EndTable();
+    }
+
+    ImGui::EndChild();
+}
+
+void DiagnosticsWorkbench::DrawStylusPacketDetails() {
+    const auto& stylus = m_currentFrame.stylus;
+    const auto& input = stylus.input;
+    const auto& packet = stylus.output.packet;
+
+    ImGui::TextWrapped("Raw stylus HID packet mirror and parser input details for the current frame.");
+    ImGui::BeginChild("StylusPacketScroll", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
+
+    if (ImGui::BeginTable("StylusPacketsTable", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+        ImGui::TableSetupColumn("Packet", ImGuiTableColumnFlags_WidthFixed, 110.0f);
+        ImGui::TableSetupColumn("Valid", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        ImGui::TableSetupColumn("RID", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+        ImGui::TableSetupColumn("Length", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        ImGui::TableSetupColumn("Bytes", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableHeadersRow();
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted("StylusPacket");
+        ImGui::TableSetColumnIndex(1); ImGui::TextColored(StatusColor(packet.valid), "%s", packet.valid ? "Valid" : "Invalid");
+        ImGui::TableSetColumnIndex(2); ImGui::Text("0x%02X", static_cast<unsigned int>(packet.reportId));
+        ImGui::TableSetColumnIndex(3); ImGui::Text("%u", static_cast<unsigned int>(packet.length));
+        ImGui::TableSetColumnIndex(4);
+        if (packet.valid) {
+            const std::string bytes = StylusPacketBytes(packet);
+            ImGui::TextUnformatted(bytes.c_str());
+        } else {
+            ImGui::TextDisabled("N/A");
+        }
+        ImGui::EndTable();
+    }
+
+    ImGui::Separator();
+    ImGui::TextColored(InfoColor(), "Parser Input");
+    if (ImGui::BeginTable("StylusParserInputTable", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+        ImGui::TableSetupColumn("Item", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableHeadersRow();
+        auto drawRow = [](const char* label, const auto& drawValue) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(label);
+            ImGui::TableSetColumnIndex(1);
+            drawValue();
+        };
+
+        drawRow("slaveValid", [&] { ImGui::TextColored(StatusColor(input.slaveValid), "%s", YesNo(input.slaveValid)); });
+        drawRow("checksumOk", [&] { ImGui::TextColored(StatusColor(input.checksumOk), "%s", YesNo(input.checksumOk)); });
+        drawRow("slaveWordOffset", [&] { ImGui::Text("%u", static_cast<unsigned int>(input.slaveWordOffset)); });
+        drawRow("checksum16", [&] { ImGui::Text("0x%04X", static_cast<unsigned int>(input.checksum16)); });
+        drawRow("tx1BlockValid", [&] { ImGui::TextColored(StatusColor(input.tx1BlockValid), "%s", YesNo(input.tx1BlockValid)); });
+        drawRow("tx2BlockValid", [&] { ImGui::TextColored(StatusColor(input.tx2BlockValid), "%s", YesNo(input.tx2BlockValid)); });
+        drawRow("status", [&] { ImGui::Text("0x%08X", static_cast<unsigned int>(input.status)); });
+        drawRow("hpp2LineValid", [&] { ImGui::TextColored(StatusColor(input.hpp2LineValid), "%s", YesNo(input.hpp2LineValid)); });
+        drawRow("masterSuffixValid", [&] { ImGui::TextColored(StatusColor(m_currentFrame.masterSuffixValid), "%s", YesNo(m_currentFrame.masterSuffixValid)); });
+        drawRow("slaveSuffixValid", [&] { ImGui::TextColored(StatusColor(m_currentFrame.slaveSuffixValid), "%s", YesNo(m_currentFrame.slaveSuffixValid)); });
+        ImGui::EndTable();
+    }
+
+    ImGui::Separator();
+    ImGui::TextColored(InfoColor(), "BT Sample");
+    if (ImGui::BeginTable("StylusBtSampleTable", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+        ImGui::TableSetupColumn("Item", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableHeadersRow();
+        auto drawRow = [](const char* label, const auto& drawValue) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(label);
+            ImGui::TableSetColumnIndex(1);
+            drawValue();
+        };
+
+        drawRow("hasSample", [&] { ImGui::TextColored(StatusColor(input.btSample.hasSample), "%s", YesNo(input.btSample.hasSample)); });
+        drawRow("seq", [&] { ImGui::Text("%u", static_cast<unsigned int>(input.btSample.seq)); });
+        drawRow("pressure", [&] {
+            const std::string values = FourU16ValuesText(input.btSample.pressure);
+            ImGui::TextUnformatted(values.c_str());
+        });
+        drawRow("rawPressure", [&] {
+            const std::string values = FourU16ValuesText(input.btSample.rawPressure);
+            ImGui::TextUnformatted(values.c_str());
+        });
+        drawRow("freq1", [&] { ImGui::Text("%u", static_cast<unsigned int>(input.btSample.freq1)); });
+        drawRow("freq2", [&] { ImGui::Text("%u", static_cast<unsigned int>(input.btSample.freq2)); });
+        ImGui::EndTable();
+    }
+
+    ImGui::EndChild();
 }
 
 
@@ -715,10 +1071,12 @@ void DiagnosticsWorkbench::DrawBtMcuPanel() {
     else
         ImGui::TextDisabled("Current Stylus ID: Unknown");
 
-    if (pen.hasPenModuleModelId)
-        ImGui::Text("Pen Module Model ID: 0x%06X", pen.penModuleModelId);
-    else
+    if (pen.hasPenModuleModelId) {
+        const std::string modelText = PenModuleModelText(pen);
+        ImGui::Text("Pen Module Model ID: %s", modelText.c_str());
+    } else {
         ImGui::TextDisabled("Pen Module Model ID: Unknown");
+    }
 
     ImGui::TextUnformatted("Hardware Version:");
     ImGui::SameLine();
