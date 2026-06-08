@@ -353,6 +353,15 @@ target_include_directories(EGoTouchService PRIVATE
 target_link_libraries(EGoTouchService PRIVATE EGoTouchServiceCore DVRCore IPCCore Device Host Common advapi32 setupapi hid)
 ego_copy_config_to_output(EGoTouchService)
 
+install(TARGETS EGoTouchApp EGoTouchService
+    RUNTIME DESTINATION "."
+    COMPONENT Runtime
+)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/config/default.yaml"
+    DESTINATION "config"
+    COMPONENT Runtime
+)
+
 # EGoTouchService uses wmain (console subsystem) for service/console dual mode
 if(MSVC)
     set_target_properties(EGoTouchService PROPERTIES LINK_FLAGS "/SUBSYSTEM:CONSOLE")
@@ -522,6 +531,17 @@ if (EGO_BUILD_TESTS)
     )
     target_link_libraries(EGoTouchApp_DiagnosticsWorkbenchLogicTest PRIVATE DVRCore Solvers Common)
 
+    add_executable(EGoTouchApp_ServiceProxyRuntimeConfigSnapshotTest
+        Tools/EGoTouchApp/tests/ServiceProxyRuntimeConfigSnapshotTest.cpp
+        Tools/EGoTouchApp/source/ServiceProxy.cpp
+    )
+    target_include_directories(EGoTouchApp_ServiceProxyRuntimeConfigSnapshotTest PRIVATE
+        "${APP_ROOT}/include"
+        "${APP_ROOT}/source"
+        "${IPCCORE_ROOT}/include/Ipc"
+    )
+    target_link_libraries(EGoTouchApp_ServiceProxyRuntimeConfigSnapshotTest PRIVATE DVRCore Solvers Common)
+
     add_executable(EGoTouchApp_ServiceProxyCatalogSchemaTest
         Tools/EGoTouchApp/tests/ServiceProxyCatalogSchemaTest.cpp
         Tools/EGoTouchApp/tests/ServiceProxyCatalogSchemaTestFixture.cpp
@@ -600,11 +620,28 @@ if (EGO_BUILD_TESTS)
         LABELS "App;EGoTouchApp;DiagnosticsWorkbench;PureLogic"
         TIMEOUT 30
         WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME EGoTouchApp.ServiceProxyRuntimeConfigSnapshotTest COMMAND EGoTouchApp_ServiceProxyRuntimeConfigSnapshotTest)
+    set_tests_properties(EGoTouchApp.ServiceProxyRuntimeConfigSnapshotTest PROPERTIES
+        LABELS "App;EGoTouchApp;ServiceProxy;DVRBridge;runtime-config;PureLogic"
+        TIMEOUT 30
+        WORKING_DIRECTORY "$<TARGET_FILE_DIR:EGoTouchApp_ServiceProxyRuntimeConfigSnapshotTest>")
     add_test(NAME EGoTouchApp.ServiceProxyCatalogSchemaTest COMMAND EGoTouchApp_ServiceProxyCatalogSchemaTest)
     set_tests_properties(EGoTouchApp.ServiceProxyCatalogSchemaTest PROPERTIES
         LABELS "App;EGoTouchApp;ServiceProxy;Config;PureLogic"
         TIMEOUT 30
         WORKING_DIRECTORY "$<TARGET_FILE_DIR:EGoTouchApp_ServiceProxyCatalogSchemaTest>")
+
+    add_test(NAME PackagingConfigLayoutTest
+        COMMAND ${CMAKE_COMMAND}
+            "-DSERVICE_EXE=$<TARGET_FILE:EGoTouchService>"
+            "-DAPP_EXE=$<TARGET_FILE:EGoTouchApp>"
+            "-DSOURCE_DEFAULT_CONFIG=${CMAKE_CURRENT_SOURCE_DIR}/config/default.yaml"
+            "-DWIX_SETUP=${CMAKE_CURRENT_SOURCE_DIR}/scripts/EGoTouchSetup.wxs"
+            "-DWIX_TEST_SETUP=${CMAKE_CURRENT_SOURCE_DIR}/scripts/EGoTouchTestSetup.wxs"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyConfigLayout.cmake")
+    set_tests_properties(PackagingConfigLayoutTest PROPERTIES
+        LABELS "packaging;config;device-free"
+        TIMEOUT 10)
 
     add_test(NAME ServiceEntryArgumentRoutingTest COMMAND ServiceEntryArgumentRoutingTest)
     add_test(NAME ServiceHostLifecycleFakeIntegrationTest COMMAND ServiceHostLifecycleFakeIntegrationTest)

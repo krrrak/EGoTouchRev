@@ -1,6 +1,7 @@
 #include "ConfigRuntime.h"
 
 #include "config/ConfigCatalog.h"
+#include "config/ConfigKeyMap.h"
 #include "config/ConfigStore.h"
 
 #include <cmath>
@@ -115,6 +116,26 @@ int main()
         for (const auto& path : repoDefaults.allPaths()) {
             Require(catalogPaths.contains(path) || IsExpectedYamlOnlyPath(path),
                     "config/default.yaml has YAML-only key not registered in catalog defaults: " + path);
+        }
+
+        for (const auto& entry : generatedSchema.entries) {
+            const bool patchable =
+                entry.boundToRuntime &&
+                entry.persistPolicy == Config::ConfigPersistPolicy::UserOverride &&
+                (Config::isLiveApplyTiming(entry.applyTiming) ||
+                 entry.applyTiming == Config::ConfigApplyTiming::RestartRequired);
+            if (!patchable) {
+                continue;
+            }
+
+            Require(entry.keyId != Config::ConfigKeyId::MaxKeyId,
+                    "patchable UserOverride config key has no static ConfigKeyId: " + entry.yamlPath);
+            const auto roundtripPath = Config::tryPathForKeyId(entry.keyId);
+            Require(roundtripPath.has_value() && *roundtripPath == entry.yamlPath,
+                    "ConfigKeyId path roundtrip mismatch for: " + entry.yamlPath);
+            const auto roundtripKeyId = Config::tryKeyIdForPath(entry.yamlPath);
+            Require(roundtripKeyId.has_value() && *roundtripKeyId == entry.keyId,
+                    "Config path keyId roundtrip mismatch for: " + entry.yamlPath);
         }
 
         std::cout << "[TEST] ConfigDefaultYamlDriftTest passed. Generated YAML: "

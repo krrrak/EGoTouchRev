@@ -1,0 +1,42 @@
+if(NOT DEFINED SERVICE_EXE OR NOT EXISTS "${SERVICE_EXE}")
+    message(FATAL_ERROR "SERVICE_EXE does not exist: ${SERVICE_EXE}")
+endif()
+
+if(NOT DEFINED APP_EXE OR NOT EXISTS "${APP_EXE}")
+    message(FATAL_ERROR "APP_EXE does not exist: ${APP_EXE}")
+endif()
+
+if(NOT DEFINED SOURCE_DEFAULT_CONFIG OR NOT EXISTS "${SOURCE_DEFAULT_CONFIG}")
+    message(FATAL_ERROR "SOURCE_DEFAULT_CONFIG does not exist: ${SOURCE_DEFAULT_CONFIG}")
+endif()
+
+function(verify_target_config target_name exe_path)
+    get_filename_component(target_dir "${exe_path}" DIRECTORY)
+    set(output_default "${target_dir}/config/default.yaml")
+    if(NOT EXISTS "${output_default}")
+        message(FATAL_ERROR "${target_name} output is missing config/default.yaml next to exe: ${output_default}")
+    endif()
+
+    file(SHA256 "${SOURCE_DEFAULT_CONFIG}" source_hash)
+    file(SHA256 "${output_default}" output_hash)
+    if(NOT source_hash STREQUAL output_hash)
+        message(FATAL_ERROR "${target_name} output config/default.yaml differs from repository default.yaml")
+    endif()
+endfunction()
+
+verify_target_config("EGoTouchService" "${SERVICE_EXE}")
+verify_target_config("EGoTouchApp" "${APP_EXE}")
+
+if(DEFINED WIX_SETUP AND EXISTS "${WIX_SETUP}")
+    file(READ "${WIX_SETUP}" wix_setup_text)
+    if(NOT wix_setup_text MATCHES "Source=\"build\\\\config\\\\default.yaml\"")
+        message(FATAL_ERROR "EGoTouchSetup.wxs does not package build\\config\\default.yaml")
+    endif()
+endif()
+
+if(DEFINED WIX_TEST_SETUP AND EXISTS "${WIX_TEST_SETUP}")
+    file(READ "${WIX_TEST_SETUP}" wix_test_setup_text)
+    if(NOT wix_test_setup_text MATCHES "Source=\"build\\\\config\\\\default.yaml\"")
+        message(FATAL_ERROR "EGoTouchTestSetup.wxs does not package build\\config\\default.yaml")
+    endif()
+endif()

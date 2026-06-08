@@ -21,7 +21,9 @@
 
     <!-- 安装目录页：用户可自定义安装路径，默认 C:\Program Files\EGoTouchRev -->
     <StandardDirectory Id="ProgramFiles6432Folder">
-      <Directory Id="INSTALLFOLDER" Name="EGoTouchRev" />
+      <Directory Id="INSTALLFOLDER" Name="EGoTouchRev">
+        <Directory Id="CONFIGFOLDER" Name="config" />
+      </Directory>
     </StandardDirectory>
 
     <!-- 通过 CAB 将所有文件打包进单个 MSI -->
@@ -49,6 +51,10 @@
                         Start="install"
                         Stop="both"
                         Remove="uninstall" />
+      </Component>
+
+      <Component Id="DefaultConfigComp" Directory="CONFIGFOLDER" Guid="B0D74677-16A8-4D95-B5FC-A7023D652079">
+        <File Id="DefaultConfigYAML" Source="build\config\default.yaml" KeyPath="yes" />
       </Component>
 
     </ComponentGroup>

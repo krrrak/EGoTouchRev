@@ -191,6 +191,17 @@ int main() {
     assert(touchApplied.appliedCount == 1);
     assert(HasAction(touchApplied, Service::ConfigApplyActionKind::PipelineRuntime));
 
+    const auto touchPeakThresholdKeyId = Config::tryKeyIdForPath("touch.peak_detection.threshold");
+    assert(touchPeakThresholdKeyId.has_value());
+    const auto touchPeakPayload = MakePatchPayload({Config::ConfigTlvEntry{*touchPeakThresholdKeyId, Config::ConfigValueType::Int32, "351"}});
+    const auto touchPeakApplied = ApplyV3Patch(runtime, touchPeakPayload);
+    assert(touchPeakApplied.ipcStatus == Ipc::IpcStatusCode::Ok);
+    assert(touchPeakApplied.status == Ipc::ConfigV3MutationStatus::Ok);
+    assert(touchPeakApplied.changedCount == 1);
+    assert(touchPeakApplied.appliedCount == 1);
+    assert(HasAction(touchPeakApplied, Service::ConfigApplyActionKind::PipelineRuntime));
+    assert(runtime.SnapshotStore().getOr<int32_t>("touch.peak_detection.threshold", 0) == 351);
+
     const auto iirMaxKeyId = Config::tryKeyIdForPath("stylus.sp.iir_max_coef");
     const auto iirLowHoverKeyId = Config::tryKeyIdForPath("stylus.sp.iir_coef_low_hover");
     assert(iirMaxKeyId.has_value());
@@ -242,15 +253,36 @@ int main() {
     CopyDefaultYamlTo(tempConfig.path);
     Service::ConfigRuntime persistRuntime;
     assert(persistRuntime.Initialize(tempConfig.path.string(), [](const Config::ConfigStore&) { return true; }));
+    const auto persistedLive = ApplyV3Patch(persistRuntime, payload);
+    assert(persistedLive.ipcStatus == Ipc::IpcStatusCode::Ok);
+    assert(persistedLive.status == Ipc::ConfigV3MutationStatus::Ok);
+    assert(persistedLive.appliedCount == 1);
+    assert(!persistRuntime.ServiceState().autoMode);
+    const auto persistedTouchPeak = ApplyV3Patch(persistRuntime, touchPeakPayload);
+    assert(persistedTouchPeak.ipcStatus == Ipc::IpcStatusCode::Ok);
+    assert(persistedTouchPeak.status == Ipc::ConfigV3MutationStatus::Ok);
+    assert(persistedTouchPeak.appliedCount == 1);
     const auto persistedRestart = ApplyV3Patch(persistRuntime, restartPayload);
     assert(persistedRestart.ipcStatus == Ipc::IpcStatusCode::Ok);
     assert(persistedRestart.restartRequiredCount == 1);
+    assert(persistedRestart.desiredServiceConfig.mode == Service::ServiceMode::Full);
     const auto persistResult = persistRuntime.PersistConfigV3();
     assert(persistResult.ipcStatus == Ipc::IpcStatusCode::Ok);
     assert(persistResult.status == Ipc::ConfigV3MutationStatus::Ok);
-    assert(persistResult.persistedCount >= 1);
+    assert(persistResult.persistedCount >= 3);
+    assert(Config::getValue<bool>(ReadOverrideValue(tempConfig.path, "service.auto_mode")) == false);
     assert(Config::getValue<std::string>(ReadOverrideValue(tempConfig.path, "service.mode")) == "touch_only");
+    assert(Config::getValue<int32_t>(ReadOverrideValue(tempConfig.path, "touch.peak_detection.threshold")) == 351);
+    Config::ConfigStore persistedOverrides;
+    persistedOverrides.loadFromYaml((tempConfig.path / "overrides.yaml").string());
+    assert(!persistedOverrides.has("service.stylus_vhf_enabled"));
     assert(std::filesystem::file_size(tempConfig.path / "overrides.yaml") != 0);
+    Service::ConfigRuntime restartedRuntime;
+    assert(restartedRuntime.Initialize(tempConfig.path.string(), [](const Config::ConfigStore&) { return true; }));
+    assert(!restartedRuntime.ServiceState().autoMode);
+    assert(restartedRuntime.ServiceState().mode == Service::ServiceMode::TouchOnly);
+    assert(restartedRuntime.SnapshotStore().getOr<std::string>("service.mode", "") == "touch_only");
+    assert(restartedRuntime.SnapshotStore().getOr<int32_t>("touch.peak_detection.threshold", 0) == 351);
 
     Service::ConfigRuntime v3RejectRuntime;
     assert(v3RejectRuntime.Initialize("", [](const Config::ConfigStore&) { return true; }));

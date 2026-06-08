@@ -1,6 +1,6 @@
 # IPC 通信协议文档
 
-> EGoTouchRev Service ↔ App 进程间通信协议 | 版本: 2 | 日期: 2026-06-05
+> EGoTouchRev Service ↔ App 进程间通信协议 | wire version: 2 | 日期: 2026-06-08
 
 ---
 
@@ -20,9 +20,9 @@ EGoTouchService (Windows Service, Session 0) 与 EGoTouchApp (桌面应用, User
 │  SharedFrameReader  │◄── Shared Memory ──│  SharedFrameWriter  │
 │                     │  Global\            │                     │
 │                     │  EGoTouchSharedFrame│                     │
-│  ConfigDirtyFlag ───┼── Shared Memory ───┼── ConfigDirtyFlag   │
-│  (Writer)           │  Global\            │  (Reader)           │
-│                     │  EGoTouchConfigDirty│                     │
+│  Config v3 IPC ─────┼──── Named Pipe ────┼── ConfigRuntime     │
+│                     │  commands 46-49     │  catalog/snapshot   │
+│                     │                     │  patch/persist      │
 └─────────────────────┘                    └─────────────────────┘
 ```
 
@@ -68,7 +68,7 @@ EGoTouchService (Windows Service, Session 0) 与 EGoTouchApp (桌面应用, User
 | 版本 | 说明 |
 |------|------|
 | v1 | 初始版本 |
-| v2 | 引入 `GetConfigSnapshot` / `ApplyConfigPatch` / `PersistConfig` 作为 canonical config 控制路径 |
+| v2 | 当前 public ABI。Legacy config 命令 `40-45` 保留枚举值但为 tombstone；connected config canonical path 是 v3 命令 `46-49`。 |
 
 ---
 
@@ -195,172 +195,134 @@ App 请求 Service 停止推送调试帧。
 
 ### 3.5 配置命令
 
-#### GetConfigSnapshot (0x2A)
+当前 connected config 只支持 v3 paging / patch / persist。旧固定字段 ABI 仍保留命令枚举值以避免复用 wire value，但 `IsSupportedIpcCommand()` 对 `40-45` 返回 `false`，Service 应返回 `UnsupportedCommand`。
 
-获取 Service 当前配置快照 (期望值 + 实际生效值)。
+| Command | 十进制 | 十六进制 | 当前状态 |
+|---------|--------|----------|----------|
+| `ReloadConfig` | 40 | `0x28` | legacy config tombstone，unsupported |
+| `SaveConfig` | 41 | `0x29` | legacy config tombstone，unsupported |
+| `GetConfigSnapshot` | 42 | `0x2A` | legacy config tombstone，unsupported |
+| `ApplyConfigPatch` | 43 | `0x2B` | legacy config tombstone，unsupported |
+| `PersistConfig` | 44 | `0x2C` | legacy config tombstone，unsupported |
+| `ApplyConfigTlvChunk` | 45 | `0x2D` | legacy config tombstone，unsupported |
+| `GetConfigCatalogV3` | 46 | `0x2E` | v3 catalog canonical read path |
+| `GetConfigSnapshotV3` | 47 | `0x2F` | v3 snapshot canonical read path |
+| `ApplyConfigPatchV3` | 48 | `0x30` | v3 mutation canonical path |
+| `PersistConfigV3` | 49 | `0x31` | v3 persist canonical path |
 
-| 方向 | 字段 | 值 |
-|------|------|-----|
-| Req | command | `0x2A` |
-| Req | paramLen | `0` |
-| Res | success | `true` / `false` |
-| Res | data | `ConfigSnapshotWire` (10 bytes) |
-| Res | dataLen | `sizeof(ConfigSnapshotWire)` = 10 |
-| Res | status (失败) | `InvalidState` (DeviceRuntime 未就绪) |
+历史固定 payload 名称 `ConfigSnapshotWire`、`ApplyConfigPatchRequestWire`、`ConfigMutationResultWire`、`PersistConfigResponseWire`、`ConfigTlvChunkRequestWire`、`ReloadConfigSummaryWire` 不是当前 active public IPC payload。
 
-**ConfigSnapshotWire** 布局 (10 bytes):
+#### GetConfigCatalogV3 (0x2E) / GetConfigSnapshotV3 (0x2F)
 
-```
-Offset  Size  Field               Type      说明
-------  ----  -----               ----      ----
-0       2     wireVersion         uint16_t  协议版本 (2)
-2       1     definedFields       uint8_t   有效字段位掩码
-3       1     desiredMode         uint8_t   期望模式 (见 ServiceModeWire)
-4       1     activeMode          uint8_t   实际生效模式
-5       1     autoMode            uint8_t   自动模式 (0/1)
-6       1     stylusVhfEnabled    uint8_t   Stylus VHF 启用 (0/1)
-7       1     penButtonMode       uint8_t   笔按键模式 (见 PenButtonModeWire)
-8       1     penButtonRoute      uint8_t   笔按键路由 (见 PenButtonRouteWire)
-```
+分页读取 config catalog 或当前 snapshot。请求使用 `IpcRequest::param` 携带 `ConfigV3PageRequestWire`；响应使用 `ConfigV3PageResponseHeaderWire` 后接 page bytes。
 
-**definedFields** 位掩码:
-
-| Bit | 字段 | 说明 |
-|-----|------|------|
-| 0 | Mode | 模式字段有效 |
-| 1 | AutoMode | 自动模式字段有效 |
-| 2 | StylusVhfEnabled | Stylus VHF 字段有效 |
-| 3 | PenButtonMode | 笔按键模式字段有效 |
-| 4 | PenButtonRoute | 笔按键路由字段有效 |
-
-**ServiceModeWire**:
-
-| 值 | 含义 |
-|----|------|
-| 0 | Full (完整模式: Touch + Stylus) |
-| 1 | TouchOnly (仅 Touch) |
-
-**PenButtonModeWire**:
-
-| 值 | 含义 |
-|----|------|
-| 0 | OemCustom (OEM 自定义按键码) |
-| 1 | NativeBarrel (原生笔杆按键) |
-| 2 | NativeEraser (原生橡皮擦) |
-
-**PenButtonRouteWire**:
-
-| 值 | 含义 |
-|----|------|
-| 0 | VhfOnly (仅 VHF 注入) |
-| 1 | Win32Only (仅 Win32 虚拟笔 API) |
-| 2 | VhfAndWin32 (双路由, 诊断用) |
-
-> :bulb: `desiredMode` 与 `activeMode` 的区别: 当调用 `ApplyConfigPatch` 设置 mode=Full 时, `desiredMode=Full`。但由于 mode 变更需要重启, 当前运行时可能仍是 TouchOnly, 此时 `activeMode=TouchOnly`。
-
----
-
-#### ApplyConfigPatch (0x2B)
-
-应用增量配置变更 (不需要重启的部分即时生效, 需要重启的字段标记为 restartRequired)。
-
-| 方向 | 字段 | 值 |
-|------|------|-----|
-| Req | command | `0x2B` |
-| Req | param | `ApplyConfigPatchRequestWire` (8 bytes) |
-| Req | paramLen | `sizeof(ApplyConfigPatchRequestWire)` = 8 |
-| Res | success | `true` / `false` |
-| Res | data | `ConfigMutationResultWire` (6 bytes) |
-| Res | dataLen | `sizeof(ConfigMutationResultWire)` = 6 |
-| Res | status (失败) | `InvalidRequest` / `InvalidState` |
-
-**ApplyConfigPatchRequestWire** 布局 (8 bytes):
+**ConfigV3PageRequestWire**:
 
 ```
-Offset  Size  Field               Type      说明
-------  ----  -----               ----      ----
-0       2     wireVersion         uint16_t  协议版本
-2       1     fieldMask           uint8_t   要变更的字段位掩码
-3       1     desiredMode         uint8_t   期望模式
-4       1     autoMode            uint8_t   自动模式 (0/1)
-5       1     stylusVhfEnabled    uint8_t   Stylus VHF (0/1)
-6       1     penButtonMode       uint8_t   笔按键模式
-7       1     penButtonRoute      uint8_t   笔按键路由
+Offset  Size  Field             Type      说明
+------  ----  -----             ----      ----
+0       2     wireVersion       uint16_t  必须为 2
+2       1     payloadKind       uint8_t   1=Catalog, 2=Snapshot
+3       1     flags             uint8_t   必须为 0
+4       4     schemaVersion     uint32_t  App 已知 schema version，可为 0
+8       4     snapshotVersion   uint32_t  App 已知 snapshot version，可为 0
+12      4     offset            uint32_t  本页起始偏移
+16      4     maxBytes          uint32_t  App 期望最大页大小，0 表示 Service 默认
+20      4     reserved          uint32_t  必须为 0
 ```
 
-> `fieldMask` 指定哪些字段参与变更。仅 `fieldMask` 中置位的字段被处理, 其余字段保留当前值。
+**ConfigV3PageResponseHeaderWire**:
 
-**ConfigMutationResultWire** 布局 (6 bytes):
+```
+Offset  Size  Field             Type      说明
+------  ----  -----             ----      ----
+0       2     wireVersion       uint16_t  必须为 2
+2       1     payloadKind       uint8_t   1=Catalog, 2=Snapshot
+3       1     flags             uint8_t   当前必须为 0
+4       2     headerBytes       uint16_t  sizeof(ConfigV3PageResponseHeaderWire)
+6       2     pageBytes         uint16_t  本页 payload 字节数
+8       4     totalBytes        uint32_t  完整 payload 字节数
+12      4     schemaVersion     uint32_t  当前 schema version
+16      4     snapshotVersion   uint32_t  当前 snapshot version
+20      4     offset            uint32_t  本页起始偏移
+24      4     checksum          uint32_t  完整 payload checksum
+```
+
+`ConfigV3PageCapacityBytes()` 等于 `4096 - sizeof(ConfigV3PageResponseHeaderWire)`。App 按 `offset + pageBytes < totalBytes` 继续请求后续页，拼接完成后校验 checksum，再反序列化 catalog/snapshot。
+
+Catalog payload 来自 `ConfigRuntime::BuildCatalogV3Blob()`，包含每个可见配置键的 `ConfigKeyId`、YAML path、UI 类型、runtime binding、scope、apply timing、persist policy、默认值/当前值元数据。Snapshot payload 来自 `ConfigRuntime::BuildSnapshotV3Blob()`，包含当前 `ConfigStore` 中带静态 keyId 的值。
+
+#### ApplyConfigPatchV3 (0x30)
+
+应用 v3 `ConfigPatchTlv`。请求固定占用 `IpcRequest::param`，payload 最大 240 bytes。
+
+**ApplyConfigPatchV3RequestWire**:
 
 ```
 Offset  Size  Field                Type      说明
 ------  ----  -----                ----      ----
-0       2     wireVersion          uint16_t  协议版本
-2       1     changedFields        uint8_t   实际发生变更的字段位掩码
-3       1     appliedFields        uint8_t   即时生效的字段位掩码
-4       1     restartRequiredFields uint8_t  需要重启才能生效的字段位掩码
-5       1     _reserved0           uint8_t   保留
+0       2     wireVersion          uint16_t  必须为 2
+2       2     headerBytes          uint16_t  必须为 16
+4       4     baseSchemaVersion    uint32_t  App 基于的 schema version
+8       4     baseSnapshotVersion  uint32_t  App 基于的 snapshot version
+12      2     payloadBytes         uint16_t  1..240
+14      2     flags                uint16_t  必须为 0
+16      240   bytes                uint8_t[] serialized ConfigPatchTlv
 ```
 
-> :warning: `restartRequiredFields` 非零表示某些变更需要在**下次 Service 重启**时才会生效。当前 mode 变更属于此类。
+`ConfigPatchTlv` entry 使用静态 `ConfigKeyId` 定位 YAML path。当前支持的 `ConfigValueType` 为 `Bool=0`、`Int32=1`、`Float=2`、`String=3`、`Null=4`；connected v3 patch 不使用 legacy fieldMask。
 
----
-
-#### PersistConfig (0x2C)
-
-将当前配置持久化到 `config.ini` 文件。
-
-| 方向 | 字段 | 值 |
-|------|------|-----|
-| Req | command | `0x2C` |
-| Req | paramLen | `0` |
-| Res | success | `true` / `false` |
-| Res | data | `PersistConfigResponseWire` (4 bytes) |
-| Res | dataLen | `sizeof(PersistConfigResponseWire)` = 4 |
-| Res | status (失败) | `InvalidState` / `InternalError` |
-
-**PersistConfigResponseWire** 布局 (4 bytes):
+**ConfigV3ApplyResultWire**:
 
 ```
-Offset  Size  Field            Type      说明
-------  ----  -----            ----      ----
-0       2     wireVersion      uint16_t  协议版本
-2       1     persistedFields  uint8_t   已持久化的字段位掩码
-3       1     _reserved0       uint8_t   保留
+Offset  Size  Field                 Type      说明
+------  ----  -----                 ----      ----
+0       2     wireVersion           uint16_t  2
+2       1     status                uint8_t   ConfigV3MutationStatus
+3       1     failedValueType       uint8_t   失败 entry 的 value type
+4       2     changedCount          uint16_t  实际变更键数量
+6       2     appliedCount          uint16_t  已 live apply 键数量
+8       2     restartRequiredCount  uint16_t  已接受但需重启键数量
+10      2     rejectedCount         uint16_t  被拒绝键数量
+12      2     failedKeyId           uint16_t  首个失败 keyId；无失败时为 0
+14      2     reserved              uint16_t  保留
 ```
 
-> 持久化行为: 原子写入 (写入 `.tmp` → `MoveFileExW`), 文件备份 (`.bak`)。
+**ConfigV3MutationStatus**:
 
----
+| 值 | 枚举 | 语义 |
+|----|------|------|
+| 0 | `Ok` | patch accepted；可能包含 live apply 和 restart-required staged value |
+| 1 | `NoChanges` | 请求合法但没有有效变更 |
+| 2 | `VersionMismatch` | App 必须刷新 catalog/snapshot 后重试 |
+| 3 | `Rejected` | schema、target 或 policy 语义拒绝 |
+| 4 | `PersistFailed` | persist 失败，仅用于 persist response |
 
-#### ReloadConfig (0x28)
+wire 格式错误返回 IPC failure，例如 `InvalidRequest`。语义拒绝返回 IPC success，同时 `ConfigV3ApplyResultWire.status = Rejected`。
 
-从 `config.ini` 重新加载 Pipeline 配置, 并重新解析 Service 配置以检测变更。
+#### PersistConfigV3 (0x31)
 
-| 方向 | 字段 | 值 |
-|------|------|-----|
-| Req | command | `0x28` |
-| Req | paramLen | `0` |
-| Res | success | `true` / `false` |
-| Res | data | `ReloadConfigSummaryWire` (3 bytes) |
-| Res | dataLen | `sizeof(ReloadConfigSummaryWire)` = 3 |
-| Res | status (失败) | `NotFound` (config.ini 不存在) |
+按 catalog policy 将 runtime 值写入 `config/overrides.yaml`。
 
-**ReloadConfigSummaryWire** 布局 (3 bytes):
+**PersistConfigV3ResponseWire**:
 
 ```
-Offset  Size  Field                 Type
-------  ----  -----                 ----
-0       1     changedFields         uint8_t  变更字段位掩码
-1       1     appliedFields         uint8_t  已应用字段位掩码
-2       1     restartRequiredFields uint8_t  需重启字段位掩码
+Offset  Size  Field           Type      说明
+------  ----  -----           ----      ----
+0       2     wireVersion     uint16_t  2
+2       1     status          uint8_t   ConfigV3MutationStatus
+3       1     reserved        uint8_t   保留
+4       2     persistedCount  uint16_t  写入 overrides.yaml 的键数量
+6       2     skippedCount    uint16_t  因 policy/default/缺值跳过的键数量
+8       2     failedCount     uint16_t  写入失败数量
 ```
 
----
+当前持久化规则：
 
-#### SaveConfig (0x29)
-
-`PersistConfig` 的旧别名, 行为完全一致。
+- 只考虑 `ConfigPersistPolicy::UserOverride`。
+- 与 factory default 相同的值不写入 `overrides.yaml`。
+- `RuntimeOnly`、`GeneratedDefault`、`Deprecated`、缺失 static keyId 或缺失当前值的 entry 计入 skipped。
+- 路径解析失败或写文件失败返回 `PersistFailed`。
 
 ---
 
@@ -671,6 +633,8 @@ Writer (Service):                    Reader (App):
 
 ## 5. ConfigDirtyFlag (共享内存)
 
+`Global\EGoTouchConfigDirty` 是 legacy shared-memory dirty signal。它不再是 connected config mutation path；当前 connected App 必须通过 `ApplyConfigPatchV3` / `PersistConfigV3` 修改和持久化配置。
+
 | 属性 | 值 |
 |------|-----|
 | 名称 | `Global\EGoTouchConfigDirty` |
@@ -681,12 +645,12 @@ Writer (Service):                    Reader (App):
 
 ```
 App (Writer):                       Service (Reader):
-  1. 写入 config.ini                每帧调用 CheckAndClear()
+  1. 写入 legacy config             每帧调用 CheckAndClear()
   2. m_flag->store(1, release)      m_flag->exchange(0, acq_rel)
-                                    若返回 1 → 触发 ReloadConfig
+                                    若返回 1 → legacy reload path
 ```
 
-> 仅支持 "脏/不脏" 布尔信号。重构后将由 IPC `ApplyConfigPatch` 替代此机制。
+> 仅支持 "脏/不脏" 布尔信号，不携带 keyId、schema version、apply result 或 persist result。v3 connected config 不依赖该机制。
 
 ---
 
@@ -703,8 +667,11 @@ App                          Service
  │── Ping ─────────────────────→│
  │←── success=true ────────────│
  │                              │
- │── GetConfigSnapshot ────────→│
- │←── ConfigSnapshotWire ──────│
+ │── GetConfigCatalogV3 ───────→│
+ │←── ConfigV3 catalog pages ──│
+ │                              │
+ │── GetConfigSnapshotV3 ──────→│
+ │←── ConfigV3 snapshot pages ─│
  │                              │
  │── EnterDebugMode ───────────→│
  │←── success=true ────────────│
@@ -717,16 +684,15 @@ App                          Service
 ```
 App                          Service
  │                              │
- │── ApplyConfigPatch ─────────→│
- │   fieldMask=PenButtonMode    │
- │   penButtonMode=NativeBarrel │
- │←── ConfigMutationResult ────│
- │   changed=PenButtonMode      │
- │   applied=PenButtonMode      │
+ │── ApplyConfigPatchV3 ───────→│
+ │   keyId=SvcPenButtonMode     │
+ │   value=NativeBarrel         │
+ │←── ConfigV3ApplyResult ─────│
+ │   changed=1, applied=1       │
  │                              │
- │── PersistConfig ────────────→│
- │←── PersistConfigResponse ───│
- │   persistedFields=PenBtnMode │
+ │── PersistConfigV3 ──────────→│
+ │←── PersistConfigV3Response ─│
+ │   persistedCount=N          │
 ```
 
 ### 6.3 拉取诊断快照
@@ -754,20 +720,9 @@ App                          Service
 
 ---
 
-## 7. 重构后协议 (目标态)
+## 7. Config v3 TLV 与 KeyId 合约
 
-重构完成后, 以下变更生效:
-
-### 7.1 移除的命令
-
-| 命令 | 替代 |
-|------|------|
-| `SaveConfig` (0x29) | `PersistConfig` (0x2C) |
-| `ReloadConfig` (0x28) | 重新加载 YAML 的新实现 |
-
-### 7.2 新增的 TLV 格式
-
-固定布局 `ConfigSnapshotWire` / `ApplyConfigPatchRequestWire` 将替换为:
+### 7.1 Snapshot / Patch TLV
 
 ```
 ConfigSnapshot TLV:
@@ -775,24 +730,24 @@ ConfigSnapshot TLV:
   [uint16_t] entryCount
   重复 N 次:
     [uint16_t] keyId       (ConfigKeyId enum)
-    [uint8_t]  valueType   (0=bool, 1=int32, 2=float32, 3=enum8, 4=string)
+    [uint8_t]  valueType   (0=bool, 1=int32, 2=float32, 3=string, 4=null)
     [uint16_t] valueLen
     [N bytes]  valuePayload
 
 ConfigPatch TLV:
-  同 Snapshot, 但仅包含变更的键
+  同 Snapshot, 但仅包含变更键
 ```
 
-### 7.3 ConfigKeyId 分区
+### 7.2 ConfigKeyId 分区
 
 | 范围 | 子系统 |
 |------|--------|
 | 0x0000-0x00FF | Service 配置 |
 | 0x0100-0x01FF | Touch Pipeline |
 | 0x0200-0x02FF | Stylus Pipeline |
-| 0x0300-0x03FF | DVR Runtime |
+| 0x0300 | `MaxKeyId` sentinel；不分配给普通键 |
 
-未知 keyId → 安全跳过 (向前兼容)。
+`ConfigKeyId` 是 static IPC ABI，必须追加式分配，不能复用既有 ID。当前 v3 connected config 不使用 runtime dynamic key allocation。所有 patchable `UserOverride` key 必须存在 `ConfigKeyMap` path/keyId 双向映射；`ConfigDefaultYamlDriftTest` 对 default.yaml 中 runtime-bound key 执行该 gate。
 
 ---
 
@@ -801,7 +756,7 @@ ConfigPatch TLV:
 | 场景 | 行为 |
 |------|------|
 | Pipe 断开 | App 侧检测 `IsConnected()==false`, UI 显示断连状态 |
-| Service 重启 | App 重新 Connect + Ping, 拉取最新 ConfigSnapshot |
+| Service 重启 | App 重新 Connect + Ping，重新拉取 `GetConfigCatalogV3` / `GetConfigSnapshotV3` |
 | 请求超时 | `IpcPipeClient::Send()` 在 Pipe 层阻塞; 无应用层超时 |
 | 并发请求 | `IpcPipeClient` 持有 `std::mutex`, 串行化所有 Send 调用 |
 | 共享内存写入冲突 | Triple-buffer seqlock 保证读者不会读到半写数据 |
