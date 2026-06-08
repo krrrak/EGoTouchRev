@@ -1,7 +1,7 @@
 #pragma once
-// ConfigSync: Cross-process config dirty flag using shared memory.
-// Both Service and App map the same 4-byte atomic flag.
-// App sets dirty after writing config.ini; Service checks and clears.
+// ConfigSync: historical/legacy shared-memory config dirty signal.
+// Current connected config uses Config v3 IPC; this flag only documents the
+// old App config.ini write + Service reload compatibility background.
 
 #include "Ipc/IpcSecurity.h"
 
@@ -52,12 +52,12 @@ public:
         return true;
     }
 
-    // App calls this after writing config.ini
+    // Historical App-side dirty marker for legacy config.ini writes.
     void SetDirty() {
         if (m_flag) m_flag->store(1, std::memory_order_release);
     }
 
-    // Service calls this each frame; returns true if was dirty
+    // Historical Service-side poller for the legacy dirty marker.
     bool CheckAndClear() {
         if (!m_flag) return false;
         return m_flag->exchange(0, std::memory_order_acq_rel) != 0;
