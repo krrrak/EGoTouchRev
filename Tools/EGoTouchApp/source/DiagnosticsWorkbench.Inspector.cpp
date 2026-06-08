@@ -181,15 +181,23 @@ std::string PenIdentitySummary(const PenIdentityStatus& pen) {
 }
 
 std::string StylusPacketBytes(const Solvers::StylusPacket& packet) {
+    const auto displayLength = std::min<std::size_t>(packet.length, packet.bytes.size());
+
     std::string result;
-    result.reserve(packet.bytes.size() * 3);
+    result.reserve(displayLength * 3 + (packet.length > packet.bytes.size() ? 37U : 0U));
     char byteText[4]{};
-    for (size_t i = 0; i < packet.bytes.size(); ++i) {
+    for (std::size_t i = 0; i < displayLength; ++i) {
         std::snprintf(byteText, sizeof(byteText), "%02x", static_cast<unsigned int>(packet.bytes[i]));
         result += byteText;
-        if (i + 1 < packet.bytes.size()) {
+        if (i + 1 < displayLength) {
             result += ' ';
         }
+    }
+    if (packet.length > packet.bytes.size()) {
+        if (!result.empty()) {
+            result += ' ';
+        }
+        result += "... (declared length exceeds buffer)";
     }
     return result;
 }
