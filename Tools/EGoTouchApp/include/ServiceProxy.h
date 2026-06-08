@@ -149,6 +149,8 @@ public:
     bool StopRemoteRuntime();
 
     // Config sync
+    // Connected mode uses v3 catalog/snapshot for reads and v3 patch/persist for apply/save.
+    // App-local binder/YAML state is preserved only for offline/local fallback and v3 fetch failures.
     void SaveConfig();
     bool ApplyConfigStoreGlobally();
     ApplyConfigResult GetLastApplyConfigResult() const;
@@ -276,6 +278,7 @@ private:
         uint32_t snapshotVersion = 0;
     };
     ConfigDraft m_configDraft;
+    bool m_configV3CatalogReady = false;
     std::atomic<ApplyConfigStatus> m_lastApplyConfigStatus{ApplyConfigStatus::NotAttempted};
     std::atomic<bool> m_lastApplyConfigLiveApplied{false};
     std::atomic<bool> m_lastApplyConfigRestartRequired{false};

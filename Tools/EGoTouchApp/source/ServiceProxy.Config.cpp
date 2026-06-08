@@ -104,7 +104,9 @@ std::optional<PenButtonRoute> ParsePenButtonRouteConfig(const Config::ConfigValu
     return std::nullopt;
 }
 
-void ApplyLegacyServiceModeMigration(Config::ConfigStore& target, const Config::ConfigStore& source) {
+// App-local YAML compatibility only: accepts pre-catalog default/override files
+// that still used service.mode.full. Connected Service sync never uses this path.
+void ApplyAppLocalYamlServiceModeMigration(Config::ConfigStore& target, const Config::ConfigStore& source) {
     if (source.has("service.mode") || !source.has("service.mode.full")) {
         return;
     }
@@ -410,6 +412,7 @@ void ServiceProxy::InitConfigSchema() {
     Config::registerRuntimeKeyMappings(binder);
 
     m_configDraft = ConfigDraft{};
+    m_configV3CatalogReady = false;
     PopulateServiceDefaults(m_configDraft.catalogDefaults);
     binder.writeDefaults(m_configDraft.catalogDefaults);
 
@@ -423,12 +426,12 @@ void ServiceProxy::InitConfigSchema() {
             Config::ConfigStore yamlStore;
             yamlStore.loadFromYaml(paths->defaultConfig);
             m_configDraft.editableDraft.mergeFrom(yamlStore);
-            ApplyLegacyServiceModeMigration(m_configDraft.editableDraft, yamlStore);
+            ApplyAppLocalYamlServiceModeMigration(m_configDraft.editableDraft, yamlStore);
             if (paths->overrideExists) {
                 Config::ConfigStore overrides;
                 overrides.loadFromYaml(paths->overrideConfig);
                 m_configDraft.editableDraft.mergeFrom(overrides);
-                ApplyLegacyServiceModeMigration(m_configDraft.editableDraft, overrides);
+                ApplyAppLocalYamlServiceModeMigration(m_configDraft.editableDraft, overrides);
             }
             LOG_INFO("App", __func__, "Config", "Loaded app-local preview config: default='{}' overrides='{}' overrideExists={}",
                      paths->defaultConfig, paths->overrideConfig, paths->overrideExists);
@@ -615,6 +618,12 @@ bool ServiceProxy::ApplyConfigStoreGlobally() {
         });
     };
 
+    auto hasDirtyDraftState = [this]() {
+        return std::ranges::any_of(m_configDraft.pathStates, [](const auto& item) {
+            return item.second.dirty;
+        });
+    };
+
     auto clearNoChangePaths = [this](const std::vector<std::string>& paths) {
         for (const auto& path : paths) {
             auto it = m_configDraft.pathStates.find(path);
@@ -747,7 +756,17 @@ bool ServiceProxy::ApplyConfigStoreGlobally() {
         }
     };
 
-    if (IsConfigIpcConnectedForApply() &&
+    const bool liveControlAllowed = IsLiveControlAllowed();
+    const bool connectedForApply = IsConfigIpcConnectedForApply();
+    const bool connectedLiveApply = liveControlAllowed && connectedForApply;
+    const bool hasDirtyDraft = hasDirtyDraftState();
+    if (connectedLiveApply && hasDirtyDraft && !m_configV3CatalogReady) {
+        setApplyOutcome(ApplyConfigStatus::LiveApplyFailed, false, false);
+        LOG_WARN("App", __func__, "Config", "Cannot apply config v3 patch/persist without a ready catalog; dirty draft retained for retry.");
+        return false;
+    }
+
+    if (connectedLiveApply && hasDirtyDraft &&
         (m_configDraft.snapshotSchemaVersion == 0 || m_configDraft.snapshotVersion == 0) &&
         !RefreshConfigSnapshotV3()) {
         setApplyOutcome(ApplyConfigStatus::LiveApplyFailed, false, false);
@@ -765,7 +784,7 @@ bool ServiceProxy::ApplyConfigStoreGlobally() {
         return true;
     }
 
-    if (!IsLiveControlAllowed() || !IsConfigIpcConnectedForApply()) {
+    if (!liveControlAllowed || !connectedForApply) {
         ApplyConfigStoreToLocalRuntime();
         Ipc::ConfigV3ApplyResultWire localApplyResult{};
         localApplyResult.status = static_cast<uint8_t>(Ipc::ConfigV3MutationStatus::Ok);
@@ -1114,16 +1133,23 @@ bool ServiceProxy::ApplyConfigV3CatalogBytes(const uint8_t* data, size_t size) {
                 }
             }
         }
+        m_configV3CatalogReady = true;
         LOG_INFO("App", __func__, "Config", "Applied config v3 catalog entries={} schemaVersion={} snapshotVersion={}",
                  payload.entries.size(), payload.schemaVersion, payload.snapshotVersion);
         return true;
     } catch (const std::exception& ex) {
+        m_configV3CatalogReady = false;
         LOG_WARN("App", __func__, "Config", "Failed to apply config v3 catalog: {}", ex.what());
         return false;
     }
 }
 
 bool ServiceProxy::ApplyConfigV3SnapshotBytes(const uint8_t* data, size_t size) {
+    if (!m_configV3CatalogReady) {
+        LOG_WARN("App", __func__, "Config", "Skipping config v3 snapshot because no ready catalog is available.");
+        return false;
+    }
+
     try {
         const auto payload = Config::deserializeConfigV3Snapshot(data, size);
         std::unordered_map<Config::ConfigKeyId, const Config::ConfigSchemaEntry*> entryByKey;
@@ -1201,21 +1227,36 @@ ConfigV3BaselineVersions ServiceProxy::GetConfigV3BaselineVersionsForTest() cons
 }
 
 bool ServiceProxy::RefreshConfigCatalogV3() {
-    if (!m_client.IsConnected()) return false;
+    if (!m_client.IsConnected()) {
+        m_configV3CatalogReady = false;
+        return false;
+    }
     const auto bytes = FetchConfigV3Bytes(Ipc::ConfigV3PayloadKind::Catalog);
-    return bytes.has_value() && ApplyConfigV3CatalogBytes(bytes->data(), bytes->size());
+    if (!bytes.has_value()) {
+        m_configV3CatalogReady = false;
+        return false;
+    }
+    return ApplyConfigV3CatalogBytes(bytes->data(), bytes->size());
 }
 
 bool ServiceProxy::RefreshConfigSnapshotV3() {
     if (!IsConfigIpcConnectedForApply()) return false;
+    if (!m_configV3CatalogReady) {
+        LOG_WARN("App", __func__, "Config", "Skipping config v3 snapshot refresh because no ready catalog is available.");
+        return false;
+    }
     const auto bytes = FetchConfigV3Bytes(Ipc::ConfigV3PayloadKind::Snapshot);
     return bytes.has_value() && ApplyConfigV3SnapshotBytes(bytes->data(), bytes->size());
 }
 
 void ServiceProxy::RefreshConfigSnapshot() {
     if (!m_client.IsConnected()) return;
+    if (!m_configV3CatalogReady) {
+        LOG_WARN("App", __func__, "Config", "Config v3 snapshot skipped because no v3 catalog is available; preserving current app-local/offline config state; no fixed-ABI Service snapshot fallback is attempted.");
+        return;
+    }
     if (!RefreshConfigSnapshotV3()) {
-        LOG_WARN("App", __func__, "Config", "Config v3 snapshot unavailable; keeping current app-local config store.");
+        LOG_WARN("App", __func__, "Config", "Config v3 snapshot unavailable; preserving current app-local/offline config state; no fixed-ABI Service snapshot fallback is attempted.");
     }
 }
 

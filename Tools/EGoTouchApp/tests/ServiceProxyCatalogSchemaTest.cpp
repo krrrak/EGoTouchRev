@@ -55,6 +55,17 @@ void RequireMappedRestartEntry(const Config::ConfigSchemaSnapshot& schema,
             "restart schema entry should not be live patchable");
 }
 
+void RequireDraftState(const App::ServiceProxy& proxy,
+                       std::string_view path,
+                       App::ConfigDraftApplyState applyState,
+                       App::ConfigDraftPersistState persistState,
+                       bool dirty) {
+    const auto state = proxy.GetConfigDraftPathState(path);
+    Require(state.dirty == dirty, "draft dirty state mismatch");
+    Require(state.applyState == applyState, "draft apply state mismatch");
+    Require(state.persistState == persistState, "draft persist state mismatch");
+}
+
 void TestSchemaCoversServiceTouchAndStylusCatalogKeys() {
     const auto schema = App::BuildServiceProxyConfigSchemaSnapshotForTest();
 
@@ -537,12 +548,141 @@ void TestNonUserOverridePersistPolicyRemainsUnpersisted() {
 void TestLocalFallbackInitializesSchemaAndDefaultStore() {
     App::ServiceProxy proxy;
     Require(!proxy.GetConfigSchemaSnapshot().entries.empty(), "local fallback schema should initialize without Service connection");
+    Require(FindEntry(proxy.GetConfigSchemaSnapshot(), "service.mode") != nullptr,
+            "local fallback schema should include service.mode");
     Require(proxy.GetConfigDraftStore().has("service.mode"), "local fallback default draft should contain service.mode");
+    Require(proxy.GetConfigDraftStore().has("service.auto_mode"), "local fallback default draft should contain service.auto_mode");
     Require(proxy.GetConfigDraftStore().has("touch.signal_cond.baseline_no_finger_max_step"),
             "local fallback default draft should contain touch catalog key");
     const auto versions = proxy.GetConfigV3BaselineVersionsForTest();
     Require(versions.catalogSchemaVersion == 0, "local fallback should not claim a v3 catalog baseline");
     Require(versions.snapshotVersion == 0, "local fallback should not claim a v3 snapshot baseline");
+}
+
+void TestOfflineLiveApplyUsesLocalFallbackAndKeepsUnpersistedState() {
+    App::ServiceProxy proxy;
+    proxy.SetConfigDraftValue("service.auto_mode", false);
+
+    Require(proxy.ApplyConfigStoreGlobally(), "offline live-applicable change should apply to app-local runtime");
+    const auto result = proxy.GetLastApplyConfigResult();
+    Require(result.status == App::ApplyConfigStatus::LiveApplied, "offline live-applicable change should report LiveApplied");
+    Require(result.liveApplied, "offline live-applicable change should set liveApplied");
+    Require(!result.restartRequired, "offline live-applicable change should not require restart");
+    Require(!result.persistAttempted && !result.persisted, "offline fallback should not call Service persist");
+    Require(result.unpersistedLiveChanges, "offline fallback should keep unpersisted live changes");
+    RequireDraftState(proxy,
+                      "service.auto_mode",
+                      App::ConfigDraftApplyState::LiveApplied,
+                      App::ConfigDraftPersistState::Unpersisted,
+                      true);
+}
+
+void TestOfflineRestartRequiredChangeIsStagedLocally() {
+    App::ServiceProxy proxy;
+    proxy.SetConfigDraftValue("service.mode", std::string("touch_only"));
+
+    Require(proxy.ApplyConfigStoreGlobally(), "offline restart-required change should stage locally");
+    const auto result = proxy.GetLastApplyConfigResult();
+    Require(result.status == App::ApplyConfigStatus::RestartRequired, "offline restart-required change should report RestartRequired");
+    Require(!result.liveApplied, "restart-required-only change should not report liveApplied");
+    Require(result.restartRequired, "restart-required change should set restartRequired");
+    Require(result.unpersistedLiveChanges, "offline staged change should remain unpersisted");
+    RequireDraftState(proxy,
+                      "service.mode",
+                      App::ConfigDraftApplyState::StagedRestartRequired,
+                      App::ConfigDraftPersistState::Unpersisted,
+                      true);
+}
+
+void TestCatalogNotReadyBlocksSnapshotApplyAndConnectedPatch() {
+    App::ServiceProxy proxy;
+    proxy.SetConfigDraftValue("service.auto_mode", false);
+    proxy.SetConfigV3IpcTestResponses(
+        true,
+        std::vector<Ipc::IpcResponse>{
+            MakeApplyConfigPatchV3Response(Ipc::ConfigV3MutationStatus::Ok, 1, 1, 0),
+        },
+        MakePersistConfigV3Response(1, 0),
+        MakeSnapshotBytes(10, 55));
+
+    Require(!proxy.ApplyConfigStoreGlobally(), "connected apply should fail while catalog is not ready");
+    Require(proxy.GetConfigV3ApplyRequestCountForTest() == 0,
+            "catalog-not-ready path should not send a v3 patch even when snapshot bytes are available");
+    Require(proxy.GetConfigV3PersistRequestCountForTest() == 0,
+            "catalog-not-ready path should not persist");
+    Require(!proxy.GetServiceConfigSnapshotStoreForTest().has("service.auto_mode"),
+            "catalog-not-ready path should not apply fetched snapshot bytes");
+    const auto versions = proxy.GetConfigV3BaselineVersionsForTest();
+    Require(versions.snapshotVersion == 0,
+            "catalog-not-ready path should not establish a snapshot baseline from fetched bytes");
+    const auto result = proxy.GetLastApplyConfigResult();
+    Require(result.status == App::ApplyConfigStatus::LiveApplyFailed,
+            "catalog-not-ready connected apply should report LiveApplyFailed");
+    RequireDraftState(proxy,
+                      "service.auto_mode",
+                      App::ConfigDraftApplyState::Pending,
+                      App::ConfigDraftPersistState::NotAttempted,
+                      true);
+}
+
+void TestCatalogFailureAfterBaselineBlocksPatchPersist() {
+    App::ServiceProxy proxy;
+    ApplyCatalog(proxy);
+    ApplySnapshotWithBaseline(proxy, 10, 56);
+    proxy.SetConfigDraftValue("service.auto_mode", false);
+
+    const std::vector<uint8_t> invalidCatalog{0, 1, 2, 3};
+    Require(!proxy.ApplyConfigV3CatalogBytesForTest(invalidCatalog.data(), invalidCatalog.size()),
+            "invalid catalog should mark the v3 catalog not ready");
+    proxy.SetConfigV3IpcTestResponses(
+        true,
+        std::vector<Ipc::IpcResponse>{
+            MakeApplyConfigPatchV3Response(Ipc::ConfigV3MutationStatus::Ok, 1, 1, 0),
+        },
+        MakePersistConfigV3Response(1, 0),
+        MakeSnapshotBytes(10, 57));
+
+    Require(!proxy.ApplyConfigStoreGlobally(),
+            "connected apply should fail after catalog failure even with an old snapshot baseline");
+    Require(proxy.GetConfigV3ApplyRequestCountForTest() == 0,
+            "catalog failure after baseline should not use the old baseline for patch apply");
+    Require(proxy.GetConfigV3PersistRequestCountForTest() == 0,
+            "catalog failure after baseline should not persist");
+    const auto versions = proxy.GetConfigV3BaselineVersionsForTest();
+    Require(versions.snapshotVersion == 56,
+            "catalog failure after baseline should not refresh or replace the old snapshot baseline");
+    const auto result = proxy.GetLastApplyConfigResult();
+    Require(result.status == App::ApplyConfigStatus::LiveApplyFailed,
+            "catalog failure after baseline should report LiveApplyFailed");
+    RequireDraftState(proxy,
+                      "service.auto_mode",
+                      App::ConfigDraftApplyState::Pending,
+                      App::ConfigDraftPersistState::NotAttempted,
+                      true);
+}
+
+void TestConnectedV3SnapshotFetchFailurePreservesDirtyDraft() {
+    App::ServiceProxy proxy;
+    ApplyCatalog(proxy);
+    proxy.SetConfigDraftValue("service.auto_mode", false);
+    proxy.SetConfigV3IpcTestResponses(true, Ipc::IpcResponse{}, Ipc::IpcResponse{});
+
+    Require(!proxy.ApplyConfigStoreGlobally(), "connected apply without v3 snapshot baseline should fail fast");
+    Require(proxy.GetConfigV3ApplyRequestCountForTest() == 0,
+            "connected baseline failure should not send a v3 patch with unknown base version");
+    Require(proxy.GetConfigV3PersistRequestCountForTest() == 0,
+            "connected baseline failure should not persist");
+    const auto result = proxy.GetLastApplyConfigResult();
+    Require(result.status == App::ApplyConfigStatus::LiveApplyFailed,
+            "connected v3 snapshot fetch failure should report LiveApplyFailed");
+    Require(!result.liveApplied && !result.restartRequired,
+            "connected v3 snapshot fetch failure should not report applied state");
+    const auto state = proxy.GetConfigDraftPathState("service.auto_mode");
+    Require(state.dirty, "connected v3 snapshot fetch failure should preserve dirty draft");
+    Require(state.applyState == App::ConfigDraftApplyState::Pending,
+            "connected v3 snapshot fetch failure should keep pending draft state");
+    Require(state.persistState == App::ConfigDraftPersistState::NotAttempted,
+            "connected v3 snapshot fetch failure should not mark persist attempted");
 }
 
 void TestV3SnapshotPayloadWritesConfigStore() {
@@ -635,6 +775,8 @@ void TestInvalidV3PayloadDoesNotClearSchemaOrStore() {
             "invalid v3 catalog should fail");
     Require(proxy.GetConfigSchemaSnapshot().entries.size() == beforeEntries,
             "failed v3 catalog should not clear schema");
+
+    ApplyCatalog(proxy);
     const auto beforeVersions = proxy.GetConfigV3BaselineVersionsForTest();
     Require(!proxy.ApplyConfigV3SnapshotBytesForTest(invalid.data(), invalid.size()),
             "invalid v3 snapshot should fail");
@@ -656,6 +798,11 @@ int main() {
         TestDefaultYamlContainsCatalogBackedKeys();
         TestV3CatalogPayloadAppliesSchemaAndDefaults();
         TestLocalFallbackInitializesSchemaAndDefaultStore();
+        TestOfflineLiveApplyUsesLocalFallbackAndKeepsUnpersistedState();
+        TestOfflineRestartRequiredChangeIsStagedLocally();
+        TestCatalogNotReadyBlocksSnapshotApplyAndConnectedPatch();
+        TestCatalogFailureAfterBaselineBlocksPatchPersist();
+        TestConnectedV3SnapshotFetchFailurePreservesDirtyDraft();
         TestV3SnapshotPayloadWritesConfigStore();
         TestV3SnapshotPreservesDirtyPath();
         TestV3SnapshotSkipsUnknownKeyId();
