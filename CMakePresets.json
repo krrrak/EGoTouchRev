@@ -40,39 +40,6 @@
       }
     },
     {
-      "name": "amd64-base",
-      "hidden": true,
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/${presetName}",
-      "architecture": {
-        "value": "x64",
-        "strategy": "external"
-      },
-      "cacheVariables": {
-        "CMAKE_EXPORT_COMPILE_COMMANDS": {
-          "type": "BOOL",
-          "value": "ON"
-        },
-        "CMAKE_C_COMPILER": {
-          "type": "FILEPATH",
-          "value": "C:/Program Files/LLVM/bin/clang-cl.exe"
-        },
-        "CMAKE_CXX_COMPILER": {
-          "type": "FILEPATH",
-          "value": "C:/Program Files/LLVM/bin/clang-cl.exe"
-        },
-        "CMAKE_C_COMPILER_TARGET": "x86_64-pc-windows-msvc",
-        "CMAKE_CXX_COMPILER_TARGET": "x86_64-pc-windows-msvc",
-        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}"
-      },
-      "vendor": {
-        "microsoft.com/VisualStudioSettings/CMake/1.0": {
-          "hostOS": "Windows",
-          "intelliSenseMode": "windows-msvc-x64"
-        }
-      }
-    },
-    {
       "name": "arm64-Debug",
       "displayName": "arm64 Debug",
       "inherits": "arm64-base",
@@ -89,11 +56,13 @@
       }
     },
     {
-      "name": "amd64-Debug",
-      "displayName": "amd64 Debug",
-      "inherits": "amd64-base",
+      "name": "arm64-Release-O3",
+      "displayName": "arm64 Release O3",
+      "inherits": "arm64-base",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_FLAGS_RELEASE": "/clang:-O3",
+        "CMAKE_CXX_FLAGS_RELEASE": "/clang:-O3"
       }
     }
   ],
@@ -109,9 +78,9 @@
       "configurePreset": "arm64-Release"
     },
     {
-      "name": "amd64-Debug",
-      "displayName": "amd64 Debug Build",
-      "configurePreset": "amd64-Debug"
+      "name": "arm64-Release-O3",
+      "displayName": "arm64 Release O3 Build",
+      "configurePreset": "arm64-Release-O3"
     }
   ],
   "testPresets": [
@@ -126,9 +95,9 @@
       "configurePreset": "arm64-Release"
     },
     {
-      "name": "amd64-Debug",
-      "displayName": "amd64 Debug Test",
-      "configurePreset": "amd64-Debug"
+      "name": "arm64-Release-O3",
+      "displayName": "arm64 Release O3 Test",
+      "configurePreset": "arm64-Release-O3"
     }
   ]
 }
