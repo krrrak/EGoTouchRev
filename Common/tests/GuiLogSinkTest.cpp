@@ -49,9 +49,10 @@ void TestMaxLineTrimming() {
     Require(lines.size() == Common::GuiLogSink::kMaxLines, "GetLines should be capped at kMaxLines");
     Require(pending.size() == Common::GuiLogSink::kMaxLines, "Pending lines should be capped at kMaxLines");
     Require(lines.front() == "line 5", "Line trimming should discard the oldest full-buffer entries");
-    Require(lines.back() == "line 2004", "Line trimming should keep the newest full-buffer entry");
+    const auto newestLine = "line " + std::to_string(Common::GuiLogSink::kMaxLines + 4);
+    Require(lines.back() == newestLine, "Line trimming should keep the newest full-buffer entry");
     Require(pending.front() == "line 5", "Line trimming should discard the oldest pending entries");
-    Require(pending.back() == "line 2004", "Line trimming should keep the newest pending entry");
+    Require(pending.back() == newestLine, "Line trimming should keep the newest pending entry");
 
     sink->Clear();
 }

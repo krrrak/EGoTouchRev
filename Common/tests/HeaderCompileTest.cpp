@@ -28,7 +28,11 @@ void Require(bool condition, const char* message) {
 
 void TestCommonHeadersExposeExpectedTypes() {
     Require(Frame::kTotalFrameSize == 5402, "FrameLayout.h should expose frame constants");
-    Require(Common::GuiLogSink::kMaxLines == 2000, "GuiLogSink.h should expose kMaxLines");
+#if defined(NDEBUG)
+    Require(Common::GuiLogSink::kMaxLines == Common::GuiLogSink::kReleaseMaxLines, "GuiLogSink.h should expose release kMaxLines");
+#else
+    Require(Common::GuiLogSink::kMaxLines == Common::GuiLogSink::kDebugMaxLines, "GuiLogSink.h should expose debug kMaxLines");
+#endif
     Require(ToString(PenButtonMode::OemCustom) != nullptr, "PenButtonConfig.h should expose ToString(PenButtonMode)");
     Require(Common::Logger::Get() == nullptr, "Logger.h should expose Logger::Get without requiring initialization");
     static_assert(std::is_class_v<Config::ConfigCatalog>);

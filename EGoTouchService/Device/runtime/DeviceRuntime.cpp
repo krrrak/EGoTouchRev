@@ -14,7 +14,13 @@
 #include <utility>
 
 namespace {
-constexpr std::size_t kMaxHistoryItems = 512;
+constexpr std::size_t kDebugMaxHistoryItems = 512;
+constexpr std::size_t kReleaseMaxHistoryItems = 128;
+#if defined(NDEBUG)
+constexpr std::size_t kMaxHistoryItems = kReleaseMaxHistoryItems;
+#else
+constexpr std::size_t kMaxHistoryItems = kDebugMaxHistoryItems;
+#endif
 constexpr std::chrono::milliseconds kEventDebounce{400};
 constexpr std::chrono::milliseconds kDisplayOffSuspendDelay{2000};
 
