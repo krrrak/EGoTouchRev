@@ -149,13 +149,9 @@ bool PenEventBridge::SendRawPacket(const std::vector<uint8_t>& pkt) {
     return true;
 }
 
-void PenEventBridge::SendAck(uint8_t eventCode, uint8_t ackCode) {
+void PenEventBridge::SendAck(uint8_t, uint8_t ackCode) {
     const auto pkt = BuildPenUsbEventAck(ackCode);
-    if (SendRawPacket(pkt)) {
-        LOG_INFO("PenEvent", __func__, "MCU",
-                 "ACK sent: event={}(0x{:02X}) ack=0x{:02X}",
-                 PenUsbEventNameFromRaw(eventCode), eventCode, ackCode);
-    }
+    (void)SendRawPacket(pkt);
 }
 
 void PenEventBridge::ExecuteInitAction(PenUsbInitAction action) {
@@ -226,19 +222,6 @@ void PenEventBridge::AdvanceSessionFromEvent(uint8_t eventCode) {
         action = m_initSession.OnEvent(static_cast<PenUsbEventCode>(eventCode));
     }
 
-    switch (action) {
-    case PenUsbInitAction::SendSecondMcuStatusQuery:
-        LOG_INFO("PenEvent", __func__, "MCU",
-                 "0x77 PEN_SCREEN_STATUS received after first 0x7701; issuing second 0x7701 query.");
-        break;
-    case PenUsbInitAction::SendInitProtocolParams:
-        LOG_INFO("PenEvent", __func__, "MCU",
-                 "0x7B PEN_REP_PARAM received after handshake; sending 0x7D01 InitParam.");
-        break;
-    default:
-        break;
-    }
-
     ExecuteInitAction(action);
 }
 
@@ -257,11 +240,6 @@ void PenEventBridge::OnPacketReceived(const std::vector<uint8_t>& packet) {
     }
 
     const uint8_t eventCode = parsed->eventCode;
-    const uint8_t payload0 = parsed->payload.empty() ? 0 : parsed->payload[0];
-    LOG_INFO("PenEvent", __func__, "MCU",
-             "RX event: event={}(0x{:02X}) size={}B payloadLen={} payload0=0x{:02X}",
-             PenUsbEventNameFromRaw(eventCode), eventCode, packet.size(),
-             parsed->payload.size(), payload0);
 
     int ackCode = GetAckCode(eventCode);
     if (ackCode >= 0) {
@@ -300,22 +278,13 @@ void PenEventBridge::OnPacketReceived(const std::vector<uint8_t>& packet) {
                 ev.semantic.hasPenModuleProtocolHint =
                     modelInfo.protocolHint != PenModuleProtocolHint::Auto;
                 ev.semantic.penModuleProtocolHint = modelInfo.protocolHint;
-
-                LOG_INFO("PenEvent", __func__, "MCU",
-                         "PenModule: model={} modelId=0x{:06X} protocol={} payloadLen={}",
-                         modelInfo.name, modelInfo.modelId,
-                         ToString(modelInfo.protocolHint), payloadLength);
                 break;
             }
             case PenUsbEventCode::PenHardwareVersion: {
                 auto hardwareVersion = DecodePenUsbUtf8Payload(parsed->payload);
                 ev.semantic.hasHardwareVersion = !hardwareVersion.empty();
                 ev.semantic.hardwareVersion = std::move(hardwareVersion);
-                if (ev.semantic.hasHardwareVersion) {
-                    LOG_INFO("PenEvent", __func__, "MCU",
-                             "PenHardwareVersion: version=\"{}\" payloadLen={}",
-                             ev.semantic.hardwareVersion, parsed->payload.size());
-                } else {
+                if (!ev.semantic.hasHardwareVersion) {
                     LOG_WARN("PenEvent", __func__, "MCU",
                              "PenHardwareVersion ignored: empty or invalid UTF-8 payloadLen={}",
                              parsed->payload.size());
@@ -402,8 +371,6 @@ bool PenEventBridge::SendInitProtocolParams() {
         return false;
     }
 
-    LOG_INFO("PenEvent", __func__, "MCU",
-             "0x7D01 InitProtocolParams sent (40B exact factory capture).");
     return true;
 }
 

@@ -902,20 +902,9 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
   const uint8_t payload0 = PayloadByteOrZero(ev);
 
   if (Himax::Pen::FactoryStatusFlagsAffected(ev.code)) {
-    uint16_t oldFlags = 0;
-    uint16_t newFlags = 0;
-    {
-      std::lock_guard<std::mutex> lk(m_penStateMu);
-      oldFlags = m_penState.factoryStatusFlags;
-      newFlags =
-          Himax::Pen::ApplyFactoryStatusFlagUpdate(oldFlags, ev.code, payload0);
-      m_penState.factoryStatusFlags = newFlags;
-    }
-    if (oldFlags != newFlags) {
-      LOG_INFO("Runtime", __func__, "MCU",
-               "{} flags: 0x{:04X} -> 0x{:04X}.",
-               FactoryStatusEventName(ev.code), oldFlags, newFlags);
-    }
+    std::lock_guard<std::mutex> lk(m_penStateMu);
+    m_penState.factoryStatusFlags = Himax::Pen::ApplyFactoryStatusFlagUpdate(
+        m_penState.factoryStatusFlags, ev.code, payload0);
   }
 
   switch (ev.code) {
@@ -935,24 +924,20 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
                                               ev.semantic.penModuleProtocolHint)
                                         : Solvers::StylusProtocolHint::Auto;
 
-    bool changed = false;
-    Solvers::StylusProtocolHint oldProtocolHint = Solvers::StylusProtocolHint::Auto;
     Solvers::StylusProtocolHint nextProtocolHint = moduleProtocolHint;
-    uint32_t revision = 0;
     {
       std::lock_guard<std::mutex> lk(m_penStateMu);
-      oldProtocolHint = m_penState.protocolHint;
 
       const bool nextFromPenModule = hasModuleHint;
       if (!hasModuleHint && m_penState.hasStylusId) {
         nextProtocolHint = ResolveProtocolHintFromStylusId(m_penState.stylusId);
       }
 
-      changed = !m_penState.hasPenModuleModelId ||
-                m_penState.penModuleModelId != modelId ||
-                m_penState.penModuleModel != moduleModel ||
-                m_penState.protocolHintFromPenModule != nextFromPenModule ||
-                oldProtocolHint != nextProtocolHint;
+      const bool changed = !m_penState.hasPenModuleModelId ||
+                           m_penState.penModuleModelId != modelId ||
+                           m_penState.penModuleModel != moduleModel ||
+                           m_penState.protocolHintFromPenModule != nextFromPenModule ||
+                           m_penState.protocolHint != nextProtocolHint;
       if (changed) {
         ++m_penState.penRevision;
       }
@@ -962,13 +947,7 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
       m_penState.penModuleModel = moduleModel;
       m_penState.protocolHintFromPenModule = nextFromPenModule;
       m_penState.protocolHint = nextProtocolHint;
-      revision = m_penState.penRevision;
     }
-
-    LOG_INFO("Runtime", __func__, "MCU",
-             "PenModule: model={} modelId=0x{:06X} protocol {} -> {} revision={}{}",
-             Himax::Pen::ToString(moduleModel), modelId, ToString(oldProtocolHint),
-             ToString(nextProtocolHint), revision, changed ? " reset" : "");
 
     ApplyPenStateToStylusPipeline();
     break;
@@ -981,27 +960,17 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
       break;
     }
 
-    std::string oldVersion;
-    std::string newVersion;
-    bool changed = false;
     {
       std::lock_guard<std::mutex> lk(m_penStateMu);
-      oldVersion = m_penState.hardwareVersion;
-      newVersion = ev.semantic.hardwareVersion;
-      changed = !m_penState.hasHardwareVersion || oldVersion != newVersion;
       m_penState.hasHardwareVersion = true;
-      m_penState.hardwareVersion = newVersion;
+      m_penState.hardwareVersion = ev.semantic.hardwareVersion;
     }
 
-    LOG_INFO("Runtime", __func__, "MCU",
-             "PenHardwareVersion: \"{}\" -> \"{}\" payloadLen={}{}",
-             oldVersion, newVersion, ev.payload.size(), changed ? " changed" : "");
     break;
   }
 
   case EC::PenConnStatus: {
     bool connected = false;
-    uint32_t revision = 0;
     {
       std::lock_guard<std::mutex> lk(m_penStateMu);
       const bool hadConnection = m_penState.hasConnection;
@@ -1023,11 +992,7 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
       } else if (!m_penState.protocolHintFromPenModule && m_penState.hasStylusId) {
         m_penState.protocolHint = ResolveProtocolHintFromStylusId(m_penState.stylusId);
       }
-      revision = m_penState.penRevision;
     }
-
-    LOG_INFO("Runtime", __func__, "MCU", "PenConnStatus: {} revision={}",
-             connected ? "connected" : "disconnected", revision);
 
     ApplyPenStateToStylusPipeline();
 
@@ -1046,8 +1011,6 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
   }
 
   case EC::PenFreqJump: {
-    LOG_INFO("Runtime", __func__, "MCU",
-             "PenFreqJump ignored: payloadLen={}", ev.payload.size());
     break;
   }
 
@@ -1057,23 +1020,14 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
     const uint8_t stateStylusId = hasStylusId ? commandPenType : 0;
     const auto fallbackProtocolHint = ResolveProtocolHintFromStylusId(stateStylusId);
 
-    bool changed = false;
     bool protocolFromPenModule = false;
-    uint8_t oldPenType = 0;
-    Solvers::StylusProtocolHint oldProtocolHint = Solvers::StylusProtocolHint::Auto;
-    Solvers::StylusProtocolHint effectiveProtocolHint = fallbackProtocolHint;
-    uint32_t revision = 0;
     {
       std::lock_guard<std::mutex> lk(m_penStateMu);
       protocolFromPenModule = m_penState.protocolHintFromPenModule;
-      oldPenType = m_penState.stylusId;
-      oldProtocolHint = m_penState.protocolHint;
-      effectiveProtocolHint = protocolFromPenModule
-                                  ? oldProtocolHint
-                                  : fallbackProtocolHint;
-      changed = m_penState.hasStylusId != hasStylusId ||
-                m_penState.stylusId != stateStylusId ||
-                (!protocolFromPenModule && oldProtocolHint != fallbackProtocolHint);
+      const bool changed =
+          m_penState.hasStylusId != hasStylusId ||
+          m_penState.stylusId != stateStylusId ||
+          (!protocolFromPenModule && m_penState.protocolHint != fallbackProtocolHint);
 
       if (changed) {
         ++m_penState.penRevision;
@@ -1083,15 +1037,7 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
       if (!protocolFromPenModule) {
         m_penState.protocolHint = fallbackProtocolHint;
       }
-      revision = m_penState.penRevision;
     }
-
-    LOG_INFO("Runtime", __func__, "MCU",
-             "PenTypeInfo: pen_type {} -> {} (param={}), protocol {} -> {}{} revision={}{}",
-             oldPenType, stateStylusId, commandPenType, ToString(oldProtocolHint),
-             ToString(effectiveProtocolHint),
-             protocolFromPenModule ? " (PenModule override)" : "", revision,
-             changed ? " reset" : "");
 
     ApplyPenStateToStylusPipeline();
 
@@ -1103,8 +1049,6 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
   }
 
   case EC::PenCurStatus: {
-    uint8_t modeRaw = 0;
-    Himax::Pen::PenCurrentMode mode = Himax::Pen::PenCurrentMode::Unknown;
     {
       std::lock_guard<std::mutex> lk(m_penStateMu);
       m_penState.hasCurrentMode = ev.semantic.hasCurrentMode;
@@ -1113,12 +1057,7 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
       m_penState.currentMode = ev.semantic.hasCurrentMode
                                    ? ev.semantic.currentMode
                                    : Himax::Pen::PenCurrentMode::Unknown;
-      modeRaw = m_penState.currentModeRaw;
-      mode = m_penState.currentMode;
     }
-
-    LOG_INFO("Runtime", __func__, "MCU", "PenCurStatus: mode={} ({}).", modeRaw,
-             Himax::Pen::ToString(mode));
     break;
   }
 
@@ -1134,9 +1073,6 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
 
     if (func == 1) {
       HandlePenButtonStatusCode(3, func, "PenCurrentFunc");
-    } else {
-      LOG_INFO("Runtime", __func__, "MCU",
-               "PenCurrentFunc: func={} ignored by factory gate.", func);
     }
     break;
   }
@@ -1146,8 +1082,6 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
   case EC::PenTouchMode:
   case EC::PenGlobalPreventMode:
   case EC::PenHolster:
-    LOG_INFO("Runtime", __func__, "MCU", "{} flags updated.",
-             FactoryStatusEventName(ev.code));
     break;
 
   case EC::PenGlobalAnnotation:
@@ -1165,36 +1099,24 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
     }
 
     const auto mode = GetPenButtonMode();
-    const auto route = GetPenButtonRoute();
     const auto plan = ResolvePenButtonRoute(
-        mode, route, m_penButtonRouteExplicit.load(std::memory_order_acquire));
-    bool vhfQueued = false;
-    bool win32Attempted = false;
-    bool win32Ok = false;
+        mode, GetPenButtonRoute(),
+        m_penButtonRouteExplicit.load(std::memory_order_acquire));
 
     if (plan.vhf && (mode == PenButtonMode::OemCustom ||
                      mode == PenButtonMode::NativeEraser)) {
       m_vhfReporter.SetEraserState(eraserState);
-      vhfQueued = true;
     }
 
     if (plan.win32 && eraserState != 0 && mode == PenButtonMode::NativeEraser) {
       POINT pt{};
       GetCursorPos(&pt);
-      win32Attempted = true;
-      win32Ok = m_synthPenButton.InjectEraserPulse(pt);
+      (void)m_synthPenButton.InjectEraserPulse(pt);
     }
-
-    LOG_INFO("Runtime", __func__, "MCU",
-             "EraserToggle: state={} mode={} route={} vhf={} win32={} win32_ok={}",
-             eraserState, ToString(mode), ToString(route), vhfQueued ? 1 : 0,
-             win32Attempted ? 1 : 0, win32Ok ? 1 : 0);
     break;
   }
 
   default:
-    LOG_INFO("Runtime", __func__, "MCU", "MCU event {}(0x{:02X}) received.",
-             Himax::Pen::ToString(ev.code), static_cast<uint8_t>(ev.code));
     break;
   }
 }

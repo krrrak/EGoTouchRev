@@ -35,7 +35,7 @@
       "vendor": {
         "microsoft.com/VisualStudioSettings/CMake/1.0": {
           "hostOS": "Windows",
-          "intelliSenseMode": "windows-msvc-arm64"
+          "intelliSenseMode": "windows-clang-arm64"
         }
       }
     },
