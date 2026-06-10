@@ -84,10 +84,6 @@ constexpr std::array<std::pair<std::string_view, std::string_view>, 4> kStylusIi
     std::pair{"stylus.sp.iir_coef_high_writing", "stylus.sp.iir_coef_high_edge"},
 };
 
-constexpr std::array<std::string_view, 1> kExplicitDefaultOverridePaths{
-    "service.pen_button_route",
-};
-
 bool StylusIirCoefficientsWithinMax(const Config::ConfigStore& store) {
     const int32_t maxCoef = store.getOr<int32_t>("stylus.sp.iir_max_coef", 32);
     if (maxCoef < 1) return false;
@@ -359,27 +355,13 @@ Config::ConfigSchemaSnapshot ConfigRuntime::BuildFactoryDefaultSchema() {
 }
 
 bool ConfigRuntime::Initialize(const std::string& configPath, const StartupValidator& validateStartupConfig) {
-    Config::ConfigStore defaults;
-    Config::ConfigSchemaSnapshot schema;
-    std::optional<std::string> cliConfigPath;
-    if (!configPath.empty()) cliConfigPath = configPath;
-    auto paths = Config::resolve(cliConfigPath);
-    if (!paths.has_value()) {
-        LOG_ERROR("Service", __func__, "Config", "config/default.yaml was not resolved; startup blocked.");
-        return false;
-    }
-    try {
-        Config::ConfigStore yamlDefaults;
-        yamlDefaults.loadFromYaml(paths->defaultConfig);
-        defaults.mergeFrom(yamlDefaults);
-        ApplyLegacyServiceModeMigration(defaults, yamlDefaults);
-    } catch (const std::exception& ex) {
-        LOG_ERROR("Service", __func__, "Config", "Failed to load mandatory default config '{}': {}; startup blocked.", paths->defaultConfig, ex.what());
-        return false;
+    if (!configPath.empty()) {
+        LOG_WARN("Service", __func__, "Config", "Ignoring external config path '{}'; YAML config files are no longer supported.", configPath);
     }
 
+    Config::ConfigStore defaults;
+    Config::ConfigSchemaSnapshot schema;
     WithRuntimeConfigDefaults([&defaults, &schema](Config::ConfigBinder& binder, Config::ConfigStore& factoryDefaults) {
-        factoryDefaults.mergeFrom(defaults);
         defaults = factoryDefaults;
         schema = Config::BuildMergedSchema(defaults, binder);
     });
@@ -387,17 +369,6 @@ bool ConfigRuntime::Initialize(const std::string& configPath, const StartupValid
     Config::ConfigStore current;
     current.mergeFrom(defaults);
     bool penButtonRouteExplicit = false;
-    if (paths.has_value() && paths->overrideExists) {
-        try {
-            Config::ConfigStore overrides;
-            overrides.loadFromYaml(paths->overrideConfig);
-            penButtonRouteExplicit = overrides.has("service.pen_button_route");
-            current.mergeFrom(overrides);
-            ApplyLegacyServiceModeMigration(current, overrides);
-        } catch (const std::exception& ex) {
-            LOG_WARN("Service", __func__, "Config", "Failed to load override config '{}': {}", paths->overrideConfig, ex.what());
-        }
-    }
 
     if (!ValidateStartupConfig(current, validateStartupConfig)) {
         LOG_ERROR("Service", __func__, "Config", "Startup config schema validation failed; startup blocked.");
@@ -425,7 +396,6 @@ bool ConfigRuntime::Initialize(const std::string& configPath, const StartupValid
     m_store = std::move(current);
     m_activeStore = m_store;
     m_schema = std::move(schema);
-    m_paths = std::move(paths);
     m_penButtonRouteExplicit = penButtonRouteExplicit;
     m_activePenButtonRouteExplicit = penButtonRouteExplicit;
     auto state = ReadActiveServiceConfigStateLocked();
@@ -528,31 +498,11 @@ void ConfigRuntime::WriteServiceConfigStateToStoreLocked(Config::ConfigStore& st
 }
 
 bool ConfigRuntime::PersistServicePolicyConfig(const ServiceConfigState& config) {
-    Config::ConfigStore storeToPersist;
-    Config::ConfigStore defaultsToPersist;
-    Config::ConfigPaths pathsToPersist;
-    {
-        std::lock_guard<std::mutex> lk(m_mutex);
-        if (!m_paths.has_value()) {
-            LOG_ERROR("Service", __func__, "Config", "Cannot persist config before startup paths are resolved.");
-            return false;
-        }
-        WriteServiceConfigStateToStoreLocked(m_store, m_penButtonRouteExplicit, config);
-        WriteServiceConfigStateToStoreLocked(m_activeStore, m_activePenButtonRouteExplicit, config);
-        storeToPersist = m_store;
-        defaultsToPersist = m_defaults;
-        pathsToPersist = *m_paths;
-    }
-    try {
-        const auto forcedPaths = config.penButtonRouteExplicit
-            ? std::span<const std::string_view>(kExplicitDefaultOverridePaths)
-            : std::span<const std::string_view>{};
-        storeToPersist.saveOverrides(pathsToPersist.overrideConfig, defaultsToPersist, forcedPaths);
-        return true;
-    } catch (const std::exception& ex) {
-        LOG_ERROR("Service", __func__, "Config", "PersistConfig failed: {}", ex.what());
-        return false;
-    }
+    std::lock_guard<std::mutex> lk(m_mutex);
+    WriteServiceConfigStateToStoreLocked(m_store, m_penButtonRouteExplicit, config);
+    WriteServiceConfigStateToStoreLocked(m_activeStore, m_activePenButtonRouteExplicit, config);
+    LOG_WARN("Service", __func__, "Config", "Service policy updated for current session only; persistent config files are no longer supported.");
+    return false;
 }
 
 bool ConfigRuntime::ApplyPatchPayloadLocked(const uint8_t* data,
@@ -725,62 +675,10 @@ ConfigRuntime::V3ApplyResult ConfigRuntime::ApplyConfigPatchV3(uint32_t baseSche
 
 ConfigRuntime::V3PersistResult ConfigRuntime::PersistConfigV3() {
     V3PersistResult result{};
-    Config::ConfigStore storeToPersist;
-    Config::ConfigStore defaultsToPersist;
-    Config::ConfigPaths pathsToPersist;
-    bool forcePenButtonRouteOverride = false;
-    {
-        std::lock_guard<std::mutex> lk(m_mutex);
-        if (!m_paths.has_value()) {
-            result.ipcStatus = Ipc::IpcStatusCode::InvalidState;
-            result.status = Ipc::ConfigV3MutationStatus::PersistFailed;
-            result.failedCount = 1;
-            LOG_ERROR("Service", __func__, "Config", "Cannot persist config before startup paths are resolved.");
-            return result;
-        }
-
-        for (const auto& entry : m_schema.entries) {
-            if (entry.keyId == Config::ConfigKeyId::MaxKeyId || entry.yamlPath.empty()) {
-                ++result.skippedCount;
-                continue;
-            }
-            if (entry.persistPolicy != Config::ConfigPersistPolicy::UserOverride) {
-                ++result.skippedCount;
-                continue;
-            }
-            if (!m_store.has(entry.yamlPath)) {
-                ++result.skippedCount;
-                continue;
-            }
-
-            const auto currentValue = m_store.get<Config::ConfigValue>(entry.yamlPath);
-            storeToPersist.set<Config::ConfigValue>(entry.yamlPath, currentValue);
-            const Config::ConfigValue defaultValue = m_defaults.has(entry.yamlPath)
-                ? m_defaults.get<Config::ConfigValue>(entry.yamlPath)
-                : entry.defaultValue;
-            defaultsToPersist.set<Config::ConfigValue>(entry.yamlPath, defaultValue);
-            const bool forcedOverride = m_penButtonRouteExplicit && entry.yamlPath == "service.pen_button_route";
-            if (forcedOverride || currentValue != defaultValue) {
-                ++result.persistedCount;
-            }
-        }
-        forcePenButtonRouteOverride = m_penButtonRouteExplicit;
-        pathsToPersist = *m_paths;
-    }
-
-    try {
-        const auto forcedPaths = forcePenButtonRouteOverride
-            ? std::span<const std::string_view>(kExplicitDefaultOverridePaths)
-            : std::span<const std::string_view>{};
-        storeToPersist.saveOverrides(pathsToPersist.overrideConfig, defaultsToPersist, forcedPaths);
-        result.ipcStatus = Ipc::IpcStatusCode::Ok;
-        result.status = Ipc::ConfigV3MutationStatus::Ok;
-    } catch (const std::exception& ex) {
-        result.ipcStatus = Ipc::IpcStatusCode::InternalError;
-        result.status = Ipc::ConfigV3MutationStatus::PersistFailed;
-        result.failedCount = result.persistedCount == 0 ? 1 : result.persistedCount;
-        LOG_ERROR("Service", __func__, "Config", "PersistConfigV3 failed: {}", ex.what());
-    }
+    result.ipcStatus = Ipc::IpcStatusCode::UnsupportedCommand;
+    result.status = Ipc::ConfigV3MutationStatus::PersistFailed;
+    result.failedCount = 1;
+    LOG_WARN("Service", __func__, "Config", "PersistConfigV3 rejected: persistent config files are no longer supported.");
     return result;
 }
 

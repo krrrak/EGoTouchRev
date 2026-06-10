@@ -46,8 +46,7 @@ bool DrawEntryBadges(const Config::ConfigSchemaEntry& entry,
     const ImGuiStyle& style = ImGui::GetStyle();
     const char* scope = ConfigScopeBadge(entry.scope);
     const char* timing = ConfigApplyTimingBadge(entry.applyTiming);
-    const char* policy = ConfigPersistPolicyBadge(entry.persistPolicy);
-    const float strategyWidth = ImGui::CalcTextSize("[Stylus] [Restart] [UserOverride]").x;
+    const float strategyWidth = ImGui::CalcTextSize("[Stylus] [Restart] [SessionOnly]").x;
     const bool sameLine = ImGui::GetContentRegionAvail().x > strategyWidth + style.ItemInnerSpacing.x;
     bool hovered = false;
 
@@ -57,7 +56,7 @@ bool DrawEntryBadges(const Config::ConfigSchemaEntry& entry,
         ImGui::Indent(style.IndentSpacing);
     }
 
-    ImGui::TextDisabled("[%s] [%s] [%s]", scope, timing, policy);
+    ImGui::TextDisabled("[%s] [%s] [SessionOnly]", scope, timing);
     hovered = hovered || ImGui::IsItemHovered();
 
     if (pathState.has_value()) {
@@ -69,12 +68,11 @@ bool DrawEntryBadges(const Config::ConfigSchemaEntry& entry,
             pathState->dirty ? "*" : "");
         hovered = hovered || ImGui::IsItemHovered();
 
-        ImGui::SameLine();
-        ImGui::TextColored(
-            PersistStateColor(pathState->persistState),
-            "[Persist:%s]",
-            ConfigPersistStateBadge(pathState->persistState));
-        hovered = hovered || ImGui::IsItemHovered();
+        if (!pathState->errorMessage.empty()) {
+            ImGui::SameLine();
+            ImGui::TextColored(PersistStateColor(pathState->persistState), "[SessionOnly]");
+            hovered = hovered || ImGui::IsItemHovered();
+        }
     }
 
     if (!sameLine) {
@@ -94,13 +92,13 @@ void DrawEntryTooltip(const Config::ConfigSchemaEntry& entry,
     ImGui::Text("Path: %s", entry.yamlPath.c_str());
     ImGui::Text("Scope: %s", ConfigScopeBadge(entry.scope));
     ImGui::Text("Apply: %s", ConfigApplyTimingBadge(entry.applyTiming));
-    ImGui::Text("Persist: %s", ConfigPersistPolicyBadge(entry.persistPolicy));
+    ImGui::TextUnformatted("Persistence: disabled; session-only dynamic adjustment.");
     if (pathState.has_value()) {
         ImGui::Separator();
         ImGui::Text("Apply State: %s%s",
                     ConfigApplyStateBadge(pathState->applyState),
                     pathState->dirty ? " (dirty)" : "");
-        ImGui::Text("Persist State: %s", ConfigPersistStateBadge(pathState->persistState));
+        ImGui::TextUnformatted("Persistence: disabled for this build.");
         if (pathState->failedKeyId != Config::ConfigKeyId::MaxKeyId) {
             ImGui::Text("failedKeyId: 0x%04X",
                         static_cast<unsigned int>(static_cast<uint16_t>(pathState->failedKeyId)));

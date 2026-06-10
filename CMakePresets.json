@@ -22,14 +22,14 @@
         },
         "CMAKE_C_COMPILER": {
           "type": "FILEPATH",
-          "value": "C:/Program Files/LLVM/bin/clang-cl.exe"
+          "value": "C:/Program Files/LLVM/bin/clang.exe"
         },
         "CMAKE_CXX_COMPILER": {
           "type": "FILEPATH",
-          "value": "C:/Program Files/LLVM/bin/clang-cl.exe"
+          "value": "C:/Program Files/LLVM/bin/clang++.exe"
         },
         "CMAKE_C_COMPILER_TARGET": "arm64-pc-windows-msvc",
-        "CMAKE_CXX_COMPILER_TARGET": "arm64-pc-windows-msvc",
+        "CMAKE_CXX_COMPILER_TARGET": "arm64-windows-msvc",
         "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}"
       },
       "vendor": {

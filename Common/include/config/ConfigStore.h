@@ -4,21 +4,18 @@
 #include "SchemaValidator.h"
 #include <cstdint>
 #include <optional>
-#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
-#include <yaml-cpp/yaml.h>
 
 namespace Config {
 
 class ConfigStore {
 public:
-    // ── 加载 ──
-    void loadFromYaml(const std::string& path);
+    // ── 校验 ──
     ValidationResult validate() const;
 
     // ── 读取 ──
@@ -31,13 +28,6 @@ public:
     // ── 写入 ──
     template<typename T>
     void set(std::string_view path, T value);
-
-    // ── 持久化 ──
-    void saveToYaml(const std::string& path) const;
-    void saveOverrides(const std::string& path, const ConfigStore& defaults) const;
-    void saveOverrides(const std::string& path,
-                       const ConfigStore& defaults,
-                       std::span<const std::string_view> forcedOverridePaths) const;
 
     // ── 元数据 ──
     std::vector<std::string> allPaths() const;
@@ -57,10 +47,6 @@ private:
 
     // 内部：点号分隔路径解析（如 "touch.signal_cond.key"）
     std::string resolvePath(std::string_view path) const;
-    // 内部：YAML 扁平化（YAML::Node tree → flat key-value）
-    void flattenYaml(const YAML::Node& node, const std::string& prefix);
-    // 内部：flat key-value → YAML 树
-    YAML::Node unflattenToYaml() const;
 };
 
 // ── 模板实现（header-only）──

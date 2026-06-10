@@ -4,7 +4,6 @@
 #include "SolverBuildConfig.h"
 #include "config/ConfigBinder.h"
 #include "config/ConfigKeyMap.h"
-#include "config/ConfigPath.h"
 #include "config/ConfigTlv.h"
 #include <algorithm>
 #include <array>
@@ -102,18 +101,6 @@ std::optional<PenButtonRoute> ParsePenButtonRouteConfig(const Config::ConfigValu
         }
     }
     return std::nullopt;
-}
-
-// App-local YAML compatibility only: accepts pre-catalog default/override files
-// that still used service.mode.full. Connected Service sync never uses this path.
-void ApplyAppLocalYamlServiceModeMigration(Config::ConfigStore& target, const Config::ConfigStore& source) {
-    if (source.has("service.mode") || !source.has("service.mode.full")) {
-        return;
-    }
-
-    target.set<Config::ConfigValue>(
-        "service.mode",
-        ToConfigValue(source.getOr<bool>("service.mode.full", true) ? "full" : "touch_only"));
 }
 
 bool ServiceModeFullFromConfig(const Config::ConfigStore& store, bool fallback) {
@@ -420,27 +407,7 @@ void ServiceProxy::InitConfigSchema() {
     m_configDraft.editableDraft.mergeFrom(m_configDraft.catalogDefaults);
     binder.writeCurrent(m_configDraft.editableDraft);
 
-    const auto paths = Config::resolve();
-    if (paths.has_value()) {
-        try {
-            Config::ConfigStore yamlStore;
-            yamlStore.loadFromYaml(paths->defaultConfig);
-            m_configDraft.editableDraft.mergeFrom(yamlStore);
-            ApplyAppLocalYamlServiceModeMigration(m_configDraft.editableDraft, yamlStore);
-            if (paths->overrideExists) {
-                Config::ConfigStore overrides;
-                overrides.loadFromYaml(paths->overrideConfig);
-                m_configDraft.editableDraft.mergeFrom(overrides);
-                ApplyAppLocalYamlServiceModeMigration(m_configDraft.editableDraft, overrides);
-            }
-            LOG_INFO("App", __func__, "Config", "Loaded app-local preview config: default='{}' overrides='{}' overrideExists={}",
-                     paths->defaultConfig, paths->overrideConfig, paths->overrideExists);
-        } catch (const std::exception& ex) {
-            LOG_WARN("App", __func__, "Config", "Failed to load YAML config for app-local preview; using binder defaults: {}", ex.what());
-        }
-    } else {
-        LOG_WARN("App", __func__, "Config", "config/default.yaml not found; using binder defaults for app-local preview.");
-    }
+    LOG_INFO("App", __func__, "Config", "Initialized app-local config draft from built-in defaults; YAML config files are no longer supported.");
 
     SyncServiceMirrorsFromStore(
         m_configDraft.editableDraft,
@@ -732,25 +699,6 @@ bool ServiceProxy::ApplyConfigStoreGlobally() {
         }
     };
 
-    auto markPersistOutcome = [this](const std::vector<std::string>& paths,
-                                     bool persisted,
-                                     Ipc::IpcStatusCode persistStatus) {
-        for (const auto& path : paths) {
-            auto& state = m_configDraft.pathStates[path];
-            state.persistStatus = persistStatus;
-            if (persisted) {
-                state.dirty = false;
-                state.persistState = ConfigDraftPersistState::Persisted;
-                state.errorMessage.clear();
-                m_configDraft.dirtyBaseline.erase(path);
-            } else {
-                state.dirty = true;
-                state.persistState = ConfigDraftPersistState::Unpersisted;
-                state.errorMessage = "Applied in Service but not persisted.";
-            }
-        }
-    };
-
     const bool liveControlAllowed = IsLiveControlAllowed();
     const bool connectedForApply = IsConfigIpcConnectedForApply();
     const bool connectedLiveApply = liveControlAllowed && connectedForApply;
@@ -780,17 +728,9 @@ bool ServiceProxy::ApplyConfigStoreGlobally() {
     }
 
     if (!liveControlAllowed || !connectedForApply) {
-        ApplyConfigStoreToLocalRuntime();
-        Ipc::ConfigV3ApplyResultWire localApplyResult{};
-        localApplyResult.status = static_cast<uint8_t>(Ipc::ConfigV3MutationStatus::Ok);
-        markPatchPathsApplied(prepared.patchPaths, localApplyResult);
-        markPersistOutcome(prepared.patchPaths, false, Ipc::IpcStatusCode::InvalidState);
-        setApplyOutcome(prepared.hasRestartRequiredEntry ? ApplyConfigStatus::RestartRequired : ApplyConfigStatus::LiveApplied,
-                        !prepared.hasRestartRequiredEntry,
-                        prepared.hasRestartRequiredEntry);
-        m_hasUnpersistedLiveConfigChanges.store(true, std::memory_order_relaxed);
-        LOG_WARN("App", __func__, "IPC", "Global config apply used app-local fallback; live control unavailable or IPC disconnected.");
-        return true;
+        setApplyOutcome(ApplyConfigStatus::LiveApplyFailed, false, false);
+        LOG_WARN("App", __func__, "IPC", "Global config apply requires a live Service connection; app-local YAML fallback is no longer supported.");
+        return false;
     }
 
     auto serializePreparedPatch = [&](const PreparedPatch& patchToSerialize) -> std::optional<std::vector<uint8_t>> {
@@ -913,59 +853,25 @@ bool ServiceProxy::ApplyConfigStoreGlobally() {
             : (restartRequired ? ApplyConfigStatus::RestartRequired : ApplyConfigStatus::LiveApplied));
     setApplyOutcome(applyStatus, liveApplied, restartRequired);
 
-    std::vector<std::string> persistTrackedPaths = prepared.patchPaths;
-    persistTrackedPaths.insert(persistTrackedPaths.end(), prepared.persistOnlyPaths.begin(), prepared.persistOnlyPaths.end());
-
-    auto isUserOverridePersistable = [this](std::string_view path) {
-        const auto* schemaEntry = FindSchemaEntryByPath(m_configSchema, path);
-        return schemaEntry != nullptr &&
-               schemaEntry->persistPolicy == Config::ConfigPersistPolicy::UserOverride;
-    };
-
-    std::vector<std::string> userOverridePersistPaths;
-    std::vector<std::string> nonUserOverridePersistPaths;
-    userOverridePersistPaths.reserve(persistTrackedPaths.size());
-    for (const auto& path : persistTrackedPaths) {
-        if (isUserOverridePersistable(path)) {
-            userOverridePersistPaths.push_back(path);
-        } else {
-            nonUserOverridePersistPaths.push_back(path);
-        }
+    std::vector<std::string> sessionAppliedPaths = prepared.patchPaths;
+    sessionAppliedPaths.insert(sessionAppliedPaths.end(), prepared.persistOnlyPaths.begin(), prepared.persistOnlyPaths.end());
+    for (const auto& path : sessionAppliedPaths) {
+        auto& state = m_configDraft.pathStates[path];
+        state.dirty = false;
+        state.persistState = ConfigDraftPersistState::NotAttempted;
+        state.persistStatus = Ipc::IpcStatusCode::UnsupportedCommand;
+        state.errorMessage = "Applied to the current Service session only; persistent config files are no longer supported.";
+        m_configDraft.dirtyBaseline.erase(path);
     }
-
-    const auto persistResp = SendPersistConfigV3Request();
-    m_lastApplyConfigPersistAttempted.store(true, std::memory_order_relaxed);
-    m_lastApplyConfigPersistStatus.store(static_cast<uint8_t>(persistResp.status), std::memory_order_relaxed);
-    const auto decodedPersist = DecodeConfigV3PersistResult(persistResp);
-    Ipc::PersistConfigV3ResponseWire persistResult{};
-    if (decodedPersist.has_value()) {
-        persistResult = *decodedPersist;
-    }
-    const bool persistResponseOk = decodedPersist.has_value() &&
-        static_cast<Ipc::ConfigV3MutationStatus>(persistResult.status) == Ipc::ConfigV3MutationStatus::Ok;
-    const bool persisted = persistResponseOk && nonUserOverridePersistPaths.empty();
-    m_lastApplyConfigPersisted.store(persisted, std::memory_order_relaxed);
-    markPersistOutcome(userOverridePersistPaths, persistResponseOk, persistResp.status);
-    markPersistOutcome(nonUserOverridePersistPaths, false, persistResp.status);
-    if (!persisted) {
-        m_hasUnpersistedLiveConfigChanges.store(true, std::memory_order_relaxed);
-        if (persistResponseOk) {
-            LOG_WARN("App", __func__, "IPC", "PersistConfigV3 skipped {} non-user-override path(s); keeping dirty paths for retry",
-                     nonUserOverridePersistPaths.size());
-        } else {
-            LOG_WARN("App", __func__, "IPC", "PersistConfigV3 failed after apply with status={}; keeping dirty paths for retry",
-                     static_cast<unsigned int>(persistResp.status));
-        }
-    } else {
-        m_hasUnpersistedLiveConfigChanges.store(hasUnpersistedDirtyState(), std::memory_order_relaxed);
-    }
+    m_lastApplyConfigPersistAttempted.store(false, std::memory_order_relaxed);
+    m_lastApplyConfigPersisted.store(false, std::memory_order_relaxed);
+    m_lastApplyConfigPersistStatus.store(static_cast<uint8_t>(Ipc::IpcStatusCode::UnsupportedCommand), std::memory_order_relaxed);
+    m_hasUnpersistedLiveConfigChanges.store(false, std::memory_order_relaxed);
 
     RefreshConfigSnapshot();
     ApplyConfigStoreToLocalRuntime();
-    LOG_INFO("App", __func__, "IPC", "Global config v3 applied entries={} skippedKeys={} liveApplied={} restartRequired={} persisted={} persistedCount={} skippedPersist={} unpersistedLiveChanges={}",
-             prepared.patch.entries.size(), prepared.skippedKeys, liveApplied ? 1 : 0, restartRequired ? 1 : 0,
-             persisted ? 1 : 0, persistResult.persistedCount, persistResult.skippedCount,
-             m_hasUnpersistedLiveConfigChanges.load(std::memory_order_relaxed) ? 1 : 0);
+    LOG_INFO("App", __func__, "IPC", "Global config v3 applied for current session entries={} skippedKeys={} liveApplied={} restartRequired={}",
+             prepared.patch.entries.size(), prepared.skippedKeys, liveApplied ? 1 : 0, restartRequired ? 1 : 0);
     return true;
 }
 

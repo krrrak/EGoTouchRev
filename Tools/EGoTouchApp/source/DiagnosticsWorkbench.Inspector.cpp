@@ -69,27 +69,12 @@ void DrawApplyConfigResultStatus(const ApplyConfigResult& result) {
         ImGui::TextColored(BadColor(), "Live apply failed.");
         break;
     case ApplyConfigStatus::LiveApplied:
-        if (result.persistAttempted) {
-            if (result.persisted) {
-                ImGui::TextColored(GoodColor(), "Live applied and persisted.");
-            } else {
-                ImGui::TextColored(WarnColor(), "Live applied; persist failed (status=%u).", static_cast<unsigned int>(result.persistStatus));
-            }
-        } else {
-            ImGui::TextColored(GoodColor(), "Live applied.");
-        }
-        if (result.unpersistedLiveChanges) {
-            ImGui::TextColored(WarnColor(), "Unpersisted live config changes remain.");
-        }
+        ImGui::TextColored(GoodColor(), "Live applied to current Service session.");
+        ImGui::TextColored(WarnColor(), "Persistent config files are not supported; changes reset after Service restart.");
         break;
     case ApplyConfigStatus::RestartRequired:
-        if (result.persistAttempted && result.persisted) {
-            ImGui::TextColored(WarnColor(), "Saved; restart required.");
-        } else if (result.persistAttempted) {
-            ImGui::TextColored(WarnColor(), "Restart required; persist failed (status=%u).", static_cast<unsigned int>(result.persistStatus));
-        } else {
-            ImGui::TextColored(WarnColor(), "Restart required.");
-        }
+        ImGui::TextColored(WarnColor(), "Staged for current Service session; restart is required to activate this value.");
+        ImGui::TextColored(WarnColor(), "Persistent config files are not supported; changes reset after Service restart.");
         break;
     }
 }
@@ -459,7 +444,7 @@ void DiagnosticsWorkbench::DrawTouchPipelineConfigPanel() {
             m_proxy->ApplyConfigStoreGlobally();
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("Live-applies supported keys; persistence depends on Service/YAML availability.");
+        ImGui::TextDisabled("Live-applies supported keys to the current Service session only; persistent config files are disabled.");
         DrawApplyConfigResultStatus();
 
         ImGui::EndTable();
@@ -751,7 +736,7 @@ void DiagnosticsWorkbench::DrawStylusServicePolicyPanel() {
         m_proxy->ApplyConfigStoreGlobally();
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("Live-applies supported keys; persistence depends on Service/YAML availability.");
+    ImGui::TextDisabled("Live-applies supported keys to the current Service session only; persistent config files are disabled.");
     DrawApplyConfigResultStatus();
 #else
     ImGui::TextWrapped("Release builds show the live Service policy snapshot without mutating Service configuration.");
@@ -828,7 +813,7 @@ void DiagnosticsWorkbench::DrawStylusPipelineConfigPanel() {
             m_proxy->ApplyConfigStoreGlobally();
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("Live-applies supported keys; persistence depends on Service/YAML availability.");
+        ImGui::TextDisabled("Live-applies supported keys to the current Service session only; persistent config files are disabled.");
         DrawApplyConfigResultStatus();
 
         ImGui::EndTable();

@@ -57,7 +57,7 @@ struct ConfigSchemaEntry {
     std::string yamlPath;
     ConfigKeyId keyId = ConfigKeyId::MaxKeyId;
     ConfigUiType uiType = ConfigUiType::String;
-    ConfigValue defaultValue;           // 来自 default.yaml 或 binder default
+    ConfigValue defaultValue;           // 来自 binder/code default
     ConfigValue currentValue;           // 来自 ConfigStore 或 binder getter
     std::optional<ConfigRange> range;   // 来自 binder
     std::string displayName;            // 人工可读名称

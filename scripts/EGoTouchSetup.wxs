@@ -56,10 +56,6 @@
                         Remove="uninstall" />
       </Component>
 
-      <Component Id="DefaultConfigComp" Directory="CONFIGFOLDER" Guid="B0D74677-16A8-4D95-B5FC-A7023D652079">
-        <File Id="DefaultConfigYAML" Source="$(var.BuildOutputDir)\config\default.yaml" KeyPath="yes" />
-      </Component>
-
     </ComponentGroup>
 
     <Feature Id="MainFeature" Title="EGoTouch Core" Level="1">

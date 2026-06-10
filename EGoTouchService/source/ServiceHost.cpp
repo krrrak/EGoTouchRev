@@ -18,7 +18,6 @@
 #include "Ipc/IpcProtocol.h"
 #include "config/ConfigBinder.h"
 #include "config/ConfigKeyMap.h"
-#include "config/ConfigPath.h"
 #include "config/ConfigStore.h"
 #include "config/SchemaValidator.h"
 
@@ -29,91 +28,13 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <cstring>
 #include <cwchar>
-#include <exception>
-#include <cwctype>
-#include <exception>
-#include <filesystem>
 #include <mutex>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
-
-static std::string g_overrideConfigPath;
-static bool g_commandLineParsed = false;
-
-static std::string WStringToUtf8(const std::wstring& input) {
-    if (input.empty()) return {};
-    const int required = WideCharToMultiByte(CP_UTF8, 0, input.data(), static_cast<int>(input.size()), nullptr, 0, nullptr, nullptr);
-    if (required <= 0) return {};
-    std::string output(static_cast<size_t>(required), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, input.data(), static_cast<int>(input.size()), output.data(), required, nullptr, nullptr);
-    return output;
-}
-
-static std::vector<std::wstring> TokenizeCommandLine(const wchar_t* commandLine) {
-    std::vector<std::wstring> args;
-    if (!commandLine) return args;
-
-    const wchar_t* p = commandLine;
-    while (*p) {
-        while (*p && std::iswspace(*p)) ++p;
-        if (!*p) break;
-
-        std::wstring arg;
-        bool inQuotes = false;
-        while (*p) {
-            if (*p == L'"') {
-                inQuotes = !inQuotes;
-                ++p;
-                continue;
-            }
-            if (!inQuotes && std::iswspace(*p)) break;
-            arg.push_back(*p++);
-        }
-        args.push_back(std::move(arg));
-        while (*p && std::iswspace(*p)) ++p;
-    }
-
-    return args;
-}
-
-static void ParseCommandLine(int argc, wchar_t* argv[]) {
-    for (int i = 1; i < argc; ++i) {
-        if (wcscmp(argv[i], L"--config") == 0 && i + 1 < argc) {
-            const wchar_t* val = argv[i + 1];
-            if (val[0] == L'-' && val[1] == L'-') {
-                LOG_WARN("ServiceHost", "CLI", "Args", "--config expects a path, got flag: {}", WStringToUtf8(val));
-                continue;
-            }
-            g_overrideConfigPath = WStringToUtf8(val);
-            ++i;
-            LOG_INFO("ServiceHost", "CLI", "Args", "Overriding config path: {}", g_overrideConfigPath);
-        }
-    }
-}
-
-static void EnsureCommandLineParsed() {
-    if (g_commandLineParsed) return;
-    g_commandLineParsed = true;
-
-    auto args = TokenizeCommandLine(GetCommandLineW());
-    std::vector<wchar_t*> argv;
-    argv.reserve(args.size());
-    for (auto& arg : args) {
-        argv.push_back(arg.data());
-    }
-    ParseCommandLine(static_cast<int>(argv.size()), argv.data());
-}
-
-static std::string GetConfigPath() {
-    EnsureCommandLineParsed();
-    return g_overrideConfigPath;
-}
 
 namespace Service {
 
@@ -516,8 +437,7 @@ ReloadServiceConfigResult ServiceHost::HandleReloadServiceConfig(
     return result;
 }
 
-bool ServiceHost::StartRuntimeAndPipeline(const std::string& configPath) {
-    (void)configPath;
+bool ServiceHost::StartRuntimeAndPipeline() {
     m_deviceRuntime = std::make_unique<DeviceRuntime>(
         kDevicePathMaster, kDevicePathSlave, kDevicePathInterrupt);
 
@@ -637,8 +557,7 @@ void ServiceHost::StartPenSubsystem() {
 }
 
 bool ServiceHost::Start() {
-    const std::string configPath = GetConfigPath();
-    if (!InitializeConfigStores(configPath)) {
+    if (!InitializeConfigStores({})) {
         LOG_ERROR("Service", __func__, "Boot", "Startup config load/validation failed; service start blocked.");
         return false;
     }
@@ -647,7 +566,7 @@ bool ServiceHost::Start() {
     LOG_INFO("Service", __func__, "Boot", "Service mode: {}, AutoMode: {}",
              ServiceModeToConfig(m_configState.mode), m_configState.autoMode);
 
-    if (!StartRuntimeAndPipeline(configPath)) {
+    if (!StartRuntimeAndPipeline()) {
         return false;
     }
 
@@ -1160,7 +1079,7 @@ void ServiceHost::HandleIpcConfigV3Persist(Ipc::IpcResponse& resp) {
     std::memcpy(resp.data, &result, sizeof(result));
     resp.dataLen = static_cast<uint16_t>(sizeof(result));
     Ipc::MarkSuccess(resp);
-    LOG_INFO("Service", __func__, "IPC", "PersistConfigV3 saved overrides persisted={} skipped={} failed={}",
+    LOG_INFO("Service", __func__, "IPC", "PersistConfigV3 completed persisted={} skipped={} failed={}",
              persist.persistedCount, persist.skippedCount, persist.failedCount);
 }
 

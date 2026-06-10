@@ -129,7 +129,7 @@ struct IpcResponse {
 请求：无  
 响应：`PersistConfigV3ResponseWire`
 
-语义：Service 按 catalog 中 `ConfigPersistPolicy::UserOverride` 写 `overrides.yaml`；`default.yaml` 是 factory default 输入，legacy `config.ini` 不是当前目标格式。
+语义：当前 Service 不支持持久化配置文件；调用返回 `UnsupportedCommand`，动态配置修改只在当前 Service 会话内生效。
 
 ### 5.4 legacy command tombstone
 

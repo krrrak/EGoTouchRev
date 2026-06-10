@@ -77,7 +77,7 @@ private:
     void ApplyServiceConfigToRuntime(const ServiceConfigState& config);
     ReloadServiceConfigResult HandleReloadServiceConfig(const ServiceConfigState& reloadedConfig);
     bool ValidateStartupConfig(const Config::ConfigStore& store) const;
-    bool StartRuntimeAndPipeline(const std::string& configPath);
+    bool StartRuntimeAndPipeline();
     void StartSystemStateMonitor();
     void StartIpcSubsystem();
     void StartPenSubsystem();

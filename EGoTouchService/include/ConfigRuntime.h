@@ -3,7 +3,6 @@
 #include "ConfigTarget.h"
 #include "ServiceConfigCore.h"
 #include "Ipc/IpcProtocol.h"
-#include "config/ConfigPath.h"
 #include "config/ConfigStore.h"
 #include "config/ConfigTlv.h"
 #include "config/ConfigValue.h"
@@ -14,7 +13,6 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -94,7 +92,6 @@ private:
     Config::ConfigStore m_store;
     Config::ConfigStore m_activeStore;
     Config::ConfigSchemaSnapshot m_schema;
-    std::optional<Config::ConfigPaths> m_paths;
     bool m_penButtonRouteExplicit = false;
     bool m_activePenButtonRouteExplicit = false;
     std::vector<std::unique_ptr<IConfigTarget>> m_targets;

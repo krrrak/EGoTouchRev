@@ -89,14 +89,44 @@ if (WIN32)
     endif()
 endif()
 
+# --- Global Optimization & Debug Options ---
+option(EGO_GENERATE_PDB "Generate PDB debug symbols in Release build" ON)
+
 if(MSVC)
-    add_compile_options($<$<CONFIG:Release>:/Zi>)
-    add_link_options($<$<CONFIG:Release>:/DEBUG:FULL> $<$<CONFIG:Release>:/OPT:REF> $<$<CONFIG:Release>:/OPT:ICF>)
+    # 区分 MSVC 兼容的编译驱动（cl.exe / clang-cl.exe）与常规 GNU 风格的 clang 驱动
+    if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC" OR (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC"))
+        if(EGO_GENERATE_PDB)
+            add_compile_options($<$<CONFIG:Release>:/Zi>)
+            add_link_options($<$<CONFIG:Release>:/DEBUG:FULL>)
+        endif()
+        add_link_options($<$<CONFIG:Release>:/OPT:REF> $<$<CONFIG:Release>:/OPT:ICF>)
+    else()
+        # 常规 clang.exe/clang++.exe 驱动模式且目标为 MSVC 环境时
+        if(EGO_GENERATE_PDB)
+            add_compile_options($<$<CONFIG:Release>:-g>)
+            add_link_options($<$<CONFIG:Release>:-Wl,-debug>)
+        endif()
+        add_link_options($<$<CONFIG:Release>:-Wl,-opt:ref> $<$<CONFIG:Release>:-Wl,-opt:icf>)
+    endif()
+endif()
+
+# 启用全局 LTO (Link-Time Optimization)
+include(CheckIPOSupported)
+check_ipo_supported(RESULT ipo_supported OUTPUT error)
+if(ipo_supported)
+    message(STATUS "Link-Time Optimization (LTO/IPO) is supported. Enabling for Release configuration...")
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+else()
+    message(STATUS "Link-Time Optimization (LTO/IPO) is not supported: ${error}")
 endif()
 
 # --- SIMD options ---
 # This project targets a specific platform; enable NEON by default.
 option(HIMAX_ENABLE_NEON "Enable ARM NEON intrinsics when available" ON)
+
+# --- Build Controls ---
+option(EGO_BUILD_TESTS "Build local test executables" ON)
+option(EGO_BUILD_TOOLS "Build GUI workbench and diagnostic tools" ON)
 
 # --- Common Library ---
 # Use the source directory as the root for subprojects/resources so paths
@@ -121,12 +151,6 @@ file(GLOB IPC_HEADERS "${IPC_ROOT}/include/Ipc/*.h")
 
 add_subdirectory("${COMMON_ROOT}/spdlog" "spdlog_build")
 
-# yaml-cpp
-set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "Disable yaml-cpp tests")
-set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "Disable yaml-cpp tools")
-add_subdirectory("${COMMON_ROOT}/yaml-cpp" "yaml_build")
-
-
 # Common library: Pure utilities (Logger, SharedFrameBuffer) - NO ImGui
 add_library(Common STATIC
     ${COMMON_SOURCES}
@@ -134,12 +158,10 @@ add_library(Common STATIC
 )
 
 target_sources(Common PRIVATE
-    "${COMMON_ROOT}/source/config/YamlParser.cpp"
     "${COMMON_ROOT}/source/config/ConfigStore.cpp"
     "${COMMON_ROOT}/source/config/ConfigBinder.cpp"
     "${COMMON_ROOT}/source/config/ConfigSchemaSnapshot.cpp"
     "${COMMON_ROOT}/source/config/SchemaValidator.cpp"
-    "${COMMON_ROOT}/source/config/ConfigPath.cpp"
     "${COMMON_ROOT}/source/config/ConfigTlv.cpp"
     "${COMMON_ROOT}/source/config/ConfigKeyMap.cpp"
     "${COMMON_ROOT}/source/config/ConfigCatalog.cpp"
@@ -151,7 +173,18 @@ target_include_directories(Common PUBLIC
 # Common links Solvers for SharedFrameBuffer (EngineTypes.h)
 # Forward-declare include path; Solvers target linked below after Solvers is defined
 target_link_libraries(Common PUBLIC spdlog::spdlog)
-target_link_libraries(Common PUBLIC yaml-cpp)
+
+# 启用预编译头 (PCH) 以减少编译时的重复解析开销
+target_precompile_headers(Common PRIVATE
+    <vector>
+    <string>
+    <memory>
+    <unordered_map>
+    <algorithm>
+    <Windows.h>
+    <spdlog/spdlog.h>
+)
+
 if (WIN32)
     target_link_libraries(Common PUBLIC advapi32)
 endif()
@@ -171,13 +204,15 @@ if (WIN32)
 endif()
 
 # ImGuiCommon library: UI framework (only for diagnostic tools)
-add_library(ImGuiCommon STATIC
-    ${IMGUI_SOURCES}
-)
+if (EGO_BUILD_TOOLS)
+    add_library(ImGuiCommon STATIC
+        ${IMGUI_SOURCES}
+    )
 
-target_include_directories(ImGuiCommon PUBLIC
-    "${IMGUI_ROOT}"
-)
+    target_include_directories(ImGuiCommon PUBLIC
+        "${IMGUI_ROOT}"
+    )
+endif()
 
 # --- Device Module (Hardware Abstraction) ---
 set(DEVICE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/EGoTouchService/Device")
@@ -267,47 +302,53 @@ add_library(DVRCore STATIC
 ego_configure_dvrcore_target(DVRCore Solvers)
 
 # --- EGoTouchApp (Debug Diagnostics Workbench) ---
-file(GLOB APP_SOURCES "${APP_ROOT}/source/*.cpp")
-file(GLOB APP_HEADERS "${APP_ROOT}/include/*.h")
+if (EGO_BUILD_TOOLS)
+    file(GLOB APP_SOURCES "${APP_ROOT}/source/*.cpp")
+    file(GLOB APP_HEADERS "${APP_ROOT}/include/*.h")
 
-# ImGui Backend sources (DX11 + Win32)
-set(IMGUI_BACKEND_SOURCES 
-    "${IMGUI_ROOT}/backends/imgui_impl_win32.cpp"
-    "${IMGUI_ROOT}/backends/imgui_impl_dx11.cpp"
-)
+    # ImGui Backend sources (DX11 + Win32)
+    set(IMGUI_BACKEND_SOURCES 
+        "${IMGUI_ROOT}/backends/imgui_impl_win32.cpp"
+        "${IMGUI_ROOT}/backends/imgui_impl_dx11.cpp"
+    )
 
-add_executable(EGoTouchApp
-    ${APP_SOURCES}
-    ${APP_HEADERS}
-    ${IMGUI_BACKEND_SOURCES}
-)
+    add_executable(EGoTouchApp
+        ${APP_SOURCES}
+        ${APP_HEADERS}
+        ${IMGUI_BACKEND_SOURCES}
+    )
 
-target_include_directories(EGoTouchApp PRIVATE
-    "${APP_ROOT}/include"
-    "${IPCCORE_ROOT}/include/Ipc"
-    "${IMGUI_ROOT}"
-    "${IMGUI_ROOT}/backends"
-)
+    target_include_directories(EGoTouchApp PRIVATE
+        "${APP_ROOT}/include"
+        "${IPCCORE_ROOT}/include/Ipc"
+        "${IMGUI_ROOT}"
+        "${IMGUI_ROOT}/backends"
+    )
 
-# Link D3D11 for the ImGui DX11 backend
-target_compile_definitions(EGoTouchApp PRIVATE EGOTOUCH_DIAGNOSTICS)
-target_link_libraries(EGoTouchApp PRIVATE DVRCore IPCCore Device Solvers Host Common ImGuiCommon d3d11 d3dcompiler dwmapi setupapi)
-if(MSVC)
-    target_link_options(EGoTouchApp PRIVATE "/MANIFESTUAC:level='requireAdministrator'")
+    # Link D3D11 for the ImGui DX11 backend
+    target_compile_definitions(EGoTouchApp PRIVATE EGOTOUCH_DIAGNOSTICS)
+    target_link_libraries(EGoTouchApp PRIVATE DVRCore IPCCore Device Solvers Host Common ImGuiCommon d3d11 d3dcompiler dwmapi setupapi)
+    if(MSVC)
+        target_link_options(EGoTouchApp PRIVATE "/MANIFESTUAC:level='requireAdministrator'")
+    endif()
 endif()
 
 function(ego_copy_config_to_output target)
-    add_custom_command(TARGET ${target} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory
-            "$<TARGET_FILE_DIR:${target}>/config"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_CURRENT_SOURCE_DIR}/config/default.yaml"
-            "$<TARGET_FILE_DIR:${target}>/config/default.yaml"
-        COMMENT "Copy config/default.yaml for ${target}"
-    )
+    if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/config/default.yaml")
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:${target}>/config"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/config/default.yaml"
+                "$<TARGET_FILE_DIR:${target}>/config/default.yaml"
+            COMMENT "Copy config/default.yaml for ${target}"
+        )
+    endif()
 endfunction()
 
-ego_copy_config_to_output(EGoTouchApp)
+if (EGO_BUILD_TOOLS)
+    ego_copy_config_to_output(EGoTouchApp)
+endif()
 
 # --- EGoTouchService (Production Service Shell) ---
 set(SERVICE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/EGoTouchService")
@@ -333,14 +374,22 @@ target_include_directories(EGoTouchService PRIVATE
 target_link_libraries(EGoTouchService PRIVATE EGoTouchServiceCore DVRCore IPCCore Device Host Common advapi32 setupapi hid)
 ego_copy_config_to_output(EGoTouchService)
 
-install(TARGETS EGoTouchApp EGoTouchService
+install(TARGETS EGoTouchService
     RUNTIME DESTINATION "."
     COMPONENT Runtime
 )
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/config/default.yaml"
-    DESTINATION "config"
-    COMPONENT Runtime
-)
+if (EGO_BUILD_TOOLS)
+    install(TARGETS EGoTouchApp
+        RUNTIME DESTINATION "."
+        COMPONENT Tools
+    )
+endif()
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/config/default.yaml")
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/config/default.yaml"
+        DESTINATION "config"
+        COMPONENT Runtime
+    )
+endif()
 
 # EGoTouchService uses wmain (console subsystem) for service/console dual mode
 if(MSVC)
@@ -350,19 +399,19 @@ elseif(WIN32)
 endif()
 
 # --- BtMcuTestTool (ImGui BT Protocol Validator) ---
-add_executable(BtMcuTestTool
-    Tools/BtMcuTestTool/BtMcuTestTool.cpp
-    ${IMGUI_BACKEND_SOURCES}
-)
-target_include_directories(BtMcuTestTool PRIVATE
-    "${DEVICE_ROOT}"
-    "${COMMON_ROOT}/include"
-    "${IMGUI_ROOT}"
-    "${IMGUI_ROOT}/backends"
-)
-target_link_libraries(BtMcuTestTool PRIVATE Device Common ImGuiCommon d3d11 d3dcompiler dwmapi setupapi)
-
-option(EGO_BUILD_TESTS "Build local test executables" ON)
+if (EGO_BUILD_TOOLS)
+    add_executable(BtMcuTestTool
+        Tools/BtMcuTestTool/BtMcuTestTool.cpp
+        ${IMGUI_BACKEND_SOURCES}
+    )
+    target_include_directories(BtMcuTestTool PRIVATE
+        "${DEVICE_ROOT}"
+        "${COMMON_ROOT}/include"
+        "${IMGUI_ROOT}"
+        "${IMGUI_ROOT}/backends"
+    )
+    target_link_libraries(BtMcuTestTool PRIVATE Device Common ImGuiCommon d3d11 d3dcompiler dwmapi setupapi)
+endif()
 if (EGO_BUILD_TESTS)
     function(ego_add_common_test target source)
         add_executable(${target} ${source})
@@ -402,19 +451,7 @@ if (EGO_BUILD_TESTS)
         WORKING_DIRECTORY "$<TARGET_FILE_DIR:ConfigRuntimeTest>"
     )
 
-    add_executable(ConfigDefaultYamlDriftTest
-        EGoTouchService/tests/unit/ConfigDefaultYamlDriftTest.cpp
-    )
-    target_compile_definitions(ConfigDefaultYamlDriftTest PRIVATE
-        EGO_REPO_DEFAULT_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/default.yaml"
-    )
-    target_link_libraries(ConfigDefaultYamlDriftTest PRIVATE EGoTouchServiceCore)
-    add_test(NAME ConfigDefaultYamlDriftTest COMMAND ConfigDefaultYamlDriftTest)
-    set_tests_properties(ConfigDefaultYamlDriftTest PROPERTIES
-        LABELS "service;config;unit;device-free"
-        TIMEOUT 10
-        WORKING_DIRECTORY "$<TARGET_FILE_DIR:ConfigDefaultYamlDriftTest>"
-    )
+
 
     add_subdirectory(EGoTouchService/Solvers/tests)
 
@@ -487,56 +524,58 @@ if (EGO_BUILD_TESTS)
         15
     )
 
-    add_executable(EGoTouchApp_ServiceProxyDvrBridgeTest
-        Tools/EGoTouchApp/tests/ServiceProxyDvrBridgeTest.cpp
-        Tools/EGoTouchApp/source/ServiceProxy.Dvr.cpp
-        Tools/EGoTouchApp/source/ServiceProxy.DynamicDebug.cpp
-        Tools/EGoTouchApp/source/ServiceProxy.cpp
-    )
-    target_include_directories(EGoTouchApp_ServiceProxyDvrBridgeTest PRIVATE
-        "${APP_ROOT}/include"
-        "${APP_ROOT}/source"
-        "${IPCCORE_ROOT}/include/Ipc"
-    )
-    target_link_libraries(EGoTouchApp_ServiceProxyDvrBridgeTest PRIVATE DVRCore Solvers Common)
+    if (EGO_BUILD_TOOLS)
+        add_executable(EGoTouchApp_ServiceProxyDvrBridgeTest
+            Tools/EGoTouchApp/tests/ServiceProxyDvrBridgeTest.cpp
+            Tools/EGoTouchApp/source/ServiceProxy.Dvr.cpp
+            Tools/EGoTouchApp/source/ServiceProxy.DynamicDebug.cpp
+            Tools/EGoTouchApp/source/ServiceProxy.cpp
+        )
+        target_include_directories(EGoTouchApp_ServiceProxyDvrBridgeTest PRIVATE
+            "${APP_ROOT}/include"
+            "${APP_ROOT}/source"
+            "${IPCCORE_ROOT}/include/Ipc"
+        )
+        target_link_libraries(EGoTouchApp_ServiceProxyDvrBridgeTest PRIVATE DVRCore Solvers Common)
 
-    add_executable(EGoTouchApp_DiagnosticsWorkbenchLogicTest
-        Tools/EGoTouchApp/tests/DiagnosticsWorkbenchLogicTest.cpp
-        Tools/EGoTouchApp/source/DiagnosticsWorkbenchLogic.cpp
-    )
-    target_include_directories(EGoTouchApp_DiagnosticsWorkbenchLogicTest PRIVATE
-        "${APP_ROOT}/include"
-        "${APP_ROOT}/source"
-        "${IPCCORE_ROOT}/include/Ipc"
-    )
-    target_link_libraries(EGoTouchApp_DiagnosticsWorkbenchLogicTest PRIVATE DVRCore Solvers Common)
+        add_executable(EGoTouchApp_DiagnosticsWorkbenchLogicTest
+            Tools/EGoTouchApp/tests/DiagnosticsWorkbenchLogicTest.cpp
+            Tools/EGoTouchApp/source/DiagnosticsWorkbenchLogic.cpp
+        )
+        target_include_directories(EGoTouchApp_DiagnosticsWorkbenchLogicTest PRIVATE
+            "${APP_ROOT}/include"
+            "${APP_ROOT}/source"
+            "${IPCCORE_ROOT}/include/Ipc"
+        )
+        target_link_libraries(EGoTouchApp_DiagnosticsWorkbenchLogicTest PRIVATE DVRCore Solvers Common)
 
-    add_executable(EGoTouchApp_ServiceProxyRuntimeConfigSnapshotTest
-        Tools/EGoTouchApp/tests/ServiceProxyRuntimeConfigSnapshotTest.cpp
-        Tools/EGoTouchApp/source/ServiceProxy.cpp
-    )
-    target_include_directories(EGoTouchApp_ServiceProxyRuntimeConfigSnapshotTest PRIVATE
-        "${APP_ROOT}/include"
-        "${APP_ROOT}/source"
-        "${IPCCORE_ROOT}/include/Ipc"
-    )
-    target_link_libraries(EGoTouchApp_ServiceProxyRuntimeConfigSnapshotTest PRIVATE DVRCore Solvers Common)
+        add_executable(EGoTouchApp_ServiceProxyRuntimeConfigSnapshotTest
+            Tools/EGoTouchApp/tests/ServiceProxyRuntimeConfigSnapshotTest.cpp
+            Tools/EGoTouchApp/source/ServiceProxy.cpp
+        )
+        target_include_directories(EGoTouchApp_ServiceProxyRuntimeConfigSnapshotTest PRIVATE
+            "${APP_ROOT}/include"
+            "${APP_ROOT}/source"
+            "${IPCCORE_ROOT}/include/Ipc"
+        )
+        target_link_libraries(EGoTouchApp_ServiceProxyRuntimeConfigSnapshotTest PRIVATE DVRCore Solvers Common)
 
-    add_executable(EGoTouchApp_ServiceProxyCatalogSchemaTest
-        Tools/EGoTouchApp/tests/ServiceProxyCatalogSchemaTest.cpp
-        Tools/EGoTouchApp/tests/ServiceProxyCatalogSchemaTestFixture.cpp
-        Tools/EGoTouchApp/source/ServiceProxy.Config.cpp
-        Tools/EGoTouchApp/source/ServiceProxy.DynamicDebug.cpp
-        Tools/EGoTouchApp/source/ServiceProxy.cpp
-    )
-    target_compile_definitions(EGoTouchApp_ServiceProxyCatalogSchemaTest PRIVATE EGOTOUCH_APP_SERVICE_PROXY_TEST=1)
-    target_include_directories(EGoTouchApp_ServiceProxyCatalogSchemaTest PRIVATE
-        "${APP_ROOT}/include"
-        "${APP_ROOT}/source"
-        "${IPCCORE_ROOT}/include/Ipc"
-    )
-    target_link_libraries(EGoTouchApp_ServiceProxyCatalogSchemaTest PRIVATE DVRCore Solvers Common IPCCore)
-    ego_copy_config_to_output(EGoTouchApp_ServiceProxyCatalogSchemaTest)
+        add_executable(EGoTouchApp_ServiceProxyCatalogSchemaTest
+            Tools/EGoTouchApp/tests/ServiceProxyCatalogSchemaTest.cpp
+            Tools/EGoTouchApp/tests/ServiceProxyCatalogSchemaTestFixture.cpp
+            Tools/EGoTouchApp/source/ServiceProxy.Config.cpp
+            Tools/EGoTouchApp/source/ServiceProxy.DynamicDebug.cpp
+            Tools/EGoTouchApp/source/ServiceProxy.cpp
+        )
+        target_compile_definitions(EGoTouchApp_ServiceProxyCatalogSchemaTest PRIVATE EGOTOUCH_APP_SERVICE_PROXY_TEST=1)
+        target_include_directories(EGoTouchApp_ServiceProxyCatalogSchemaTest PRIVATE
+            "${APP_ROOT}/include"
+            "${APP_ROOT}/source"
+            "${IPCCORE_ROOT}/include/Ipc"
+        )
+        target_link_libraries(EGoTouchApp_ServiceProxyCatalogSchemaTest PRIVATE DVRCore Solvers Common IPCCore)
+        ego_copy_config_to_output(EGoTouchApp_ServiceProxyCatalogSchemaTest)
+    endif()
 
 
     add_subdirectory("${DEVICE_ROOT}/tests")
@@ -590,42 +629,44 @@ if (EGO_BUILD_TESTS)
     target_include_directories(ServiceHostLifecycleFakeIntegrationTest PRIVATE "${SERVICE_TEST_ROOT}/support")
     target_link_libraries(ServiceHostLifecycleFakeIntegrationTest PRIVATE EGoTouchServiceCore)
 
-    add_test(NAME EGoTouchApp.ServiceProxyDvrBridgeTest COMMAND EGoTouchApp_ServiceProxyDvrBridgeTest)
-    set_tests_properties(EGoTouchApp.ServiceProxyDvrBridgeTest PROPERTIES
-        LABELS "App;EGoTouchApp;ServiceProxy;DVRBridge;IntegrationLight"
-        TIMEOUT 60
-        WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-    add_test(NAME EGoTouchApp.DiagnosticsWorkbenchLogicTest COMMAND EGoTouchApp_DiagnosticsWorkbenchLogicTest)
-    set_tests_properties(EGoTouchApp.DiagnosticsWorkbenchLogicTest PROPERTIES
-        LABELS "App;EGoTouchApp;DiagnosticsWorkbench;PureLogic"
-        TIMEOUT 30
-        WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-    add_test(NAME EGoTouchApp.ServiceProxyRuntimeConfigSnapshotTest COMMAND EGoTouchApp_ServiceProxyRuntimeConfigSnapshotTest)
-    set_tests_properties(EGoTouchApp.ServiceProxyRuntimeConfigSnapshotTest PROPERTIES
-        LABELS "App;EGoTouchApp;ServiceProxy;DVRBridge;runtime-config;PureLogic"
-        TIMEOUT 30
-        WORKING_DIRECTORY "$<TARGET_FILE_DIR:EGoTouchApp_ServiceProxyRuntimeConfigSnapshotTest>")
-    add_test(NAME EGoTouchApp.ServiceProxyCatalogSchemaTest COMMAND EGoTouchApp_ServiceProxyCatalogSchemaTest)
-    set_tests_properties(EGoTouchApp.ServiceProxyCatalogSchemaTest PROPERTIES
-        LABELS "App;EGoTouchApp;ServiceProxy;Config;PureLogic"
-        TIMEOUT 30
-        WORKING_DIRECTORY "$<TARGET_FILE_DIR:EGoTouchApp_ServiceProxyCatalogSchemaTest>")
+    if (EGO_BUILD_TOOLS)
+        add_test(NAME EGoTouchApp.ServiceProxyDvrBridgeTest COMMAND EGoTouchApp_ServiceProxyDvrBridgeTest)
+        set_tests_properties(EGoTouchApp.ServiceProxyDvrBridgeTest PROPERTIES
+            LABELS "App;EGoTouchApp;ServiceProxy;DVRBridge;IntegrationLight"
+            TIMEOUT 60
+            WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+        add_test(NAME EGoTouchApp.DiagnosticsWorkbenchLogicTest COMMAND EGoTouchApp_DiagnosticsWorkbenchLogicTest)
+        set_tests_properties(EGoTouchApp.DiagnosticsWorkbenchLogicTest PROPERTIES
+            LABELS "App;EGoTouchApp;DiagnosticsWorkbench;PureLogic"
+            TIMEOUT 30
+            WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+        add_test(NAME EGoTouchApp.ServiceProxyRuntimeConfigSnapshotTest COMMAND EGoTouchApp_ServiceProxyRuntimeConfigSnapshotTest)
+        set_tests_properties(EGoTouchApp.ServiceProxyRuntimeConfigSnapshotTest PROPERTIES
+            LABELS "App;EGoTouchApp;ServiceProxy;DVRBridge;runtime-config;PureLogic"
+            TIMEOUT 30
+            WORKING_DIRECTORY "$<TARGET_FILE_DIR:EGoTouchApp_ServiceProxyRuntimeConfigSnapshotTest>")
+        add_test(NAME EGoTouchApp.ServiceProxyCatalogSchemaTest COMMAND EGoTouchApp_ServiceProxyCatalogSchemaTest)
+        set_tests_properties(EGoTouchApp.ServiceProxyCatalogSchemaTest PROPERTIES
+            LABELS "App;EGoTouchApp;ServiceProxy;Config;PureLogic"
+            TIMEOUT 30
+            WORKING_DIRECTORY "$<TARGET_FILE_DIR:EGoTouchApp_ServiceProxyCatalogSchemaTest>")
 
-    add_test(NAME PackagingConfigLayoutTest
-        COMMAND ${CMAKE_COMMAND}
-            "-DSERVICE_EXE=$<TARGET_FILE:EGoTouchService>"
-            "-DAPP_EXE=$<TARGET_FILE:EGoTouchApp>"
-            "-DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}"
-            "-DINSTALL_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/test-workdirs/PackagingConfigLayoutTest/install"
-            "-DSOURCE_DEFAULT_CONFIG=${CMAKE_CURRENT_SOURCE_DIR}/config/default.yaml"
-            "-DWIX_SETUP=${CMAKE_CURRENT_SOURCE_DIR}/scripts/EGoTouchSetup.wxs"
-            "-DWIX_TEST_SETUP=${CMAKE_CURRENT_SOURCE_DIR}/scripts/EGoTouchTestSetup.wxs"
-            "-DWIX_SOURCE_BASE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
-            "-DWIX_BUILD_OUTPUT_DIR=$<TARGET_FILE_DIR:EGoTouchService>"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyConfigLayout.cmake")
-    set_tests_properties(PackagingConfigLayoutTest PROPERTIES
-        LABELS "packaging;config;device-free"
-        TIMEOUT 10)
+        add_test(NAME PackagingConfigLayoutTest
+            COMMAND ${CMAKE_COMMAND}
+                "-DSERVICE_EXE=$<TARGET_FILE:EGoTouchService>"
+                "-DAPP_EXE=$<TARGET_FILE:EGoTouchApp>"
+                "-DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                "-DINSTALL_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/test-workdirs/PackagingConfigLayoutTest/install"
+                "-DSOURCE_DEFAULT_CONFIG=${CMAKE_CURRENT_SOURCE_DIR}/config/default.yaml"
+                "-DWIX_SETUP=${CMAKE_CURRENT_SOURCE_DIR}/scripts/EGoTouchSetup.wxs"
+                "-DWIX_TEST_SETUP=${CMAKE_CURRENT_SOURCE_DIR}/scripts/EGoTouchTestSetup.wxs"
+                "-DWIX_SOURCE_BASE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+                "-DWIX_BUILD_OUTPUT_DIR=$<TARGET_FILE_DIR:EGoTouchService>"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyConfigLayout.cmake")
+        set_tests_properties(PackagingConfigLayoutTest PROPERTIES
+            LABELS "packaging;config;device-free"
+            TIMEOUT 10)
+    endif()
 
     add_test(NAME ServiceEntryArgumentRoutingTest COMMAND ServiceEntryArgumentRoutingTest)
     add_test(NAME ServiceHostLifecycleFakeIntegrationTest COMMAND ServiceHostLifecycleFakeIntegrationTest)
