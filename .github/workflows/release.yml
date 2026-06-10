@@ -55,6 +55,11 @@ jobs:
         with:
           arch: arm64
 
+      - name: Install Latest LLVM (ARM64)
+        run: |
+          winget install --accept-source-agreements --accept-package-agreements LLVM.LLVM
+          echo "C:\Program Files\LLVM\bin" >> $env:GITHUB_PATH
+
       - name: CMake Configure (clang/clang++)
         # On a native ARM64 host, we can use the ARM64-native clang/clang++.
         run: |
@@ -130,4 +135,3 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             release-assets/*.msi
-            release-assets/*SHA256SUMS.txt
