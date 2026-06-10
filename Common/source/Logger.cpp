@@ -7,6 +7,16 @@
 
 namespace Common {
 
+namespace {
+constexpr std::size_t kDebugAsyncQueueSize = 8192;
+constexpr std::size_t kReleaseAsyncQueueSize = 2048;
+#if defined(NDEBUG)
+constexpr std::size_t kAsyncQueueSize = kReleaseAsyncQueueSize;
+#else
+constexpr std::size_t kAsyncQueueSize = kDebugAsyncQueueSize;
+#endif
+} // namespace
+
 std::shared_ptr<spdlog::logger> Logger::s_logger = nullptr;
 
 void Logger::Init(const std::string& loggerName, const std::filesystem::path& logDir, spdlog::sink_ptr extraSink) {
@@ -26,7 +36,7 @@ void Logger::Init(const std::string& loggerName, const std::filesystem::path& lo
         }
 
         // 初始化异步日志线程池
-        spdlog::init_thread_pool(8192, 1);
+        spdlog::init_thread_pool(kAsyncQueueSize, 1);
 
         // 1. Console Sink (带颜色)
         auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();

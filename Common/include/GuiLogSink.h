@@ -15,7 +15,13 @@ namespace Common {
 
 class GuiLogSink : public spdlog::sinks::base_sink<std::mutex> {
 public:
-    static constexpr int kMaxLines = 2000;
+    static constexpr int kDebugMaxLines = 2000;
+    static constexpr int kReleaseMaxLines = 500;
+#if defined(NDEBUG)
+    static constexpr int kMaxLines = kReleaseMaxLines;
+#else
+    static constexpr int kMaxLines = kDebugMaxLines;
+#endif
 
     static std::shared_ptr<GuiLogSink> Instance() {
         static auto inst = std::make_shared<GuiLogSink>();
