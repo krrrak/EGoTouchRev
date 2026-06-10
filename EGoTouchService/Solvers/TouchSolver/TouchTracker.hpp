@@ -104,6 +104,8 @@ private:
         uint8_t ecWidthX = 0;
         uint8_t ecWidthY = 0;
         int stylusSuppressFrames = 0;
+        uint8_t sourcePeakId = 0;
+        uint8_t sourcePeakAge = 0;
         TrackPhase phase = TrackPhase::Active;
         int gapFrames = 0;
     };
@@ -123,8 +125,12 @@ private:
     inline float EstimateSizeMm(int area, int signalSum) const;
     inline int ComputeTouchDownDebounceFrames(const TouchContact& touch) const;
     inline float ComputeTrackGateSq(const TrackState& track, const TouchContact& contact, int cols, int rows, float edgeMargin) const;
+    inline float ComputeAssignmentCost(const TrackState& track, const TouchContact& contact, int cols, int rows, float edgeMargin) const;
     inline bool PassActiveBootstrapGate(const TrackState& track, const TouchContact& contact, int cols, int rows, float edgeMargin) const;
     inline void MatchAgainstSubset(const std::vector<TouchContact>& contacts, int curCount, const int* prevSubset, int subsetCount, int* curToPre) const;
+    static inline float Orientation(float ax, float ay, float bx, float by, float cx, float cy);
+    static inline bool SegmentsCross(float ax, float ay, float bx, float by, float cx, float cy, float dx, float dy);
+    inline void ApplyCrossingGuard(const std::vector<TouchContact>& contacts, int curCount, int* curToPre) const;
     static inline void UpdateBestCandidate(float distance, int candidateId, float& best, float& second, int& bestId);
     inline bool PassGapRelinkAmbiguity(float best, float second) const;
     inline TouchContact BuildSilentGapContact(const TrackState& track, int prevIndex, int cols, int rows, float edgeMargin) const;
@@ -229,17 +235,76 @@ inline float TouchTracker::ComputeTrackGateSq(const TrackState& track,
     const bool edge = track.isEdge ||
                       IsEdgeTouch(track.x, track.y, cols, rows, edgeMargin) ||
                       IsEdgeContact(contact, cols, rows, edgeMargin);
+    const float speed = std::sqrt(track.vx * track.vx + track.vy * track.vy);
     if (edge) gateDist *= m_edgeTrackBoost;
     const float sizeMm = std::max(track.sizeMm, EstimateSizeMm(contact.area, contact.signalSum));
-    if (edge || sizeMm <= m_accBoostSizeMm) gateDist *= m_accThresholdBoost;
+    if (sizeMm <= m_accBoostSizeMm) {
+        const bool young = track.age <= 2;
+        const bool movingFast = speed > (m_maxTrackDistance * 0.5f);
+        const float boost = (young || movingFast)
+            ? m_accThresholdBoost
+            : std::min(m_accThresholdBoost, 2.0f);
+        gateDist *= boost;
+    } else if (edge) {
+        gateDist *= std::min(m_accThresholdBoost, 2.0f);
+    }
     if (track.phase == TrackPhase::SilentGap) {
-        const float speed = std::sqrt(track.vx * track.vx + track.vy * track.vy);
         const float extra = std::min(m_maxTrackDistance,
                                      speed * kGapRelinkSpeedWindowScale *
                                      static_cast<float>(std::max(1, track.gapFrames)));
         gateDist = std::min(gateDist + extra, m_maxTrackDistance * kGapRelinkHardCapScale);
+    } else if (edge) {
+        gateDist = std::min(gateDist, m_maxTrackDistance * 3.0f);
+    } else {
+        gateDist = std::min(gateDist, m_maxTrackDistance * 2.0f);
     }
     return gateDist * gateDist;
+}
+
+inline float TouchTracker::ComputeAssignmentCost(const TrackState& track,
+                                                 const TouchContact& contact,
+                                                 int cols,
+                                                 int rows,
+                                                 float edgeMargin) const {
+    float refX = 0.0f, refY = 0.0f;
+    GetMatchReference(track, refX, refY);
+    const float distanceSq = DistanceSq(contact.x, contact.y, refX, refY);
+    const float gateSq = ComputeTrackGateSq(track, contact, cols, rows, edgeMargin);
+    if (distanceSq > gateSq) return 1.0e12f;
+
+    float cost = distanceSq;
+    const float dx = contact.x - track.x;
+    const float dy = contact.y - track.y;
+    const float moveSq = dx * dx + dy * dy;
+    const float prevSpeedSq = track.vx * track.vx + track.vy * track.vy;
+    if (track.age > 1 && moveSq > 0.01f && prevSpeedSq > 0.04f) {
+        const float dot = dx * track.vx + dy * track.vy;
+        if (dot < 0.0f) cost += std::min(25.0f, -dot * 1.5f);
+        const float speedDelta = std::abs(std::sqrt(moveSq) - std::sqrt(prevSpeedSq));
+        if (speedDelta > m_maxTrackDistance * 0.5f) {
+            const float excess = speedDelta - m_maxTrackDistance * 0.5f;
+            cost += std::min(25.0f, excess * excess * 0.35f);
+        }
+    }
+
+    if (track.signalSum > 0 && contact.signalSum > 0) {
+        const float denom = static_cast<float>(std::max(track.signalSum, contact.signalSum));
+        cost += (std::abs(track.signalSum - contact.signalSum) / denom) * 6.0f;
+    }
+    if (track.area > 0 && contact.area > 0) {
+        const float denom = static_cast<float>(std::max(track.area, contact.area));
+        cost += (std::abs(track.area - contact.area) / denom) * 4.0f;
+    }
+    const float contactSize = EstimateSizeMm(contact.area, contact.signalSum);
+    if (track.sizeMm > 0.0f && contactSize > 0.0f) {
+        const float diff = std::abs(track.sizeMm - contactSize);
+        cost += std::min(9.0f, diff * diff * 0.5f);
+    }
+    if (track.sourcePeakId != 0 && contact.sourcePeakId != 0 && track.sourcePeakId != contact.sourcePeakId) {
+        const float ageWeight = 1.0f + static_cast<float>(std::min<int>(track.sourcePeakAge, 20)) * 0.1f;
+        cost += std::min(10.0f, 4.0f * ageWeight);
+    }
+    return cost;
 }
 
 inline bool TouchTracker::PassActiveBootstrapGate(const TrackState& track,
@@ -272,11 +337,8 @@ inline void TouchTracker::MatchAgainstSubset(const std::vector<TouchContact>& co
     for (int c = 0; c < curCount; ++c) {
         for (int i = 0; i < subsetCount; ++i) {
             const int pre = prevSubset[i];
-            float refX = 0.0f, refY = 0.0f;
-            GetMatchReference(m_tracks[pre], refX, refY);
-            const float d = DistanceSq(contacts[c].x, contacts[c].y, refX, refY);
-            const float gateSq = ComputeTrackGateSq(m_tracks[pre], contacts[c], kCols, kRows, kEdgeMargin);
-            cost[c * kMaxTracks + i] = (d <= gateSq) ? d : kInvalidMatchCost;
+            const float assignmentCost = ComputeAssignmentCost(m_tracks[pre], contacts[c], kCols, kRows, kEdgeMargin);
+            cost[c * kMaxTracks + i] = (assignmentCost < kInvalidMatchCost) ? assignmentCost : kInvalidMatchCost;
         }
     }
 
@@ -307,6 +369,54 @@ inline void TouchTracker::MatchAgainstSubset(const std::vector<TouchContact>& co
         const int subset = rowToSubset[c];
         if (subset >= 0 && cost[c * kMaxTracks + subset] < kInvalidMatchCost) {
             curToPre[c] = prevSubset[subset];
+        }
+    }
+    ApplyCrossingGuard(contacts, curCount, curToPre);
+}
+
+inline float TouchTracker::Orientation(float ax, float ay, float bx, float by, float cx, float cy) {
+    return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+}
+
+inline bool TouchTracker::SegmentsCross(float ax, float ay, float bx, float by,
+                                        float cx, float cy, float dx, float dy) {
+    const float o1 = Orientation(ax, ay, bx, by, cx, cy);
+    const float o2 = Orientation(ax, ay, bx, by, dx, dy);
+    const float o3 = Orientation(cx, cy, dx, dy, ax, ay);
+    const float o4 = Orientation(cx, cy, dx, dy, bx, by);
+    return (o1 * o2 < 0.0f) && (o3 * o4 < 0.0f);
+}
+
+inline void TouchTracker::ApplyCrossingGuard(const std::vector<TouchContact>& contacts,
+                                             int curCount,
+                                             int* curToPre) const {
+    constexpr int kRows = 40, kCols = 60;
+    constexpr float kEdgeMargin = 2.0f;
+    constexpr float kInvalidMatchCost = 1.0e12f;
+    for (int a = 0; a < curCount; ++a) {
+        const int preA = curToPre[a];
+        if (preA < 0) continue;
+        for (int b = a + 1; b < curCount; ++b) {
+            const int preB = curToPre[b];
+            if (preB < 0 || preA == preB) continue;
+            const TrackState& trackA = m_tracks[preA];
+            const TrackState& trackB = m_tracks[preB];
+            if (!SegmentsCross(trackA.x, trackA.y, contacts[a].x, contacts[a].y,
+                               trackB.x, trackB.y, contacts[b].x, contacts[b].y)) {
+                continue;
+            }
+
+            const float currentCost =
+                ComputeAssignmentCost(trackA, contacts[a], kCols, kRows, kEdgeMargin) +
+                ComputeAssignmentCost(trackB, contacts[b], kCols, kRows, kEdgeMargin);
+            const float swappedA = ComputeAssignmentCost(trackA, contacts[b], kCols, kRows, kEdgeMargin);
+            const float swappedB = ComputeAssignmentCost(trackB, contacts[a], kCols, kRows, kEdgeMargin);
+            if (swappedA >= kInvalidMatchCost || swappedB >= kInvalidMatchCost) continue;
+            const float swappedCost = swappedA + swappedB;
+            if (swappedCost <= currentCost + 4.0f) {
+                curToPre[a] = preB;
+                curToPre[b] = preA;
+            }
         }
     }
 }
@@ -354,6 +464,8 @@ inline TouchContact TouchTracker::BuildSilentGapContact(const TrackState& track,
     hidden.area = track.area;
     hidden.signalSum = track.signalSum;
     hidden.sizeMm = track.sizeMm;
+    hidden.sourcePeakId = track.sourcePeakId;
+    hidden.sourcePeakAge = track.sourcePeakAge;
     RestoreEdgeMetadata(hidden, track);
     hidden.isEdge = hidden.isEdge || IsEdgeTouch(hidden.x, hidden.y, cols, rows, edgeMargin);
     hidden.isReported = false;
@@ -379,6 +491,8 @@ inline TouchContact TouchTracker::BuildLiftOffContact(const TrackState& track,
     up.area = track.area;
     up.signalSum = track.signalSum;
     up.sizeMm = track.sizeMm;
+    up.sourcePeakId = track.sourcePeakId;
+    up.sourcePeakAge = track.sourcePeakAge;
     RestoreEdgeMetadata(up, track);
     up.isEdge = up.isEdge || IsEdgeTouch(up.x, up.y, cols, rows, edgeMargin);
     up.isReported = true;
@@ -608,6 +722,7 @@ inline bool TouchTracker::Process(HeatmapFrame& frame) {
     }
     // Safety clamp: prevent out-of-bounds write if m_maxTouchCount exceeds fixed arrays
     const int effectiveMaxTouches = (std::min)(m_maxTouchCount, kMaxTracks);
+    constexpr int effectiveMaxOutputContacts = kMaxTracks * 2;
     if (frame.touch.output.contacts.size() > static_cast<size_t>(effectiveMaxTouches))
         frame.touch.output.contacts.resize(static_cast<size_t>(effectiveMaxTouches));
 
@@ -755,6 +870,10 @@ inline bool TouchTracker::Process(HeatmapFrame& frame) {
         t.y = o.y;
         t.area = o.area;
         t.signalSum = o.signalSum;
+        if (o.sourcePeakId != 0) {
+            t.sourcePeakId = o.sourcePeakId;
+            t.sourcePeakAge = o.sourcePeakAge;
+        }
         StoreEdgeMetadata(t, o);
         t.missed = 0;
         t.age += 1;
@@ -779,7 +898,7 @@ inline bool TouchTracker::Process(HeatmapFrame& frame) {
         if (aftSuppressed) o.debugFlags = 0x101;
         else if (gapRelinked[c]) o.debugFlags = 0x21;
         else o.debugFlags = 0x01;
-        if (outCount < effectiveMaxTouches) out[outCount++] = o;
+        if (outCount < effectiveMaxOutputContacts) out[outCount++] = o;
         if (nextTrackCount < effectiveMaxTouches) nextTracks[nextTrackCount++] = t;
     }
 
@@ -790,6 +909,8 @@ inline bool TouchTracker::Process(HeatmapFrame& frame) {
         t.id = AllocateId(nextTracks, nextTrackCount);
         if (t.id == 0) continue;
         t.x = o.x; t.y = o.y; t.area = o.area; t.signalSum = o.signalSum;
+        t.sourcePeakId = o.sourcePeakId;
+        t.sourcePeakAge = o.sourcePeakAge;
         t.sizeMm = EstimateSizeMm(o.area, o.signalSum);
         t.age = 1; t.missed = 0; t.phase = TrackPhase::Active; t.gapFrames = 0;
         o.isEdge = IsEdgeContact(o, kCols, kRows, kEdgeMargin);
@@ -821,7 +942,7 @@ inline bool TouchTracker::Process(HeatmapFrame& frame) {
         StoreEdgeMetadata(t, o);
         o.reportEvent = TouchReportIdle;
         o.reportFlags = 0;
-        if (outCount < effectiveMaxTouches) out[outCount++] = o;
+        if (outCount < effectiveMaxOutputContacts) out[outCount++] = o;
         if (nextTrackCount < effectiveMaxTouches) nextTracks[nextTrackCount++] = t;
     }
 
@@ -839,11 +960,11 @@ inline bool TouchTracker::Process(HeatmapFrame& frame) {
             if (t.stylusSuppressFrames > 0) t.stylusSuppressFrames -= 1;
             if (t.gapFrames <= m_gapRelinkWindowFrames) {
                 TouchContact hidden = BuildSilentGapContact(t, p, kCols, kRows, kEdgeMargin);
-                if (outCount < effectiveMaxTouches) out[outCount++] = hidden;
+                if (outCount < effectiveMaxOutputContacts) out[outCount++] = hidden;
                 if (nextTrackCount < effectiveMaxTouches) nextTracks[nextTrackCount++] = t;
             } else {
                 TouchContact up = BuildLiftOffContact(t, p, kCols, kRows, kEdgeMargin);
-                if (outCount < effectiveMaxTouches) out[outCount++] = up;
+                if (outCount < effectiveMaxOutputContacts) out[outCount++] = up;
             }
             continue;
         }
@@ -851,7 +972,7 @@ inline bool TouchTracker::Process(HeatmapFrame& frame) {
         t.missed += 1;
         if (t.stylusSuppressFrames > 0) t.stylusSuppressFrames -= 1;
         TouchContact up = BuildLiftOffContact(t, p, kCols, kRows, kEdgeMargin);
-        if (outCount < effectiveMaxTouches) out[outCount++] = up;
+        if (outCount < effectiveMaxOutputContacts) out[outCount++] = up;
     }
 
     GhostSuppressor ghostSuppressor;

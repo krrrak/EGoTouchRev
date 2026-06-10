@@ -1,6 +1,6 @@
 @echo off
-:: EGoTouchService Install Script (dev build)
-:: Installs from build/ directory directly
+:: EGoTouchService Install Script
+:: Installs from current directory
 :: Requires Administrator privileges
 
 net session >nul 2>&1
@@ -10,9 +10,9 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-echo === EGoTouchService Install (Dev Build) ===
+echo === EGoTouchService Install ===
 echo.
-echo Binary: %~dp0..\build\EGoTouchService.exe
+echo Binary: %~dp0EGoTouchService.exe
 echo.
 
 :: Stop and remove old service if exists
@@ -30,8 +30,8 @@ if %errorlevel% equ 0 (
 if not exist "C:\ProgramData\EGoTouchRev" mkdir "C:\ProgramData\EGoTouchRev"
 if not exist "C:\ProgramData\EGoTouchRev\logs" mkdir "C:\ProgramData\EGoTouchRev\logs"
 
-:: Install service pointing to build directory
-sc create EGoTouchService binPath= "%~dp0..\build\EGoTouchService.exe" start= auto
+:: Install service pointing to current directory
+sc create EGoTouchService binPath= "%~dp0EGoTouchService.exe" start= auto
 if %errorlevel% neq 0 (
     echo [ERROR] Failed to create service.
     pause
@@ -42,7 +42,7 @@ if %errorlevel% neq 0 (
 sc failure EGoTouchService reset= 86400 actions= restart/5000/restart/10000/restart/30000
 
 :: Description
-sc description EGoTouchService "EGoTouch Capacitive Touch Controller Driver Service (Dev Build)"
+sc description EGoTouchService "EGoTouch Capacitive Touch Controller Driver Service"
 
 :: Start the service
 echo [INFO] Starting service...

@@ -44,6 +44,7 @@ inline void GhostSuppressor::ProcessTracked(Contact* contacts,
                                             State downState,
                                             uint32_t silentGapFlag) const {
     if (!m_rxGhostFilterEnabled || contactCount <= 1 || maxTouchCount <= 0) return;
+    if (m_rxGhostOnlyNew && contactCount >= 4) return;
 
     std::array<uint8_t, 257> removeById{};
     const int idLimit = std::min(maxTouchCount, static_cast<int>(removeById.size()) - 1);

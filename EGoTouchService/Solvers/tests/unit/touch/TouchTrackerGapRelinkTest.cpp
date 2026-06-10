@@ -293,6 +293,78 @@ void TestHiddenNewContactReportsDownWhenSuppressionEnds() {
             "first visible frame after suppression should report Down, not Move");
 }
 
+TouchContact MakeTrackerContact(float x, float y, uint8_t sourcePeakId) {
+    TouchContact c;
+    c.x = x;
+    c.y = y;
+    c.area = 12;
+    c.signalSum = 1200;
+    c.sizeMm = 2.0f;
+    c.sourcePeakId = sourcePeakId;
+    c.sourcePeakAge = 10;
+    return c;
+}
+
+HeatmapFrame RunTrackerFrame(TouchTracker& tracker, std::initializer_list<TouchContact> contacts) {
+    HeatmapFrame frame;
+    for (const auto& c : contacts) frame.touch.output.contacts.push_back(c);
+    tracker.Process(frame);
+    return frame;
+}
+
+void TestSourcePeakIdentityKeepsCrossingTracks() {
+    TouchTracker tracker;
+    const auto first = RunTrackerFrame(tracker, {
+        MakeTrackerContact(10.0f, 10.0f, 1),
+        MakeTrackerContact(20.0f, 10.0f, 2),
+    });
+    const int idA = first.touch.output.contacts[0].id;
+    const int idB = first.touch.output.contacts[1].id;
+
+    RunTrackerFrame(tracker, {
+        MakeTrackerContact(12.0f, 10.0f, 1),
+        MakeTrackerContact(18.0f, 10.0f, 2),
+    });
+
+    const auto crossed = RunTrackerFrame(tracker, {
+        MakeTrackerContact(16.0f, 10.0f, 1),
+        MakeTrackerContact(14.0f, 10.0f, 2),
+    });
+    const auto* peakA = FindContactById(crossed, idA);
+    const auto* peakB = FindContactById(crossed, idB);
+    Require(peakA != nullptr && peakA->sourcePeakId == 1,
+            "source peak identity should keep first crossing track id");
+    Require(peakB != nullptr && peakB->sourcePeakId == 2,
+            "source peak identity should keep second crossing track id");
+}
+
+void TestTrackerKeepsLifecycleEventsBeyondReportCapacity() {
+    TouchTracker tracker;
+    tracker.m_maxTouchCount = 5;
+    RunTrackerFrame(tracker, {
+        MakeTrackerContact(5.0f, 20.0f, 1),
+        MakeTrackerContact(10.0f, 20.0f, 2),
+        MakeTrackerContact(15.0f, 20.0f, 3),
+        MakeTrackerContact(20.0f, 20.0f, 4),
+        MakeTrackerContact(25.0f, 20.0f, 5),
+    });
+
+    const auto mixed = RunTrackerFrame(tracker, {
+        MakeTrackerContact(5.5f, 20.0f, 1),
+        MakeTrackerContact(10.5f, 20.0f, 2),
+        MakeTrackerContact(15.5f, 20.0f, 3),
+        MakeTrackerContact(20.5f, 20.0f, 4),
+        MakeTrackerContact(35.0f, 20.0f, 6),
+    });
+    Require(mixed.touch.output.contacts.size() > 5,
+            "tracker should keep hidden lifecycle contact beyond live report capacity");
+    bool hasSilentGap = false;
+    for (const auto& c : mixed.touch.output.contacts) {
+        hasSilentGap = hasSilentGap || ((c.lifeFlags & TouchLifeSilentGap) != 0);
+    }
+    Require(hasSilentGap, "tracker should output the missing old finger as silent gap");
+}
+
 } // namespace
 
 int main() {
@@ -307,6 +379,8 @@ int main() {
         TestTrackerClearLiveStateKeepsIdSeed();
         TestGestureClearLiveState();
         TestHiddenNewContactReportsDownWhenSuppressionEnds();
+        TestSourcePeakIdentityKeepsCrossingTracks();
+        TestTrackerKeepsLifecycleEventsBeyondReportCapacity();
         std::cout << "[TEST] TouchTracker silent-gap relink tests passed.\n";
         return 0;
     } catch (const std::exception& ex) {

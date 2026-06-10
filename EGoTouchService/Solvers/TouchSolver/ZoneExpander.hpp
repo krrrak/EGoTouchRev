@@ -642,6 +642,8 @@ private:
 
                 TouchContact tc;
                 tc.id = peaks[pi].id;  // Peak's persistent ID
+                tc.sourcePeakId = peaks[pi].id;
+                tc.sourcePeakAge = static_cast<uint8_t>(std::clamp(peaks[pi].tzAge, 0, 255));
                 tc.x = cx;
                 tc.y = cy;
                 tc.area = u.area;
@@ -672,6 +674,8 @@ private:
 
                     TouchContact tc;
                     tc.id = pk.id;
+                    tc.sourcePeakId = pk.id;
+                    tc.sourcePeakAge = static_cast<uint8_t>(std::clamp(pk.tzAge, 0, 255));
                     tc.x = cx;
                     tc.y = cy;
                     tc.area = accum.area;

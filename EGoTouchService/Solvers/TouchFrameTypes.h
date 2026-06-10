@@ -61,6 +61,10 @@ struct TouchContact {
     uint32_t lifeFlags = 0;
     uint32_t reportFlags = 0;
     int reportEvent = 0;
+
+    // Upstream peak identity, used only as a weak tracking hint.
+    uint8_t sourcePeakId = 0;
+    uint8_t sourcePeakAge = 0;
 };
 
 struct TouchPacket {
