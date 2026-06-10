@@ -56,9 +56,30 @@ jobs:
           arch: arm64
 
       - name: Install Latest LLVM (ARM64)
+        shell: pwsh
         run: |
-          winget install --accept-source-agreements --accept-package-agreements LLVM.LLVM
-          echo "C:\Program Files\LLVM\bin" >> $env:GITHUB_PATH
+          $release = Invoke-RestMethod `
+            -Headers @{ "User-Agent" = "GitHubActions" } `
+            -Uri "https://api.github.com/repos/llvm/llvm-project/releases/latest"
+          $asset = $release.assets |
+            Where-Object { $_.name -match '^LLVM-.*-woa64\.exe$' } |
+            Select-Object -First 1
+
+          if (-not $asset) {
+            throw "No Windows ARM64 LLVM installer asset found in latest llvm-project release."
+          }
+
+          $installer = Join-Path $env:RUNNER_TEMP $asset.name
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $installer
+          Start-Process -FilePath $installer -ArgumentList "/S" -Wait -NoNewWindow
+
+          $llvmBin = "C:\Program Files\LLVM\bin"
+          if (-not (Test-Path (Join-Path $llvmBin "clang++.exe"))) {
+            throw "LLVM installation did not provide clang++.exe at $llvmBin."
+          }
+
+          $llvmBin >> $env:GITHUB_PATH
+          & (Join-Path $llvmBin "clang++.exe") --version
 
       - name: CMake Configure (clang/clang++)
         # On a native ARM64 host, we can use the ARM64-native clang/clang++.
