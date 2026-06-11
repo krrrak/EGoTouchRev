@@ -32,8 +32,9 @@ PenEventBridge::~PenEventBridge() {
 
 // ── 回调设置 ───────────────────────────────────────────────────────────────
 void PenEventBridge::SetEventCallback(PenEventCallback cb) {
+    auto callback = cb ? std::make_shared<const PenEventCallback>(std::move(cb)) : nullptr;
     std::lock_guard<std::mutex> lk(m_cbMutex);
-    m_eventCallback = std::move(cb);
+    m_eventCallback = std::move(callback);
 }
 
 // ── 设备路径发现 ───────────────────────────────────────────────────────────
@@ -111,11 +112,9 @@ bool PenEventBridge::SendScanMode(uint8_t freq1, uint8_t freq2, uint8_t mode) {
     }
 
     const auto payload = BuildScanModePayload(freq1, freq2, mode);
-    const auto pkt = BuildPenUsbPayloadCommand(
-        PenUsbCommandId::InitParamSet,
-        std::span<const uint8_t>(payload.data(), payload.size()));
-
-    if (!SendRawPacket(pkt)) {
+    PenUsbPacketBuffer pkt{};
+    if (!BuildPenUsbPayloadCommandBuffer(PenUsbCommandId::InitParamSet, payload, pkt) ||
+        !SendRawPacket(pkt.view())) {
         LOG_WARN("PenEvent", __func__, "MCU", "SetScanMode send failed.");
         return false;
     }
@@ -131,7 +130,7 @@ int PenEventBridge::GetAckCode(uint8_t eventCode) {
     return GetFactoryBtMcuAckCode(eventCode);
 }
 
-bool PenEventBridge::SendRawPacket(const std::vector<uint8_t>& pkt) {
+bool PenEventBridge::SendRawPacket(std::span<const uint8_t> pkt) {
     std::lock_guard<std::mutex> txLock(m_txMutex);
     if (!IsTransportOpen()) {
         LOG_WARN("PenEvent", __func__, "MCU", "Transport not open; dropping packet send.");
@@ -150,8 +149,8 @@ bool PenEventBridge::SendRawPacket(const std::vector<uint8_t>& pkt) {
 }
 
 void PenEventBridge::SendAck(uint8_t, uint8_t ackCode) {
-    const auto pkt = BuildPenUsbEventAck(ackCode);
-    (void)SendRawPacket(pkt);
+    const auto pkt = BuildPenUsbEventAckBuffer(ackCode);
+    (void)SendRawPacket(pkt.view());
 }
 
 void PenEventBridge::ExecuteInitAction(PenUsbInitAction action) {
@@ -172,8 +171,8 @@ void PenEventBridge::ExecuteInitAction(PenUsbInitAction action) {
 }
 
 bool PenEventBridge::SendQueryHardwareVersion() {
-    const auto query = BuildPenUsbFixedSizeCommand(PenUsbCommandId::QueryHardwareVersion);
-    if (!SendRawPacket(query)) {
+    const auto query = BuildPenUsbFixedSizeCommandBuffer(PenUsbCommandId::QueryHardwareVersion);
+    if (!SendRawPacket(query.view())) {
         LOG_WARN("PenEvent", __func__, "MCU", "Failed to send 0x0201 QueryHardwareVersion.");
         return false;
     }
@@ -183,8 +182,8 @@ bool PenEventBridge::SendQueryHardwareVersion() {
 }
 
 bool PenEventBridge::SendQueryPenStatus() {
-    const auto query = BuildPenUsbCommand(PenUsbCommandId::QueryPenStatus);
-    if (!SendRawPacket(query)) {
+    const auto query = BuildPenUsbCommandBuffer(PenUsbCommandId::QueryPenStatus);
+    if (!SendRawPacket(query.view())) {
         LOG_WARN("PenEvent", __func__, "MCU", "Failed to send 0x7101 CheckPenStatus.");
         return false;
     }
@@ -194,8 +193,8 @@ bool PenEventBridge::SendQueryPenStatus() {
 }
 
 bool PenEventBridge::SendFirstMcuStatusQuery() {
-    const auto query = BuildPenUsbCommand(PenUsbCommandId::QueryPenInfo);
-    if (!SendRawPacket(query)) {
+    const auto query = BuildPenUsbCommandBuffer(PenUsbCommandId::QueryPenInfo);
+    if (!SendRawPacket(query.view())) {
         LOG_WARN("PenEvent", __func__, "MCU", "Failed to send first 0x7701 CheckMcuStatus.");
         return false;
     }
@@ -205,8 +204,8 @@ bool PenEventBridge::SendFirstMcuStatusQuery() {
 }
 
 bool PenEventBridge::SendSecondMcuStatusQuery() {
-    const auto query = BuildPenUsbCommand(PenUsbCommandId::QueryPenInfo);
-    if (!SendRawPacket(query)) {
+    const auto query = BuildPenUsbCommandBuffer(PenUsbCommandId::QueryPenInfo);
+    if (!SendRawPacket(query.view())) {
         LOG_WARN("PenEvent", __func__, "MCU", "Failed to send second 0x7701 CheckMcuStatus.");
         return false;
     }
@@ -231,8 +230,8 @@ void PenEventBridge::OnConnected() {
     (void)SendQueryHardwareVersion();
 }
 
-void PenEventBridge::OnPacketReceived(const std::vector<uint8_t>& packet) {
-    auto parsed = TryParsePenUsbEventFrame(std::span<const uint8_t>(packet.data(), packet.size()));
+void PenEventBridge::OnPacketReceived(std::span<const uint8_t> packet) {
+    auto parsed = TryParsePenUsbEventFrame(packet);
     if (!parsed) {
         LOG_WARN("PenEvent", __func__, "MCU",
                  "Dropping invalid RX packet: size={}B.", packet.size());
@@ -248,15 +247,11 @@ void PenEventBridge::OnPacketReceived(const std::vector<uint8_t>& packet) {
 
     AdvanceSessionFromEvent(eventCode);
 
-    PenEventCallback cbCopy;
+    PenEvent ev;
+    bool hasEvent = false;
     {
-        std::lock_guard<std::mutex> lk(m_cbMutex);
-        cbCopy = m_eventCallback;
-    }
-    if (cbCopy) {
-        PenEvent ev;
         ev.code = static_cast<PenUsbEventCode>(eventCode);
-        ev.payload.assign(parsed->payload.begin(), parsed->payload.end());
+        (void)ev.payload.assign(parsed->payload);
         ev.receivedAt = std::chrono::steady_clock::now();
 
         if (!ev.payload.empty()) {
@@ -317,7 +312,18 @@ void PenEventBridge::OnPacketReceived(const std::vector<uint8_t>& packet) {
             }
         }
 
-        cbCopy(ev);
+        hasEvent = true;
+    }
+
+    if (hasEvent) {
+        std::shared_ptr<const PenEventCallback> callback;
+        {
+            std::lock_guard<std::mutex> lk(m_cbMutex);
+            callback = m_eventCallback;
+        }
+        if (callback) {
+            (*callback)(ev);
+        }
     }
 
     if (m_notifyEvent) {
@@ -364,9 +370,9 @@ bool PenEventBridge::SendInitProtocolParams() {
         return false;
     }
 
-    const auto pkt = BuildFactoryInitProtocolParamsCommand();
+    const auto pkt = BuildFactoryInitProtocolParamsCommandBuffer();
 
-    if (!SendRawPacket(pkt)) {
+    if (!SendRawPacket(pkt.view())) {
         LOG_WARN("PenEvent", __func__, "MCU", "Failed to send 0x7D01 InitProtocolParams.");
         return false;
     }

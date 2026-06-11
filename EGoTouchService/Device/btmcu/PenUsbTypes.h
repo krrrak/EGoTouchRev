@@ -1,7 +1,10 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
+#include <algorithm>
+#include <array>
 #include <functional>
 #include <optional>
 #include <span>
@@ -13,6 +16,38 @@
 namespace Himax::Pen {
 
 using NativeEventHandle = void*;
+
+constexpr std::size_t kPenUsbPacketCapacity = 64;
+constexpr std::size_t kPenUsbHeaderSize = 8;
+constexpr std::size_t kPenUsbPayloadCapacity = kPenUsbPacketCapacity - kPenUsbHeaderSize;
+
+struct PenUsbPacketBuffer {
+    std::array<uint8_t, kPenUsbPacketCapacity> bytes{};
+    std::size_t size = 0;
+
+    [[nodiscard]] std::span<uint8_t> writable() noexcept { return bytes; }
+    [[nodiscard]] std::span<const uint8_t> view() const noexcept { return std::span<const uint8_t>(bytes.data(), size); }
+    [[nodiscard]] bool empty() const noexcept { return size == 0; }
+    void clear() noexcept { size = 0; bytes.fill(0); }
+};
+
+struct PenUsbPayloadBuffer {
+    std::array<uint8_t, kPenUsbPayloadCapacity> bytes{};
+    std::size_t size = 0;
+
+    [[nodiscard]] std::span<const uint8_t> view() const noexcept { return std::span<const uint8_t>(bytes.data(), size); }
+    [[nodiscard]] bool empty() const noexcept { return size == 0; }
+    [[nodiscard]] uint8_t operator[](std::size_t index) const noexcept { return bytes[index]; }
+    bool assign(std::span<const uint8_t> payload) noexcept {
+        if (payload.size() > bytes.size()) return false;
+        std::copy(payload.begin(), payload.end(), bytes.begin());
+        size = payload.size();
+        if (size < bytes.size()) {
+            std::fill(bytes.begin() + static_cast<std::ptrdiff_t>(size), bytes.end(), 0);
+        }
+        return true;
+    }
+};
 
 enum class PenUsbCommandId : uint16_t {
     QueryHardwareVersion = 0x0201,
@@ -309,7 +344,7 @@ struct PenUsbPacket {
 
 struct PenEvent {
     PenUsbEventCode code = PenUsbEventCode::Unknown;
-    std::vector<uint8_t> payload{};
+    PenUsbPayloadBuffer payload{};
     PenSemanticState semantic{};
     std::chrono::steady_clock::time_point receivedAt{};
 };

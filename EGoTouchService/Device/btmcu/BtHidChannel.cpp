@@ -2,6 +2,7 @@
 #include "Logger.h"
 
 #include <chrono>
+#include <span>
 
 namespace Himax::Pen {
 
@@ -67,10 +68,10 @@ void BtHidChannel::WorkerFunc() {
         OnConnected();
 
         while (m_running.load() && m_transport && m_transport->IsOpen()) {
-            std::vector<uint8_t> rxBuf;
+            PenUsbPacketBuffer rxBuf;
             auto res = m_transport->ReadPacket(rxBuf, 1000);
             if (res && !rxBuf.empty()) {
-                OnPacketReceived(rxBuf);
+                OnPacketReceived(rxBuf.view());
                 continue;
             }
             if (!res && res.error() == ChipError::Timeout) {

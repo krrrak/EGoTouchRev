@@ -63,6 +63,15 @@ struct PendingTransfer {
     }
 
     bool IsValid() const noexcept { return event.IsValid(); }
+
+    void ResetForIo() noexcept {
+        ::ResetEvent(event.value);
+        ov = {};
+        ov.hEvent = event.value;
+        buffer.fill(0);
+        ownerHandle = INVALID_HANDLE_VALUE;
+        handleClosed = false;
+    }
 };
 
 struct PendingWaitResult {
@@ -144,6 +153,11 @@ bool IsPreservedTransferComplete(PendingTransfer& transfer) noexcept {
     // kernel has finished touching the OVERLAPPED and buffer storage.
     return ::WaitForSingleObject(transfer.event.value, 0) == WAIT_OBJECT_0;
 }
+
+struct TransferSlot {
+    std::unique_ptr<PendingTransfer> transfer = std::make_unique<PendingTransfer>();
+    bool busy = false;
+};
 
 using PendingTransferList = std::vector<std::unique_ptr<PendingTransfer>>;
 
@@ -248,6 +262,19 @@ public:
             return std::unexpected(ChipError::CommunicationError);
         }
 
+        if (!m_readTransfer.transfer) {
+            m_readTransfer.transfer = std::make_unique<PendingTransfer>();
+        }
+        if (!m_writeTransfer.transfer) {
+            m_writeTransfer.transfer = std::make_unique<PendingTransfer>();
+        }
+        if (!m_readTransfer.transfer->IsValid() || !m_writeTransfer.transfer->IsValid()) {
+            ::CloseHandle(m_handle);
+            m_handle = INVALID_HANDLE_VALUE;
+            m_cancelEvent.Reset();
+            return std::unexpected(ChipError::CommunicationError);
+        }
+
         m_closing = false;
         return {};
     }
@@ -291,23 +318,20 @@ public:
         return m_handle != INVALID_HANDLE_VALUE;
     }
 
-    ChipResult<> ReadPacket(std::vector<uint8_t>& outBytes, uint32_t timeoutMs) override {
-        auto transfer = std::make_unique<PendingTransfer>();
-        if (!transfer->IsValid()) {
-            return std::unexpected(ChipError::CommunicationError);
-        }
-
+    ChipResult<> ReadPacket(PenUsbPacketBuffer& outPacket, uint32_t timeoutMs) override {
+        outPacket.clear();
         DWORD bytesRead = 0;
-        IoLease lease(*this);
+        IoLease lease(*this, m_readTransfer);
         if (!lease.IsValid()) {
             return std::unexpected(ChipError::InvalidOperation);
         }
+        PendingTransfer& transfer = lease.Transfer();
 
         BOOL ok = ::ReadFile(lease.Handle(),
-                             transfer->buffer.data(),
-                             static_cast<DWORD>(transfer->buffer.size()),
+                             transfer.buffer.data(),
+                             static_cast<DWORD>(transfer.buffer.size()),
                              &bytesRead,
-                             &transfer->ov);
+                             &transfer.ov);
         if (!ok) {
             const DWORD err = ::GetLastError();
             if (err != ERROR_IO_PENDING) {
@@ -315,15 +339,15 @@ public:
             }
 
             const PendingWaitResult waitResult = WaitForPendingOverlapped(lease.Handle(),
-                                                                          transfer->event.value,
+                                                                          transfer.event.value,
                                                                           lease.CancelEvent(),
-                                                                          transfer->ov,
+                                                                          transfer.ov,
                                                                           timeoutMs,
                                                                           bytesRead);
             if (!waitResult.completed) {
                 if (!waitResult.drained) {
                     lease.KeepSlotForPendingLifetime();
-                    PreservePendingTransferLifetime(std::move(transfer), lease.Handle());
+                    PreservePendingTransferLifetime(lease.ReleaseTransferForPendingLifetime(), m_readTransfer, lease.Handle());
                 }
                 return std::unexpected(waitResult.error);
             }
@@ -333,7 +357,8 @@ public:
             return std::unexpected(ChipError::Timeout);
         }
 
-        outBytes.assign(transfer->buffer.begin(), transfer->buffer.begin() + static_cast<std::ptrdiff_t>(bytesRead));
+        outPacket.size = static_cast<std::size_t>(bytesRead);
+        std::copy_n(transfer.buffer.begin(), bytesRead, outPacket.bytes.begin());
         return {};
     }
 
@@ -342,23 +367,19 @@ public:
             return std::unexpected(ChipError::InvalidOperation);
         }
 
-        auto transfer = std::make_unique<PendingTransfer>();
-        if (!transfer->IsValid()) {
-            return std::unexpected(ChipError::CommunicationError);
-        }
-
-        std::copy(bytes.begin(), bytes.end(), transfer->buffer.begin());
         DWORD bytesWritten = 0;
-        IoLease lease(*this);
+        IoLease lease(*this, m_writeTransfer);
         if (!lease.IsValid()) {
             return std::unexpected(ChipError::InvalidOperation);
         }
+        PendingTransfer& transfer = lease.Transfer();
+        std::copy(bytes.begin(), bytes.end(), transfer.buffer.begin());
 
         BOOL ok = ::WriteFile(lease.Handle(),
-                              transfer->buffer.data(),
+                              transfer.buffer.data(),
                               static_cast<DWORD>(bytes.size()),
                               &bytesWritten,
-                              &transfer->ov);
+                              &transfer.ov);
         if (!ok) {
             const DWORD err = ::GetLastError();
             if (err != ERROR_IO_PENDING) {
@@ -366,15 +387,15 @@ public:
             }
 
             const PendingWaitResult waitResult = WaitForPendingOverlapped(lease.Handle(),
-                                                                          transfer->event.value,
+                                                                          transfer.event.value,
                                                                           lease.CancelEvent(),
-                                                                          transfer->ov,
+                                                                          transfer.ov,
                                                                           2000,
                                                                           bytesWritten);
             if (!waitResult.completed) {
                 if (!waitResult.drained) {
                     lease.KeepSlotForPendingLifetime();
-                    PreservePendingTransferLifetime(std::move(transfer), lease.Handle());
+                    PreservePendingTransferLifetime(lease.ReleaseTransferForPendingLifetime(), m_writeTransfer, lease.Handle());
                 }
                 return std::unexpected(waitResult.error);
             }
@@ -420,7 +441,9 @@ private:
         }
     }
 
-    void PreservePendingTransferLifetime(std::unique_ptr<PendingTransfer> transfer, HANDLE handle) noexcept {
+    void PreservePendingTransferLifetime(std::unique_ptr<PendingTransfer> transfer,
+                                         TransferSlot& transferSlot,
+                                         HANDLE handle) noexcept {
         if (!transfer) {
             return;
         }
@@ -434,17 +457,23 @@ private:
         // transfer from active I/O into preserved ownership does not consume a
         // new slot; the slot is released when the transfer is reaped.
         m_preservedPendingTransfers.push_back(std::move(transfer));
+        if (!transferSlot.transfer) {
+            transferSlot.transfer = std::make_unique<PendingTransfer>();
+        }
     }
 
     class IoLease {
     public:
-        explicit IoLease(PenUsbTransportWin32& owner) : m_owner(&owner) {
+        IoLease(PenUsbTransportWin32& owner, TransferSlot& transferSlot)
+            : m_owner(&owner), m_transferSlot(&transferSlot) {
             std::lock_guard<std::mutex> lk(owner.m_handleMu);
             owner.ReapPreservedPendingTransfersLocked();
             ReapQuarantinedTransfers();
-            if (owner.m_handle == INVALID_HANDLE_VALUE || owner.m_closing || !TryReserveTransferSlot()) {
+            if (owner.m_handle == INVALID_HANDLE_VALUE || owner.m_closing || transferSlot.busy || !transferSlot.transfer || !transferSlot.transfer->IsValid() || !TryReserveTransferSlot()) {
                 return;
             }
+            transferSlot.busy = true;
+            transferSlot.transfer->ResetForIo();
             if (owner.m_activeIo == 0 && owner.m_cancelEvent.IsValid()) {
                 ::ResetEvent(owner.m_cancelEvent.value);
             }
@@ -464,6 +493,9 @@ private:
                 if (m_owner->m_activeIo > 0) {
                     --m_owner->m_activeIo;
                 }
+                if (m_transferSlot) {
+                    m_transferSlot->busy = false;
+                }
                 m_owner->m_idleCv.notify_all();
             }
             if (m_releaseSlotOnDestroy) {
@@ -477,12 +509,18 @@ private:
         bool IsValid() const noexcept { return m_valid; }
         HANDLE Handle() const noexcept { return m_handle; }
         HANDLE CancelEvent() const noexcept { return m_cancelEvent; }
+        PendingTransfer& Transfer() const noexcept { return *m_transferSlot->transfer; }
         void KeepSlotForPendingLifetime() noexcept { m_releaseSlotOnDestroy = false; }
+        std::unique_ptr<PendingTransfer> ReleaseTransferForPendingLifetime() noexcept {
+            KeepSlotForPendingLifetime();
+            return m_transferSlot ? std::move(m_transferSlot->transfer) : nullptr;
+        }
 
     private:
         PenUsbTransportWin32* m_owner = nullptr;
         HANDLE m_handle = INVALID_HANDLE_VALUE;
         HANDLE m_cancelEvent = nullptr;
+        TransferSlot* m_transferSlot = nullptr;
         bool m_valid = false;
         bool m_releaseSlotOnDestroy = false;
     };
@@ -491,6 +529,8 @@ private:
     std::condition_variable m_idleCv;
     HANDLE m_handle = INVALID_HANDLE_VALUE;
     EventHandle m_cancelEvent;
+    TransferSlot m_readTransfer;
+    TransferSlot m_writeTransfer;
     std::vector<std::unique_ptr<PendingTransfer>> m_preservedPendingTransfers;
     uint32_t m_activeIo = 0;
     bool m_closing = false;
