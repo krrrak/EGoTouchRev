@@ -92,7 +92,7 @@ endif()
 # --- Global Optimization & Debug Options ---
 option(EGO_GENERATE_PDB "Generate PDB debug symbols in Release build" ON)
 
-if(MSVC)
+if(MSVC OR (WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC"))
     # 区分 MSVC 兼容的编译驱动（cl.exe / clang-cl.exe）与常规 GNU 风格的 clang 驱动
     if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC" OR (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC"))
         if(EGO_GENERATE_PDB)
