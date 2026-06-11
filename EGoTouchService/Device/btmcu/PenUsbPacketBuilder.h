@@ -116,38 +116,101 @@ inline std::string FormatPenUsbAsciiPayload(std::span<const uint8_t> payload) {
     return DecodePenUsbUtf8Payload(payload);
 }
 
-inline std::vector<uint8_t> BuildPenUsbCommand(PenUsbCommandId commandId) {
+inline std::array<uint8_t, 0x20> BuildScanModePayload(uint8_t freq1,
+                                                       uint8_t freq2,
+                                                       uint8_t mode) noexcept;
+
+inline PenUsbPacketBuffer BuildPenUsbCommandBuffer(PenUsbCommandId commandId) noexcept {
+    PenUsbPacketBuffer packet{};
     const auto id = static_cast<uint16_t>(commandId);
-    return {
-        0x07, 0x00, 0x02, 0x00,
-        static_cast<uint8_t>(id & 0xFFu),
-        static_cast<uint8_t>((id >> 8) & 0xFFu),
-        0x11, 0x00,
+    packet.bytes[0] = 0x07;
+    packet.bytes[1] = 0x00;
+    packet.bytes[2] = 0x02;
+    packet.bytes[3] = 0x00;
+    packet.bytes[4] = static_cast<uint8_t>(id & 0xFFu);
+    packet.bytes[5] = static_cast<uint8_t>((id >> 8) & 0xFFu);
+    packet.bytes[6] = 0x11;
+    packet.bytes[7] = 0x00;
+    packet.size = kPenUsbHeaderSize;
+    return packet;
+}
+
+inline PenUsbPacketBuffer BuildPenUsbFixedSizeCommandBuffer(PenUsbCommandId commandId) noexcept {
+    auto packet = BuildPenUsbCommandBuffer(commandId);
+    packet.size = kPenUsbPacketCapacity;
+    return packet;
+}
+
+inline bool BuildPenUsbPayloadCommandBuffer(PenUsbCommandId commandId,
+                                            std::span<const uint8_t> payload,
+                                            PenUsbPacketBuffer& outPacket) noexcept {
+    if (payload.size() > kPenUsbPayloadCapacity) {
+        outPacket.clear();
+        return false;
+    }
+    outPacket.clear();
+    const auto id = static_cast<uint16_t>(commandId);
+    outPacket.bytes[0] = 0x07;
+    outPacket.bytes[1] = 0x01;
+    outPacket.bytes[2] = 0x02;
+    outPacket.bytes[3] = 0x00;
+    outPacket.bytes[4] = static_cast<uint8_t>(id & 0xFFu);
+    outPacket.bytes[5] = static_cast<uint8_t>((id >> 8) & 0xFFu);
+    outPacket.bytes[6] = 0x11;
+    outPacket.bytes[7] = 0x20;
+    std::copy(payload.begin(), payload.end(), outPacket.bytes.begin() + kPenUsbHeaderSize);
+    outPacket.size = kPenUsbHeaderSize + payload.size();
+    return true;
+}
+
+inline PenUsbPacketBuffer BuildPenUsbEventAckBuffer(uint8_t ackCode) noexcept {
+    PenUsbPacketBuffer packet{};
+    const std::array<uint8_t, 1> payload{ackCode};
+    (void)BuildPenUsbPayloadCommandBuffer(PenUsbCommandId::EventAck, payload, packet);
+    return packet;
+}
+
+inline PenUsbPacketBuffer BuildScanModeCommandBuffer(uint8_t freq1, uint8_t freq2, uint8_t mode) noexcept {
+    PenUsbPacketBuffer packet{};
+    const auto payload = BuildScanModePayload(freq1, freq2, mode);
+    (void)BuildPenUsbPayloadCommandBuffer(PenUsbCommandId::InitParamSet, payload, packet);
+    return packet;
+}
+
+inline PenUsbPacketBuffer BuildFactoryInitProtocolParamsCommandBuffer() noexcept {
+    const std::array<uint8_t, 0x20> payload{
+        0x33, 0x33, 0x33, 0x33, 0xE7, 0x02, 0x12, 0x04,
+        0x58, 0x02, 0x1A, 0x41, 0x0F, 0x01, 0x01, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     };
+    PenUsbPacketBuffer packet{};
+    (void)BuildPenUsbPayloadCommandBuffer(PenUsbCommandId::InitParamSet, payload, packet);
+    return packet;
+}
+
+inline std::vector<uint8_t> BuildPenUsbCommand(PenUsbCommandId commandId) {
+    const auto packet = BuildPenUsbCommandBuffer(commandId);
+    return std::vector<uint8_t>(packet.view().begin(), packet.view().end());
 }
 
 inline std::vector<uint8_t> BuildPenUsbFixedSizeCommand(PenUsbCommandId commandId) {
-    auto packet = BuildPenUsbCommand(commandId);
-    packet.resize(0x40, 0x00);
-    return packet;
+    const auto packet = BuildPenUsbFixedSizeCommandBuffer(commandId);
+    return std::vector<uint8_t>(packet.view().begin(), packet.view().end());
 }
 
 inline std::vector<uint8_t> BuildPenUsbPayloadCommand(PenUsbCommandId commandId,
                                                       std::span<const uint8_t> payload) {
-    const auto id = static_cast<uint16_t>(commandId);
-    std::vector<uint8_t> packet{
-        0x07, 0x01, 0x02, 0x00,
-        static_cast<uint8_t>(id & 0xFFu),
-        static_cast<uint8_t>((id >> 8) & 0xFFu),
-        0x11, 0x20,
-    };
-    packet.insert(packet.end(), payload.begin(), payload.end());
-    return packet;
+    PenUsbPacketBuffer packet{};
+    if (!BuildPenUsbPayloadCommandBuffer(commandId, payload, packet)) {
+        return {};
+    }
+    return std::vector<uint8_t>(packet.view().begin(), packet.view().end());
 }
 
 inline std::vector<uint8_t> BuildPenUsbEventAck(uint8_t ackCode) {
-    const std::array<uint8_t, 1> payload{ackCode};
-    return BuildPenUsbPayloadCommand(PenUsbCommandId::EventAck, payload);
+    const auto packet = BuildPenUsbEventAckBuffer(ackCode);
+    return std::vector<uint8_t>(packet.view().begin(), packet.view().end());
 }
 
 inline std::array<uint8_t, 0x20> BuildScanModePayload(uint8_t freq1,
@@ -169,18 +232,13 @@ inline std::array<uint8_t, 0x20> BuildScanModePayload(uint8_t freq1,
 }
 
 inline std::vector<uint8_t> BuildScanModeCommand(uint8_t freq1, uint8_t freq2, uint8_t mode) {
-    const auto payload = BuildScanModePayload(freq1, freq2, mode);
-    return BuildPenUsbPayloadCommand(PenUsbCommandId::InitParamSet, payload);
+    const auto packet = BuildScanModeCommandBuffer(freq1, freq2, mode);
+    return std::vector<uint8_t>(packet.view().begin(), packet.view().end());
 }
 
 inline std::vector<uint8_t> BuildFactoryInitProtocolParamsCommand() {
-    const std::array<uint8_t, 0x20> payload{
-        0x33, 0x33, 0x33, 0x33, 0xE7, 0x02, 0x12, 0x04,
-        0x58, 0x02, 0x1A, 0x41, 0x0F, 0x01, 0x01, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    };
-    return BuildPenUsbPayloadCommand(PenUsbCommandId::InitParamSet, payload);
+    const auto packet = BuildFactoryInitProtocolParamsCommandBuffer();
+    return std::vector<uint8_t>(packet.view().begin(), packet.view().end());
 }
 
 } // namespace Himax::Pen

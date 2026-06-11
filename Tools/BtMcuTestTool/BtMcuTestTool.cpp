@@ -386,8 +386,9 @@ void EventReadThread() {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
-        std::vector<uint8_t> rxBuf;
-        auto res = g_evtTransport->ReadPacket(rxBuf, 1000);
+        Himax::Pen::PenUsbPacketBuffer rxPacket;
+        auto res = g_evtTransport->ReadPacket(rxPacket, 1000);
+        std::vector<uint8_t> rxBuf(rxPacket.view().begin(), rxPacket.view().end());
         if (res.has_value() && !rxBuf.empty()) {
             g_evtRxCount.fetch_add(1, std::memory_order_relaxed);
             // Decode event name for log
@@ -421,8 +422,9 @@ void PressureReadThread() {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
-        std::vector<uint8_t> rxBuf;
-        auto res = g_pressTransport->ReadPacket(rxBuf, 1000);
+        Himax::Pen::PenUsbPacketBuffer rxPacket;
+        auto res = g_pressTransport->ReadPacket(rxPacket, 1000);
+        std::vector<uint8_t> rxBuf(rxPacket.view().begin(), rxPacket.view().end());
         if (res.has_value() && !rxBuf.empty()) {
             g_pressRxCount.fetch_add(1, std::memory_order_relaxed);
             AddLog("Press", "Rx", rxBuf);

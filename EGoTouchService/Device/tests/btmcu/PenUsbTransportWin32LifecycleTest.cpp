@@ -103,7 +103,7 @@ public:
 
     void Start() {
         thread_ = std::thread([this]() {
-            std::vector<uint8_t> bytes;
+            Himax::Pen::PenUsbPacketBuffer bytes;
             result_ok_.store(transport_.ReadPacket(bytes, kLongReadTimeoutMs).has_value(),
                              std::memory_order_release);
             {

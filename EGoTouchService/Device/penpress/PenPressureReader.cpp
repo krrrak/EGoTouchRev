@@ -88,13 +88,11 @@ std::optional<std::wstring> PenPressureReader::FindDevicePath() {
 }
 
 // ── BtHidChannel hook ─────────────────────────────────────────────────────
-void PenPressureReader::OnPacketReceived(const std::vector<uint8_t>& packet) {
+void PenPressureReader::OnPacketReceived(std::span<const uint8_t> packet) {
     PenPressureStats stats;
     {
         std::lock_guard<std::mutex> lk(m_statsMutex);
-        auto parsed = TryParsePenPressurePacket(
-            std::span<const uint8_t>(packet.data(), packet.size()),
-            m_stats.pressureMode);
+        auto parsed = TryParsePenPressurePacket(packet, m_stats.pressureMode);
         if (!parsed) {
             return;
         }
@@ -102,13 +100,11 @@ void PenPressureReader::OnPacketReceived(const std::vector<uint8_t>& packet) {
         m_stats = stats;
     }
 
-    PressureCallback cb;
     {
         std::lock_guard<std::mutex> lk(m_cbMutex);
-        cb = m_pressureCallback;
-    }
-    if (cb) {
-        cb(stats);
+        if (m_pressureCallback) {
+            m_pressureCallback(stats);
+        }
     }
     if (m_notifyEvent) {
         SetEvent(static_cast<HANDLE>(m_notifyEvent));

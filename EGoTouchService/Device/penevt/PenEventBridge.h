@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -44,13 +45,13 @@ public:
 protected:
     std::optional<std::wstring> FindDevicePath() override;
     void OnConnected() override;
-    void OnPacketReceived(const std::vector<uint8_t>& packet) override;
+    void OnPacketReceived(std::span<const uint8_t> packet) override;
     const char* ChannelName() const override { return "PenEventBridge"; }
 
 private:
     static int GetAckCode(uint8_t eventCode);
 
-    bool SendRawPacket(const std::vector<uint8_t>& pkt);
+    bool SendRawPacket(std::span<const uint8_t> pkt);
     void SendAck(uint8_t eventCode, uint8_t ackCode);
     void ExecuteInitAction(PenUsbInitAction action);
     void AdvanceSessionFromEvent(uint8_t eventCode);

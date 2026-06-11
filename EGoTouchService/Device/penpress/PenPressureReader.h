@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <span>
 
 namespace Himax::Pen {
 
@@ -33,7 +34,7 @@ public:
 
 protected:
     std::optional<std::wstring> FindDevicePath() override;
-    void OnPacketReceived(const std::vector<uint8_t>& packet) override;
+    void OnPacketReceived(std::span<const uint8_t> packet) override;
     const char* ChannelName() const override { return "PenPressureReader"; }
 
 private:

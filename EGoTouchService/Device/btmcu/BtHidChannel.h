@@ -6,9 +6,9 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <thread>
-#include <vector>
 
 namespace Himax::Pen {
 
@@ -59,7 +59,7 @@ protected:
     virtual void OnConnected() {}
 
     /// Called for each received packet.
-    virtual void OnPacketReceived(const std::vector<uint8_t>& packet) = 0;
+    virtual void OnPacketReceived(std::span<const uint8_t> packet) = 0;
 
     /// Return a short name for log messages (e.g. "PenEventBridge").
     virtual const char* ChannelName() const = 0;
