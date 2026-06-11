@@ -29,8 +29,7 @@ bool TouchPipeline::Process(HeatmapFrame& frame) {
 #if EGOTOUCH_DIAG
     UpdateDiagnosticCaches(frame);
 #endif
-    ProcessTrackingAndGesture(frame);
-    return true;
+    return ProcessTrackingAndGesture(frame);
 }
 
 void TouchPipeline::ReserveContactCapacity(HeatmapFrame& frame) const {
@@ -104,10 +103,14 @@ void TouchPipeline::UpdateContactCaches(HeatmapFrame& frame) {
     m_cachedContactCount.store(static_cast<int>(frame.touch.output.contacts.size()), std::memory_order_relaxed);
 }
 
-void TouchPipeline::ProcessTrackingAndGesture(HeatmapFrame& frame) {
+bool TouchPipeline::ProcessTrackingAndGesture(HeatmapFrame& frame) {
     m_tracker.Process(frame);
     m_coordFilter.Process(frame);
-    m_gesture.Process(frame);
+    return ProcessGestureOutput(frame);
+}
+
+bool TouchPipeline::ProcessGestureOutput(HeatmapFrame& frame) {
+    return m_gesture.Process(frame);
 }
 
 #if EGOTOUCH_DIAG
