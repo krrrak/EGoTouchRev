@@ -126,6 +126,38 @@ void TestPeakDetectorPreservesTwoCloseSaddledPeaks() {
     Require(HasPeakAt(peaks, 20, 22), "right close peak should survive");
 }
 
+void TestZoneExpanderKeepsTopSignalCandidatesPastContactCapacity() {
+    Solvers::HeatmapFrame frame = MakeZeroedHeatmapFrame();
+    std::vector<Solvers::Touch::Peak> peaks;
+    peaks.reserve(Solvers::kMaxTouchContacts + 8);
+
+    for (int r = 0; r < 40 && peaks.size() < Solvers::kMaxTouchContacts + 8; r += 5) {
+        for (int c = 0; c < 60 && peaks.size() < Solvers::kMaxTouchContacts + 8; c += 7) {
+            const int signal = 100 + static_cast<int>(peaks.size());
+            frame.heatmapMatrix[r][c] = static_cast<int16_t>(signal);
+
+            Solvers::Touch::Peak peak;
+            peak.r = r;
+            peak.c = c;
+            peak.z = static_cast<int16_t>(signal);
+            peak.id = static_cast<int>(peaks.size()) + 1;
+            peaks.push_back(peak);
+        }
+    }
+
+    Solvers::Touch::ZoneExpander expander;
+    expander.m_dilateErode = false;
+    expander.m_maxTouches = static_cast<int>(Solvers::kMaxTouchContacts);
+    expander.Process(frame, peaks, 10, {});
+
+    Require(frame.touch.output.contacts.size() == Solvers::kMaxTouchContacts,
+            "zone expander should cap output to max touch contacts");
+    Require(FindContactById(frame.touch.output.contacts.span(), 1) == nullptr,
+            "weak early candidate should not survive over-capacity top-signal selection");
+    Require(FindContactById(frame.touch.output.contacts.span(), static_cast<int>(peaks.size())) != nullptr,
+            "strong late candidate should survive over-capacity top-signal selection");
+}
+
 void TestZoneExpanderPartitionsMergedTwoPeakZone() {
     Solvers::HeatmapFrame frame = MakeZeroedHeatmapFrame();
     BuildMergedSplitFrame(frame);
@@ -169,6 +201,7 @@ void TestZoneExpanderPartitionsMergedTwoPeakZone() {
 int main() {
     try {
         TestPeakDetectorPreservesTwoCloseSaddledPeaks();
+        TestZoneExpanderKeepsTopSignalCandidatesPastContactCapacity();
         TestZoneExpanderPartitionsMergedTwoPeakZone();
         std::cout << "[TEST] Touch close split tests passed.\n";
         return 0;

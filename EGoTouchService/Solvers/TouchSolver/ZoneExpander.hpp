@@ -155,6 +155,7 @@ private:
     std::vector<ZoneUnit> m_units;
     std::vector<ZoneEdgeInfo> m_edgeInfos;
     std::vector<ZoneEdgeInfo> m_contactEdgeInfos;
+    FixedVector<TouchContact, kMaxTouchContacts>* m_currentOutputContacts = nullptr;
     int m_zoneCount = 0;
     std::array<int, kGridSize> m_activeZoneCells{};
     int m_activeZoneCellCount = 0;
@@ -180,6 +181,7 @@ private:
         m_units.clear();
         m_edgeInfos.clear();
         m_contactEdgeInfos.clear();
+        m_currentOutputContacts = nullptr;
         m_zoneCount = 0;
         m_activeZoneCellCount = 0;
         m_dilateCandidateCount = 0;
@@ -610,6 +612,7 @@ private:
             std::span<const PeakEvaluation> evaluations) {
         frame.touch.output.contacts.clear();
         m_contactEdgeInfos.clear();
+        m_currentOutputContacts = &frame.touch.output.contacts;
         const size_t desiredCapacity = static_cast<size_t>(
             std::max(m_maxTouches, static_cast<int>(peaks.size())));
         if (m_contactEdgeInfos.capacity() < desiredCapacity) {
@@ -647,8 +650,7 @@ private:
                 tc.signalSum = u.signalSum;
                 tc.state = 0;
                 ApplyEdgeInfo(tc, m_edgeInfos[static_cast<size_t>(pi)]);
-                frame.touch.output.contacts.push_back(tc);
-                m_contactEdgeInfos.push_back(m_edgeInfos[static_cast<size_t>(pi)]);
+                InsertContactCandidate(tc, m_edgeInfos[static_cast<size_t>(pi)]);
             } else {
                 std::array<MfAccum, ZoneUnit::kMaxPeaksPerZone> mfAccums{};
                 const int partitionCount = PartitionMultiFingerZone(
@@ -679,10 +681,34 @@ private:
                     tc.signalSum = accum.signalSum;
                     tc.state = 0;
                     ApplyEdgeInfo(tc, m_edgeInfos[static_cast<size_t>(pi)]);
-                    frame.touch.output.contacts.push_back(tc);
-                    m_contactEdgeInfos.push_back(m_edgeInfos[static_cast<size_t>(pi)]);
+                    InsertContactCandidate(tc, m_edgeInfos[static_cast<size_t>(pi)]);
                 }
             }
+        }
+    }
+
+    inline void InsertContactCandidate(const TouchContact& contact, const ZoneEdgeInfo& edgeInfo) {
+        auto& contacts = m_currentOutputContacts;
+        if (contacts == nullptr) return;
+
+        if (contacts->try_push_back(contact)) {
+            m_contactEdgeInfos.push_back(edgeInfo);
+            return;
+        }
+
+        size_t weakestIndex = 0;
+        int weakestSignal = (*contacts)[0].signalSum;
+        for (size_t i = 1; i < contacts->size(); ++i) {
+            if ((*contacts)[i].signalSum < weakestSignal) {
+                weakestSignal = (*contacts)[i].signalSum;
+                weakestIndex = i;
+            }
+        }
+
+        if (contact.signalSum <= weakestSignal) return;
+        (*contacts)[weakestIndex] = contact;
+        if (weakestIndex < m_contactEdgeInfos.size()) {
+            m_contactEdgeInfos[weakestIndex] = edgeInfo;
         }
     }
 };
