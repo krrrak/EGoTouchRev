@@ -122,15 +122,41 @@ void TouchPipeline::UpdateDiagnosticCaches(HeatmapFrame& frame) {
     const auto& macroZones = m_macroZoneDet.GetMacroZones();
     const auto peaks = m_peakDet.GetPeaks();
 
-    // MacroZone → touchZones colormap for IPC visualization
+    // MacroZone → touchZones colormap and bbox cache for IPC visualization
     frame.touch.debug.touchZones.fill(0);
+    frame.touch.debug.zoneBoxes.clear();
     for (size_t i = 0; i < macroZones.size(); ++i) {
+        const auto& zone = macroZones[i];
         const uint8_t colorId = static_cast<uint8_t>((i % 10) + 1);
-        for (int idx : macroZones[i].pixels) {
+        for (int idx : zone.pixels) {
             if (idx >= 0 && idx < 2400) {
                 frame.touch.debug.touchZones[idx] = colorId;
             }
         }
+
+        TouchZoneDebugBox box;
+        box.zoneId = colorId;
+        box.zoneIndex = static_cast<uint8_t>(std::min<size_t>(i, 255));
+        box.bbox = {zone.minR, zone.maxR, zone.minC, zone.maxC};
+        box.area = zone.area;
+        box.signalSum = zone.signalSum;
+        frame.touch.debug.zoneBoxes.push_back(box);
+    }
+
+    frame.touch.debug.palmBoxes.clear();
+    for (const auto& palmBox : m_palmBoxSuppressor.GetPalmBoxes()) {
+        TouchPalmDebugBox box;
+        box.id = palmBox.id;
+        box.bbox = {palmBox.bbox.minR, palmBox.bbox.maxR, palmBox.bbox.minC, palmBox.bbox.maxC};
+        box.expandedBbox = {palmBox.expandedBbox.minR, palmBox.expandedBbox.maxR,
+                            palmBox.expandedBbox.minC, palmBox.expandedBbox.maxC};
+        box.age = palmBox.age;
+        box.missed = palmBox.missed;
+        box.lastMatchedZoneIndex = palmBox.lastMatchedZoneIndex;
+        box.anchorPeakCount = palmBox.anchorPeakCount;
+        box.signalSum = palmBox.signalSum;
+        box.matchedPalmThisFrame = palmBox.matchedPalmThisFrame;
+        frame.touch.debug.palmBoxes.push_back(box);
     }
 
     frame.touch.debug.peakZones = m_contactExtractor.GetPeakZones();
@@ -177,6 +203,8 @@ void TouchPipeline::ResetIdleOutputs(HeatmapFrame& frame) {
     frame.touch.debug.touchZones.fill(0);
     frame.touch.debug.peakZones.fill(0);
     frame.touch.debug.peaks.clear();
+    frame.touch.debug.zoneBoxes.clear();
+    frame.touch.debug.palmBoxes.clear();
 
     {
         std::lock_guard<std::mutex> lk(m_diagMtx);

@@ -30,8 +30,7 @@ public:
     auto &hpp2 = ctx.runtime;
     auto &state = ctx.state;
     const std::size_t freqIdx = static_cast<std::size_t>(state.m_curFreqIdx);
-    const bool noisy =
-        hpp2.rawAbnormal || hpp2.cmnAbnormal || state.m_noiseFlag[freqIdx] != 0;
+    const bool noisy = hpp2.rawAbnormal || hpp2.cmnAbnormal;
     if (hpp2.mainFreq == kFreqF1) {
       state.m_freqNoiseLatchF1 = noisy;
     } else {

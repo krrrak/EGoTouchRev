@@ -421,6 +421,47 @@ void ServiceProxy::InitConfigSchema() {
     ApplyConfigStoreToLocalRuntime();
 
     m_configSchema = Config::BuildMergedSchema(m_configDraft.catalogDefaults, binder);
+    SetConfigServiceSyncState(
+        ConfigServiceSyncState::OfflineFallback,
+        "Using built-in fallback config; connect to Service to load current runtime values.");
+}
+
+void ServiceProxy::SetConfigServiceSyncState(ConfigServiceSyncState state, std::string message) {
+    m_configServiceSyncState.store(state, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lk(m_configServiceSyncMessageMutex);
+    m_configServiceSyncStatusMessage = std::move(message);
+}
+
+std::string ServiceProxy::GetConfigServiceSyncStatusMessage() const {
+    std::lock_guard<std::mutex> lk(m_configServiceSyncMessageMutex);
+    return m_configServiceSyncStatusMessage;
+}
+
+bool ServiceProxy::IsConfigAdjustmentAllowed() const {
+    return IsLiveControlAllowed() &&
+           m_configServiceSyncState.load(std::memory_order_relaxed) == ConfigServiceSyncState::Ready;
+}
+
+bool ServiceProxy::SynchronizeConfigFromServiceForEditing() {
+    if (!m_client.IsConnected()) {
+        SetConfigServiceSyncState(
+            ConfigServiceSyncState::OfflineFallback,
+            "Service is disconnected; config adjustment is disabled until Service values are synchronized.");
+        return false;
+    }
+
+    SetConfigServiceSyncState(ConfigServiceSyncState::Syncing, "Synchronizing config catalog and values from Service...");
+    if (!RefreshConfigCatalogV3()) {
+        SetConfigServiceSyncState(ConfigServiceSyncState::Failed, "Failed to read config catalog from Service; config adjustment remains disabled.");
+        return false;
+    }
+    if (!RefreshConfigSnapshotV3(true)) {
+        SetConfigServiceSyncState(ConfigServiceSyncState::Failed, "Failed to read current config values from Service; config adjustment remains disabled.");
+        return false;
+    }
+
+    SetConfigServiceSyncState(ConfigServiceSyncState::Ready, "Service config synchronized; parameter adjustment is enabled.");
+    return true;
 }
 
 Config::ConfigSchemaSnapshot BuildServiceProxyConfigSchemaSnapshotForTest() {
@@ -459,6 +500,14 @@ std::vector<std::string> ServiceProxy::GetConfigModuleTags() const {
 }
 
 void ServiceProxy::MarkConfigPathsDirty(const std::vector<std::string>& paths) {
+    if (paths.empty()) {
+        return;
+    }
+    if (!IsConfigAdjustmentAllowed()) {
+        LOG_WARN("App", __func__, "Config", "Ignored config draft changes before Service config synchronization completed.");
+        return;
+    }
+
     for (const auto& path : paths) {
         if (path.empty()) {
             continue;
@@ -512,12 +561,20 @@ void ServiceProxy::MarkConfigPathsDirty(const std::vector<std::string>& paths) {
 }
 
 void ServiceProxy::SetConfigDraftValue(std::string_view path, Config::ConfigValue value) {
+    if (!IsConfigAdjustmentAllowed()) {
+        LOG_WARN("App", __func__, "Config", "Ignored config draft value before Service config synchronization completed: {}", path);
+        return;
+    }
     m_configDraft.editableDraft.set<Config::ConfigValue>(path, std::move(value));
     CommitConfigDraftEdits({std::string(path)});
 }
 
 void ServiceProxy::CommitConfigDraftEdits(const std::vector<std::string>& paths) {
     if (paths.empty()) {
+        return;
+    }
+    if (!IsConfigAdjustmentAllowed()) {
+        LOG_WARN("App", __func__, "Config", "Ignored config draft commit before Service config synchronization completed.");
         return;
     }
 
@@ -574,6 +631,12 @@ bool ServiceProxy::ApplyConfigStoreGlobally() {
         size_t skippedKeys = 0;
         bool hasRestartRequiredEntry = false;
     };
+
+    if (m_configServiceSyncState.load(std::memory_order_relaxed) != ConfigServiceSyncState::Ready) {
+        setApplyOutcome(ApplyConfigStatus::LiveApplyFailed, false, false);
+        LOG_WARN("App", __func__, "Config", "Global config apply is blocked until Service config values are synchronized.");
+        return false;
+    }
 
     auto hasUnpersistedDirtyState = [this]() {
         return std::ranges::any_of(m_configDraft.pathStates, [](const auto& item) {
@@ -1041,12 +1104,13 @@ bool ServiceProxy::ApplyConfigV3CatalogBytes(const uint8_t* data, size_t size) {
         return true;
     } catch (const std::exception& ex) {
         m_configV3CatalogReady = false;
+        SetConfigServiceSyncState(ConfigServiceSyncState::Failed, "Failed to decode config catalog from Service; config adjustment is disabled.");
         LOG_WARN("App", __func__, "Config", "Failed to apply config v3 catalog: {}", ex.what());
         return false;
     }
 }
 
-bool ServiceProxy::ApplyConfigV3SnapshotBytes(const uint8_t* data, size_t size) {
+bool ServiceProxy::ApplyConfigV3SnapshotBytes(const uint8_t* data, size_t size, bool overwriteDirtyDraft) {
     if (!m_configV3CatalogReady) {
         LOG_WARN("App", __func__, "Config", "Skipping config v3 snapshot because no ready catalog is available.");
         return false;
@@ -1054,6 +1118,20 @@ bool ServiceProxy::ApplyConfigV3SnapshotBytes(const uint8_t* data, size_t size) 
 
     try {
         const auto payload = Config::deserializeConfigV3Snapshot(data, size);
+        if (overwriteDirtyDraft) {
+            m_configDraft.serviceSnapshot = Config::ConfigStore{};
+            m_configDraft.editableDraft = Config::ConfigStore{};
+            m_configDraft.editableDraft.mergeFrom(m_configDraft.catalogDefaults);
+            m_configDraft.dirtyBaseline.clear();
+            m_configDraft.pathStates.clear();
+            m_hasUnpersistedLiveConfigChanges.store(false, std::memory_order_relaxed);
+            m_lastApplyConfigStatus.store(ApplyConfigStatus::NotAttempted, std::memory_order_relaxed);
+            m_lastApplyConfigLiveApplied.store(false, std::memory_order_relaxed);
+            m_lastApplyConfigRestartRequired.store(false, std::memory_order_relaxed);
+            m_lastApplyConfigPersistAttempted.store(false, std::memory_order_relaxed);
+            m_lastApplyConfigPersisted.store(false, std::memory_order_relaxed);
+            m_lastApplyConfigPersistStatus.store(static_cast<uint8_t>(Ipc::IpcStatusCode::InternalError), std::memory_order_relaxed);
+        }
         std::unordered_map<Config::ConfigKeyId, const Config::ConfigSchemaEntry*> entryByKey;
         for (const auto& entry : m_configSchema.entries) {
             if (entry.keyId != Config::ConfigKeyId::MaxKeyId && !entry.yamlPath.empty()) {
@@ -1081,7 +1159,7 @@ bool ServiceProxy::ApplyConfigV3SnapshotBytes(const uint8_t* data, size_t size) 
                 auto& state = stateIt->second;
                 state.hasServiceSnapshot = true;
                 state.hasDirtyBaseline = m_configDraft.dirtyBaseline.contains(schemaEntry.yamlPath);
-                if (state.dirty) {
+                if (state.dirty && !overwriteDirtyDraft) {
                     ++dirtySkipped;
                     continue;
                 }
@@ -1115,8 +1193,12 @@ bool ServiceProxy::ApplyConfigV3CatalogBytesForTest(const uint8_t* data, size_t 
     return ApplyConfigV3CatalogBytes(data, size);
 }
 
-bool ServiceProxy::ApplyConfigV3SnapshotBytesForTest(const uint8_t* data, size_t size) {
-    return ApplyConfigV3SnapshotBytes(data, size);
+bool ServiceProxy::ApplyConfigV3SnapshotBytesForTest(const uint8_t* data, size_t size, bool overwriteDirtyDraft) {
+    const bool ok = ApplyConfigV3SnapshotBytes(data, size, overwriteDirtyDraft);
+    if (ok) {
+        SetConfigServiceSyncState(ConfigServiceSyncState::Ready, "Service config synchronized by test snapshot.");
+    }
+    return ok;
 }
 
 ConfigV3BaselineVersions ServiceProxy::GetConfigV3BaselineVersionsForTest() const {
@@ -1141,14 +1223,14 @@ bool ServiceProxy::RefreshConfigCatalogV3() {
     return ApplyConfigV3CatalogBytes(bytes->data(), bytes->size());
 }
 
-bool ServiceProxy::RefreshConfigSnapshotV3() {
+bool ServiceProxy::RefreshConfigSnapshotV3(bool overwriteDirtyDraft) {
     if (!IsConfigIpcConnectedForApply()) return false;
     if (!m_configV3CatalogReady) {
         LOG_WARN("App", __func__, "Config", "Skipping config v3 snapshot refresh because no ready catalog is available.");
         return false;
     }
     const auto bytes = FetchConfigV3Bytes(Ipc::ConfigV3PayloadKind::Snapshot);
-    return bytes.has_value() && ApplyConfigV3SnapshotBytes(bytes->data(), bytes->size());
+    return bytes.has_value() && ApplyConfigV3SnapshotBytes(bytes->data(), bytes->size(), overwriteDirtyDraft);
 }
 
 void ServiceProxy::RefreshConfigSnapshot() {
@@ -1163,31 +1245,31 @@ void ServiceProxy::RefreshConfigSnapshot() {
 }
 
 void ServiceProxy::SetSrvModeFull(bool full) {
-    if (!IsLiveControlAllowed()) return;
+    if (!IsConfigAdjustmentAllowed()) return;
     m_srvDesiredModeFull.store(full, std::memory_order_relaxed);
     SetConfigDraftValue("service.mode", ToConfigValue(ToServiceModeConfig(full)));
 }
 
 void ServiceProxy::SetSrvStylusVhfEnabled(bool enabled) {
-    if (!IsLiveControlAllowed()) return;
+    if (!IsConfigAdjustmentAllowed()) return;
     m_srvStylusVhfEnabled.store(enabled, std::memory_order_relaxed);
     SetConfigDraftValue("service.stylus_vhf_enabled", ToConfigValue(enabled));
 }
 
 void ServiceProxy::SetSrvAutoMode(bool enabled) {
-    if (!IsLiveControlAllowed()) return;
+    if (!IsConfigAdjustmentAllowed()) return;
     m_srvAutoMode.store(enabled, std::memory_order_relaxed);
     SetConfigDraftValue("service.auto_mode", ToConfigValue(enabled));
 }
 
 void ServiceProxy::SetPenButtonMode(PenButtonMode m) {
-    if (!IsLiveControlAllowed()) return;
+    if (!IsConfigAdjustmentAllowed()) return;
     m_srvPenButtonMode.store(m, std::memory_order_relaxed);
     SetConfigDraftValue("service.pen_button_mode", ToConfigValue(m));
 }
 
 void ServiceProxy::SetPenButtonRoute(PenButtonRoute r) {
-    if (!IsLiveControlAllowed()) return;
+    if (!IsConfigAdjustmentAllowed()) return;
     m_srvPenButtonRoute.store(r, std::memory_order_relaxed);
     SetConfigDraftValue("service.pen_button_route", ToConfigValue(r));
 }

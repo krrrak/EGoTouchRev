@@ -45,10 +45,9 @@ bool ServiceProxy::Connect() {
         return false;
     }
 
-    if (!RefreshConfigCatalogV3()) {
-        LOG_WARN("App", __func__, "Config", "Config v3 catalog unavailable; keeping app-local schema fallback.");
+    if (!SynchronizeConfigFromServiceForEditing()) {
+        LOG_WARN("App", __func__, "Config", "Config v3 synchronization failed; parameter adjustment is disabled until retry.");
     }
-    RefreshConfigSnapshot();
 
     if (!RefreshDynamicDebugSchema()) {
         LOG_WARN("App", __func__, "IPC", "Dynamic debug schema unavailable; UI/export dynamic fields will be empty.");
@@ -107,6 +106,9 @@ void ServiceProxy::DisconnectLocked() {
     }
     m_fps.store(0);
     m_slaveFps.store(0);
+    SetConfigServiceSyncState(
+        ConfigServiceSyncState::OfflineFallback,
+        "Service is disconnected; config adjustment is disabled until current Service values are synchronized.");
 }
 
 void ServiceProxy::Disconnect() {

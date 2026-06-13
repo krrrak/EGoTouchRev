@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <sstream>
+#include <utility>
 #include <vector>
 
 namespace App {
@@ -141,6 +142,43 @@ void DiagnosticsWorkbench::DrawHeatmap() {
                             if (v_diff_right) draw_list->AddLine(ImVec2(p_max.x, p_min.y), ImVec2(p_max.x, p_max.y), colU32, border_thickness);
                         }
                     }
+                }
+
+                auto rectToCanvas = [&](int minR, int maxR, int minC, int maxC) {
+                    minR = std::clamp(minR, 0, rows - 1);
+                    maxR = std::clamp(maxR, 0, rows - 1);
+                    minC = std::clamp(minC, 0, cols - 1);
+                    maxC = std::clamp(maxC, 0, cols - 1);
+                    if (minR > maxR) std::swap(minR, maxR);
+                    if (minC > maxC) std::swap(minC, maxC);
+                    const ImVec2 p0(canvas_p.x + static_cast<float>(cols - 1 - maxC) * cell_w,
+                                    canvas_p.y + static_cast<float>(rows - 1 - maxR) * cell_h);
+                    const ImVec2 p1(canvas_p.x + static_cast<float>(cols - minC) * cell_w,
+                                    canvas_p.y + static_cast<float>(rows - minR) * cell_h);
+                    return std::pair<ImVec2, ImVec2>{p0, p1};
+                };
+
+                for (const auto& box : m_currentFrame.touch.debug.zoneBoxes) {
+                    const auto rect = rectToCanvas(box.bbox.minR, box.bbox.maxR, box.bbox.minC, box.bbox.maxC);
+                    draw_list->AddRect(rect.first, rect.second, IM_COL32(0, 190, 255, 220), 0.0f, 0, 2.0f);
+
+                    char label[32];
+                    snprintf(label, sizeof(label), "Z%d", static_cast<int>(box.zoneIndex));
+                    draw_list->AddText(ImVec2(rect.first.x + 3.0f, rect.first.y + 3.0f), IM_COL32(170, 235, 255, 255), label);
+                }
+
+                for (const auto& box : m_currentFrame.touch.debug.palmBoxes) {
+                    const int alpha = box.matchedPalmThisFrame ? 255 : 150;
+                    const auto expandedRect = rectToCanvas(box.expandedBbox.minR, box.expandedBbox.maxR,
+                                                           box.expandedBbox.minC, box.expandedBbox.maxC);
+                    draw_list->AddRect(expandedRect.first, expandedRect.second, IM_COL32(255, 190, 0, alpha), 0.0f, 0, 1.5f);
+
+                    const auto coreRect = rectToCanvas(box.bbox.minR, box.bbox.maxR, box.bbox.minC, box.bbox.maxC);
+                    draw_list->AddRect(coreRect.first, coreRect.second, IM_COL32(255, 80, 0, alpha), 0.0f, 0, 3.0f);
+
+                    char label[48];
+                    snprintf(label, sizeof(label), "Palm:%d", box.id);
+                    draw_list->AddText(ImVec2(coreRect.first.x + 4.0f, coreRect.first.y + 4.0f), IM_COL32(255, 220, 180, alpha), label);
                 }
 
                 const auto& pzones = m_currentFrame.touch.debug.peakZones;

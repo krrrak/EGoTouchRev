@@ -15,12 +15,31 @@ namespace App {
 
 namespace {
 constexpr const char* kExportRootDir = "C:/ProgramData/EGoTouchRev/exports";
+
+bool DrawControlPanelConfigSyncGate(ServiceProxy* proxy) {
+    if (proxy == nullptr || proxy->IsConfigAdjustmentAllowed()) {
+        return true;
+    }
+
+    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Config is not synchronized from Service; parameter adjustment is disabled.");
+    const std::string message = proxy->GetConfigServiceSyncStatusMessage();
+    if (!message.empty()) {
+        ImGui::TextWrapped("%s", message.c_str());
+    }
+    if (proxy->IsConnected()) {
+        if (ImGui::Button("Retry Config Sync##ControlPanel")) {
+            proxy->SynchronizeConfigFromServiceForEditing();
+        }
+    }
+    return false;
+}
 } // namespace
 
 void DiagnosticsWorkbench::DrawControlPanel() {
     ImGui::Begin("Control Panel");
 
     const bool allowLiveControl = m_proxy && m_proxy->IsLiveControlAllowed();
+    const bool configAdjustmentAllowed = m_proxy && m_proxy->IsConfigAdjustmentAllowed();
     if (!ImGui::BeginTabBar("ControlTabs")) {
         ImGui::End();
         return;
@@ -160,13 +179,13 @@ void DiagnosticsWorkbench::DrawControlPanel() {
     DrawSystemEventsPanel();
 
 #ifdef _DEBUG
-    if (!allowLiveControl) ImGui::BeginDisabled();
+    if (!configAdjustmentAllowed) ImGui::BeginDisabled();
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));
     if (ImGui::Button("Apply Global Parameters (Session Only)")) {
         m_proxy->SaveConfig();
     }
     ImGui::PopStyleColor();
-    if (!allowLiveControl) ImGui::EndDisabled();
+    if (!configAdjustmentAllowed) ImGui::EndDisabled();
 
     bool masterParserOnly = (m_proxy != nullptr) && m_proxy->IsMasterParserOnlyMode();
     if (!m_proxy) ImGui::BeginDisabled();
@@ -193,7 +212,8 @@ void DiagnosticsWorkbench::DrawControlPanel() {
     ImGui::Separator();
     ImGui::TextUnformatted("Global Config");
     if (m_proxy) {
-        if (!allowLiveControl) ImGui::BeginDisabled();
+        const bool globalConfigEnabled = DrawControlPanelConfigSyncGate(m_proxy);
+        if (!globalConfigEnabled) ImGui::BeginDisabled();
         const bool desiredFull = m_proxy->IsSrvModeFull();
         const bool activeFull = m_proxy->IsSrvActiveModeFull();
         bool isTouchOnly = !desiredFull;
@@ -223,14 +243,15 @@ void DiagnosticsWorkbench::DrawControlPanel() {
             m_proxy->ApplyConfigStoreGlobally();
         }
         DrawApplyConfigResultStatus();
-        if (!allowLiveControl) ImGui::EndDisabled();
+        if (!globalConfigEnabled) ImGui::EndDisabled();
     }
 #else
     ImGui::Separator();
     ImGui::TextUnformatted("Global Config");
     ImGui::TextWrapped("Release builds can live-apply supported Service config keys. Persistence depends on Service/build support; service.mode still requires restart.");
     if (m_proxy) {
-        if (!allowLiveControl) ImGui::BeginDisabled();
+        const bool globalConfigEnabled = DrawControlPanelConfigSyncGate(m_proxy);
+        if (!globalConfigEnabled) ImGui::BeginDisabled();
         const char* activeModeText = m_proxy->IsSrvActiveModeFull() ? "Full" : "Touch-Only";
         const char* desiredModeText = m_proxy->IsSrvModeFull() ? "Full" : "Touch-Only";
         ImGui::TextDisabled("Mode: desired=%s active=%s (restart required)", desiredModeText, activeModeText);
@@ -240,7 +261,7 @@ void DiagnosticsWorkbench::DrawControlPanel() {
             m_proxy->ApplyConfigStoreGlobally();
         }
         DrawApplyConfigResultStatus();
-        if (!allowLiveControl) ImGui::EndDisabled();
+        if (!globalConfigEnabled) ImGui::EndDisabled();
     }
 #endif
 

@@ -1,3 +1,5 @@
+#include "SolverTypes.h"
+
 #if __has_include("Ipc/SharedFrameBuffer.h")
 #include "Ipc/SharedFrameBuffer.h"
 #else
@@ -11,16 +13,16 @@
 
 namespace {
 
-static_assert(Ipc::kSharedFrameAbiVersion == 5, "SharedFrameData slot seqlock ABI version must remain 5");
+static_assert(Ipc::kSharedFrameAbiVersion == 6, "SharedFrameData slot seqlock ABI version must remain 6");
 static_assert(sizeof(Ipc::SharedStylusRawGridBlock) == 168, "SharedStylusRawGridBlock ABI size changed");
 static_assert(sizeof(Ipc::SharedStylusRawGrid) == 336, "SharedStylusRawGrid ABI size changed");
 static_assert(offsetof(Ipc::SharedFrameData, stylusRawGrid) == 16106, "SharedFrameData::stylusRawGrid ABI offset changed");
 static_assert(offsetof(Ipc::SharedFrameData, stylusAsaMode) == 16442, "SharedFrameData::stylusAsaMode ABI offset changed");
-static_assert(sizeof(Ipc::SharedFrameData) == 17264, "SharedFrameData ABI size changed");
+static_assert(sizeof(Ipc::SharedFrameData) == 18544, "SharedFrameData ABI size changed");
 static_assert(offsetof(Ipc::SharedTripleBuffer, slotFrameIds) == 320, "SharedTripleBuffer::slotFrameIds ABI offset changed");
 static_assert(offsetof(Ipc::SharedTripleBuffer, slotSequences) == 384, "SharedTripleBuffer::slotSequences ABI offset changed");
 static_assert(offsetof(Ipc::SharedTripleBuffer, slots) == 408, "SharedTripleBuffer::slots ABI offset changed");
-static_assert(sizeof(Ipc::SharedTripleBuffer) == 52224, "SharedTripleBuffer ABI size changed");
+static_assert(sizeof(Ipc::SharedTripleBuffer) == 56064, "SharedTripleBuffer ABI size changed");
 static_assert(std::is_trivially_copyable_v<Ipc::SharedFrameData>, "SharedFrameData must remain trivially copyable");
 static_assert(std::is_standard_layout_v<Ipc::SharedFrameData>, "SharedFrameData must remain standard layout");
 
@@ -37,10 +39,57 @@ bool IsSkippableWindowsGlobalObjectError(DWORD error) noexcept {
            error == ERROR_ALREADY_EXISTS;
 }
 
+void VerifySolverDebugBoxesRoundTrip() {
+    Solvers::HeatmapFrame solverIn{};
+
+    Solvers::TouchZoneDebugBox zoneBox;
+    zoneBox.zoneId = 4;
+    zoneBox.zoneIndex = 3;
+    zoneBox.bbox = {2, 6, 8, 12};
+    zoneBox.area = 20;
+    zoneBox.signalSum = 4567;
+    solverIn.touch.debug.zoneBoxes.push_back(zoneBox);
+
+    Solvers::TouchPalmDebugBox palmBox;
+    palmBox.id = 11;
+    palmBox.bbox = {10, 16, 20, 26};
+    palmBox.expandedBbox = {9, 17, 19, 27};
+    palmBox.age = 5;
+    palmBox.missed = 2;
+    palmBox.lastMatchedZoneIndex = 3;
+    palmBox.anchorPeakCount = 4;
+    palmBox.signalSum = 6789;
+    palmBox.matchedPalmThisFrame = false;
+    solverIn.touch.debug.palmBoxes.push_back(palmBox);
+
+    Ipc::SharedFrameData shared{};
+    Ipc::PopulateSharedFrameDataFromSolverFrame(shared, solverIn);
+    Require(shared.zoneBoxCount == 1, "solver zone box count copies to shared frame");
+    Require(shared.palmBoxCount == 1, "solver palm box count copies to shared frame");
+
+    Solvers::HeatmapFrame solverOut{};
+    Ipc::PopulateSolverFrameFromSharedFrameData(solverOut, shared);
+    Require(solverOut.touch.debug.zoneBoxes.size() == 1, "shared zone box count copies back to solver frame");
+    Require(solverOut.touch.debug.zoneBoxes[0].bbox.minR == 2 && solverOut.touch.debug.zoneBoxes[0].bbox.maxR == 6 &&
+            solverOut.touch.debug.zoneBoxes[0].bbox.minC == 8 && solverOut.touch.debug.zoneBoxes[0].bbox.maxC == 12,
+            "solver zone box bbox round-trips through shared conversion");
+    Require(solverOut.touch.debug.palmBoxes.size() == 1, "shared palm box count copies back to solver frame");
+    Require(solverOut.touch.debug.palmBoxes[0].id == 11, "solver palm box id round-trips through shared conversion");
+    Require(solverOut.touch.debug.palmBoxes[0].expandedBbox.minR == 9 &&
+            solverOut.touch.debug.palmBoxes[0].expandedBbox.maxR == 17 &&
+            solverOut.touch.debug.palmBoxes[0].expandedBbox.minC == 19 &&
+            solverOut.touch.debug.palmBoxes[0].expandedBbox.maxC == 27,
+            "solver palm box expanded bbox round-trips through shared conversion");
+    Require(!solverOut.touch.debug.palmBoxes[0].matchedPalmThisFrame,
+            "solver palm box matched state round-trips through shared conversion");
+}
+
 } // namespace
 
 int main() {
     using namespace Ipc;
+
+    VerifySolverDebugBoxesRoundTrip();
 
     SharedFrameWriter writer;
     if (!writer.Create(L"Global\\EGoTouchIpccoreSharedFrameBufferTest")) {
@@ -93,6 +142,22 @@ int main() {
     first.contacts[0].id = 42;
     first.contacts[0].x = 123.5f;
     first.contacts[0].y = 456.25f;
+    first.zoneBoxCount = 1;
+    first.zoneBoxes[0].zoneId = 3;
+    first.zoneBoxes[0].zoneIndex = 2;
+    first.zoneBoxes[0].bbox = {4, 8, 10, 15};
+    first.zoneBoxes[0].area = 12;
+    first.zoneBoxes[0].signalSum = 3456;
+    first.palmBoxCount = 1;
+    first.palmBoxes[0].id = 7;
+    first.palmBoxes[0].bbox = {5, 9, 11, 16};
+    first.palmBoxes[0].expandedBbox = {4, 10, 10, 17};
+    first.palmBoxes[0].age = 3;
+    first.palmBoxes[0].missed = 1;
+    first.palmBoxes[0].lastMatchedZoneIndex = -1;
+    first.palmBoxes[0].anchorPeakCount = 2;
+    first.palmBoxes[0].signalSum = 7890;
+    first.palmBoxes[0].matchedPalmThisFrame = 1;
     first.stylusRawGrid.tx1.valid = true;
     first.stylusRawGrid.tx1.anchorRow = 2;
     first.stylusRawGrid.tx1.anchorCol = 3;
@@ -122,6 +187,26 @@ int main() {
     Require(out.contactCount == 1, "contact count round-trips");
     Require(out.contacts[0].id == 42, "contact id round-trips");
     Require(out.contacts[0].x == 123.5f && out.contacts[0].y == 456.25f, "contact coordinates round-trip");
+    Require(out.zoneBoxCount == 1, "zone box count round-trips");
+    Require(out.zoneBoxes[0].zoneId == 3 && out.zoneBoxes[0].zoneIndex == 2,
+            "zone box identity round-trips");
+    Require(out.zoneBoxes[0].bbox.minR == 4 && out.zoneBoxes[0].bbox.maxR == 8 &&
+            out.zoneBoxes[0].bbox.minC == 10 && out.zoneBoxes[0].bbox.maxC == 15,
+            "zone box bbox round-trips");
+    Require(out.zoneBoxes[0].area == 12 && out.zoneBoxes[0].signalSum == 3456,
+            "zone box metrics round-trip");
+    Require(out.palmBoxCount == 1, "palm box count round-trips");
+    Require(out.palmBoxes[0].id == 7, "palm box id round-trips");
+    Require(out.palmBoxes[0].bbox.minR == 5 && out.palmBoxes[0].bbox.maxR == 9 &&
+            out.palmBoxes[0].bbox.minC == 11 && out.palmBoxes[0].bbox.maxC == 16,
+            "palm box bbox round-trips");
+    Require(out.palmBoxes[0].expandedBbox.minR == 4 && out.palmBoxes[0].expandedBbox.maxR == 10 &&
+            out.palmBoxes[0].expandedBbox.minC == 10 && out.palmBoxes[0].expandedBbox.maxC == 17,
+            "palm box expanded bbox round-trips");
+    Require(out.palmBoxes[0].age == 3 && out.palmBoxes[0].missed == 1 &&
+            out.palmBoxes[0].lastMatchedZoneIndex == -1 && out.palmBoxes[0].anchorPeakCount == 2 &&
+            out.palmBoxes[0].signalSum == 7890 && out.palmBoxes[0].matchedPalmThisFrame == 1,
+            "palm box tracking fields round-trip");
     Require(out.stylusRawGrid.tx1.valid && out.stylusRawGrid.tx1.anchorRow == 2 &&
             out.stylusRawGrid.tx1.anchorCol == 3 && out.stylusRawGrid.tx1.grid[2][3] == 1234,
             "stylus TX1 raw grid round-trips");

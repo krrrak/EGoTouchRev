@@ -45,6 +45,7 @@ struct PeakUnit {
     int candidateCoor = 0;
     int age = 0;
     int noiseProp = 0;
+    bool avgHighAbnormal = false;
     uint16_t rankScore = 0;
     bool onEdge = false;
     bool valid = false;

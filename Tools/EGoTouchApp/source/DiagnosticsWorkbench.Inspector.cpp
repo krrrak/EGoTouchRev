@@ -126,6 +126,24 @@ ConfigUIRenderer::ConfigPathStateProvider MakeConfigPathStateProvider(ServicePro
     };
 }
 
+bool DrawConfigSyncGate(ServiceProxy* proxy) {
+    if (proxy == nullptr || proxy->IsConfigAdjustmentAllowed()) {
+        return true;
+    }
+
+    ImGui::TextColored(WarnColor(), "Config is not synchronized from Service; parameter adjustment is disabled.");
+    const std::string message = proxy->GetConfigServiceSyncStatusMessage();
+    if (!message.empty()) {
+        ImGui::TextWrapped("%s", message.c_str());
+    }
+    if (proxy->IsConnected()) {
+        if (ImGui::Button("Retry Config Sync")) {
+            proxy->SynchronizeConfigFromServiceForEditing();
+        }
+    }
+    return false;
+}
+
 const char* YesNo(bool value) {
     return value ? "Y" : "N";
 }
@@ -399,6 +417,7 @@ void DiagnosticsWorkbench::DrawTouchPipelineConfigPanel() {
     if (masterParserOnly) {
         ImGui::TextColored(WarnColor(), "Master Parser Only is enabled. Pipeline configuration controls are disabled.");
     }
+    const bool configAdjustmentAllowed = DrawConfigSyncGate(m_proxy);
     ImGui::Separator();
 
     const float availableWidth = ImGui::GetContentRegionAvail().x;
@@ -424,7 +443,7 @@ void DiagnosticsWorkbench::DrawTouchPipelineConfigPanel() {
         ImGui::TextColored(InfoColor(), "%s", activeModule.c_str());
         ImGui::Separator();
 
-        if (masterParserOnly) {
+        if (masterParserOnly || !configAdjustmentAllowed) {
             ImGui::BeginDisabled();
         }
         std::vector<std::string> changedPaths;
@@ -436,12 +455,18 @@ void DiagnosticsWorkbench::DrawTouchPipelineConfigPanel() {
             &changedPaths,
             MakeConfigPathStateProvider(m_proxy));
         m_proxy->CommitConfigDraftEdits(changedPaths);
-        if (masterParserOnly) {
+        if (masterParserOnly || !configAdjustmentAllowed) {
             ImGui::EndDisabled();
         }
 
+        if (!configAdjustmentAllowed) {
+            ImGui::BeginDisabled();
+        }
         if (ImGui::Button("Apply Global")) {
             m_proxy->ApplyConfigStoreGlobally();
+        }
+        if (!configAdjustmentAllowed) {
+            ImGui::EndDisabled();
         }
         ImGui::SameLine();
         ImGui::TextDisabled("Live-applies supported keys to the current Service session only; persistent config files are disabled.");
@@ -709,10 +734,14 @@ void DiagnosticsWorkbench::DrawStylusServicePolicyPanel() {
     }
 
     ImGui::TextColored(InfoColor(), "Service Policy");
+    const bool configAdjustmentAllowed = DrawConfigSyncGate(m_proxy);
 #ifdef _DEBUG
     const char* modeItems[] = {"OEM Custom", "Native Barrel", "Native Eraser"};
     const char* routeItems[] = {"VHF Only", "Win32 Only", "VHF + Win32"};
 
+    if (!configAdjustmentAllowed) {
+        ImGui::BeginDisabled();
+    }
     ImGui::TextUnformatted("Windows INK Output (VHF)");
     bool vhfStylus = m_proxy->IsSrvStylusVhfEnabled();
     if (ImGui::Checkbox("Enable Stylus Native Output", &vhfStylus)) {
@@ -738,6 +767,9 @@ void DiagnosticsWorkbench::DrawStylusServicePolicyPanel() {
     ImGui::SameLine();
     ImGui::TextDisabled("Live-applies supported keys to the current Service session only; persistent config files are disabled.");
     DrawApplyConfigResultStatus();
+    if (!configAdjustmentAllowed) {
+        ImGui::EndDisabled();
+    }
 #else
     ImGui::TextWrapped("Release builds show the live Service policy snapshot without mutating Service configuration.");
     ImGui::TextDisabled("Stylus Native Output: %s", m_proxy->IsSrvStylusVhfEnabled() ? "Enabled" : "Disabled");
@@ -768,6 +800,7 @@ void DiagnosticsWorkbench::DrawStylusPipelineConfigPanel() {
     if (masterParserOnly) {
         ImGui::TextColored(WarnColor(), "Master Parser Only is enabled. Parameter editing is disabled; module selection and status remain readable.");
     }
+    const bool configAdjustmentAllowed = DrawConfigSyncGate(m_proxy);
     ImGui::Separator();
 
     const float availableWidth = ImGui::GetContentRegionAvail().x;
@@ -793,7 +826,7 @@ void DiagnosticsWorkbench::DrawStylusPipelineConfigPanel() {
         ImGui::TextColored(InfoColor(), "%s", activeModule.c_str());
         ImGui::Separator();
 
-        if (masterParserOnly) {
+        if (masterParserOnly || !configAdjustmentAllowed) {
             ImGui::BeginDisabled();
         }
         std::vector<std::string> changedPaths;
@@ -805,12 +838,18 @@ void DiagnosticsWorkbench::DrawStylusPipelineConfigPanel() {
             &changedPaths,
             MakeConfigPathStateProvider(m_proxy));
         m_proxy->CommitConfigDraftEdits(changedPaths);
-        if (masterParserOnly) {
+        if (masterParserOnly || !configAdjustmentAllowed) {
             ImGui::EndDisabled();
         }
 
+        if (!configAdjustmentAllowed) {
+            ImGui::BeginDisabled();
+        }
         if (ImGui::Button("Apply Global##StylusPipelineConfig")) {
             m_proxy->ApplyConfigStoreGlobally();
+        }
+        if (!configAdjustmentAllowed) {
+            ImGui::EndDisabled();
         }
         ImGui::SameLine();
         ImGui::TextDisabled("Live-applies supported keys to the current Service session only; persistent config files are disabled.");

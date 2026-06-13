@@ -46,6 +46,13 @@ enum class ApplyConfigStatus : uint8_t {
     RestartRequired,
 };
 
+enum class ConfigServiceSyncState : uint8_t {
+    OfflineFallback = 0,
+    Syncing,
+    Ready,
+    Failed,
+};
+
 struct ApplyConfigResult {
     ApplyConfigStatus status = ApplyConfigStatus::NotAttempted;
     bool liveApplied = false;
@@ -151,6 +158,10 @@ public:
     // Config sync
     // Connected mode uses v3 catalog/snapshot for reads and v3 patch/persist for apply/save.
     // App-local binder/YAML state is preserved only for offline/local fallback and v3 fetch failures.
+    bool SynchronizeConfigFromServiceForEditing();
+    bool IsConfigAdjustmentAllowed() const;
+    ConfigServiceSyncState GetConfigServiceSyncState() const { return m_configServiceSyncState.load(std::memory_order_relaxed); }
+    std::string GetConfigServiceSyncStatusMessage() const;
     void SaveConfig();
     bool ApplyConfigStoreGlobally();
     ApplyConfigResult GetLastApplyConfigResult() const;
@@ -158,7 +169,7 @@ public:
     void MarkConfigPathsDirty(const std::vector<std::string>& paths);
     void RefreshConfigSnapshot();
     bool ApplyConfigV3CatalogBytesForTest(const uint8_t* data, size_t size);
-    bool ApplyConfigV3SnapshotBytesForTest(const uint8_t* data, size_t size);
+    bool ApplyConfigV3SnapshotBytesForTest(const uint8_t* data, size_t size, bool overwriteDirtyDraft = false);
     ConfigV3BaselineVersions GetConfigV3BaselineVersionsForTest() const;
 #if defined(EGOTOUCH_APP_SERVICE_PROXY_TEST)
     void SetConfigV3IpcTestResponses(bool connected,
@@ -247,11 +258,12 @@ private:
     void ClearDynamicDebugState();
     DvrRuntimeConfigSnapshot CaptureRuntimeConfigSnapshot() const;
     void InitConfigSchema();
+    void SetConfigServiceSyncState(ConfigServiceSyncState state, std::string message);
     bool RefreshConfigCatalogV3();
-    bool RefreshConfigSnapshotV3();
+    bool RefreshConfigSnapshotV3(bool overwriteDirtyDraft = false);
     std::optional<std::vector<uint8_t>> FetchConfigV3Bytes(Ipc::ConfigV3PayloadKind payloadKind);
     bool ApplyConfigV3CatalogBytes(const uint8_t* data, size_t size);
-    bool ApplyConfigV3SnapshotBytes(const uint8_t* data, size_t size);
+    bool ApplyConfigV3SnapshotBytes(const uint8_t* data, size_t size, bool overwriteDirtyDraft = false);
     bool IsConfigIpcConnectedForApply() const;
     Ipc::IpcResponse SendApplyConfigPatchV3Request(const Ipc::ApplyConfigPatchV3RequestWire& request);
     Ipc::IpcResponse SendPersistConfigV3Request();
@@ -279,6 +291,9 @@ private:
     };
     ConfigDraft m_configDraft;
     bool m_configV3CatalogReady = false;
+    std::atomic<ConfigServiceSyncState> m_configServiceSyncState{ConfigServiceSyncState::OfflineFallback};
+    mutable std::mutex m_configServiceSyncMessageMutex;
+    std::string m_configServiceSyncStatusMessage{"Service config has not been synchronized."};
     std::atomic<ApplyConfigStatus> m_lastApplyConfigStatus{ApplyConfigStatus::NotAttempted};
     std::atomic<bool> m_lastApplyConfigLiveApplied{false};
     std::atomic<bool> m_lastApplyConfigRestartRequired{false};

@@ -1,7 +1,9 @@
 #include "StylusSolver/StylusPipeline.h"
 #include "StylusSolver/hpp2/Hpp2ChargerNoiseProcess.hpp"
 #include "StylusSolver/hpp2/Hpp2CmfProcess.hpp"
+#include "StylusSolver/hpp2/Hpp2DataQualityProcess.hpp"
 #include "StylusSolver/hpp2/Hpp2LinePeakExtractor.hpp"
+#include "StylusSolver/hpp2/Hpp2PeakSelector.hpp"
 
 #include <array>
 #include <cstdint>
@@ -419,6 +421,7 @@ void PrepareChargerNoiseInput(Solvers::Stylus::Hpp2::Runtime& runtime,
     runtime.line.raw.fill(10);
     runtime.line.cmnSubtracted.fill(0);
     runtime.line.raw[static_cast<std::size_t>(noisyIndex)] = 1000;
+    runtime.line.cmnSubtracted[static_cast<std::size_t>(noisyIndex)] = 1000;
     state.m_rawHistory[freqIdx][0].fill(10);
 }
 
@@ -476,6 +479,38 @@ void TestHpp2ChargerNoisePreviousBoundaryIsFrequencyLocal() {
             "F1 previous boundary should not protect an F2 charger-noise frame");
 }
 
+void TestHpp2ChargerNoiseInvalidIndexKeepsRatioZero() {
+    HeatmapFrame frame{};
+    Solvers::Stylus::Hpp2::Runtime runtime{};
+    Solvers::Stylus::Hpp2::State state{};
+    auto settings = MakeChargerNoiseSettings();
+    state.m_curFreqIdx = 0;
+    state.m_f1FrameCnt = 2;
+    state.m_prevPeakBoundaryDim1ByFreq[0] = Solvers::Stylus::Hpp2::PeakBoundary{1, 3, true};
+    PrepareChargerNoiseInput(runtime, state, 0, 4);
+
+    Solvers::Stylus::Hpp2::Context ctx{frame, runtime, settings, state};
+    Solvers::Stylus::Hpp2::Hpp2ChargerNoiseProcess{}.Process(ctx);
+
+    Require(runtime.line.chargerNoiseRatio[4] == 0,
+            "TSACore leaves charger-noise ratio zero for protected peak-boundary indexes");
+}
+
+void TestHpp2DataQualityDoesNotLatchChargerNoiseFlag() {
+    HeatmapFrame frame{};
+    Solvers::Stylus::Hpp2::Runtime runtime{};
+    Solvers::Stylus::Hpp2::State state{};
+    Solvers::Stylus::Hpp2::Settings settings{};
+    state.m_curFreqIdx = 0;
+    state.m_noiseFlag[0] = 1;
+
+    Solvers::Stylus::Hpp2::Context ctx{frame, runtime, settings, state};
+    Solvers::Stylus::Hpp2::Hpp2DataQualityProcess{}.UpdateFrequencyLatch(ctx);
+
+    Require(!state.m_freqNoiseLatchF1,
+            "ChargerNoiseJudge history flag should not directly become a frequency bypass latch");
+}
+
 Solvers::Stylus::Hpp2::Settings MakePeakExtractorSettings() {
     Solvers::Stylus::Hpp2::Settings settings{};
     settings.sensorTxCount = 5;
@@ -522,6 +557,56 @@ void TestHpp2PeakExtractorUsesIndependentNetThreshold() {
             "UpdatePeakPrpt should compute peak signal from search-profile peak minus region minimum");
 }
 
+Solvers::Stylus::Hpp2::PeakUnit MakeSelectedPeakUnit(int noiseProp, bool avgHighAbnormal) {
+    Solvers::Stylus::Hpp2::PeakUnit unit{};
+    unit.valid = true;
+    unit.index = 2;
+    unit.leftBoundary = 1;
+    unit.rightBoundary = 3;
+    unit.peakSignal = 600;
+    unit.netSignal = 800;
+    unit.candidateCoor = 0x400;
+    unit.noiseProp = noiseProp;
+    unit.avgHighAbnormal = avgHighAbnormal;
+    return unit;
+}
+
+void TestHpp2PeakSelectorIgnoresNonAvgHighNoiseFlagsForBypass() {
+    HeatmapFrame frame{};
+    Solvers::Stylus::Hpp2::Runtime runtime{};
+    Solvers::Stylus::Hpp2::State state{};
+    auto settings = MakePeakExtractorSettings();
+    runtime.mainFreq = Solvers::Stylus::Hpp2::kFreqF1;
+    state.m_peakCountDim1 = 1;
+    state.m_peakTableDim1[0] = MakeSelectedPeakUnit(0x02, false);
+
+    Solvers::Stylus::Hpp2::Context ctx{frame, runtime, settings, state};
+    Solvers::Stylus::Hpp2::Hpp2PeakSelector{}.Process(ctx);
+
+    Require(!runtime.bypassCurFrame,
+            "selected non-avg-high noise flag should not bypass the current frame");
+    Require(runtime.selectedPeakDim1 == 2,
+            "selected peak should still be published when avg-high abnormal is clear");
+}
+
+void TestHpp2PeakSelectorBypassesAvgHighSelectedPeak() {
+    HeatmapFrame frame{};
+    Solvers::Stylus::Hpp2::Runtime runtime{};
+    Solvers::Stylus::Hpp2::State state{};
+    auto settings = MakePeakExtractorSettings();
+    runtime.mainFreq = Solvers::Stylus::Hpp2::kFreqF1;
+    state.m_peakCountDim1 = 1;
+    state.m_peakTableDim1[0] = MakeSelectedPeakUnit(0x01, true);
+
+    Solvers::Stylus::Hpp2::Context ctx{frame, runtime, settings, state};
+    Solvers::Stylus::Hpp2::Hpp2PeakSelector{}.Process(ctx);
+
+    Require(runtime.bypassCurFrame,
+            "selected avg-high abnormal flag should bypass the current frame");
+    Require(state.m_bypassCounter == 1,
+            "avg-high selected bypass should increment the bypass counter");
+}
+
 } // namespace
 
 int main() {
@@ -547,7 +632,11 @@ int main() {
         TestHpp2ChargerNoiseProtectsPreviousBoundary();
         TestHpp2ChargerNoiseLeavesOutsideBoundaryCandidate();
         TestHpp2ChargerNoisePreviousBoundaryIsFrequencyLocal();
+        TestHpp2ChargerNoiseInvalidIndexKeepsRatioZero();
+        TestHpp2DataQualityDoesNotLatchChargerNoiseFlag();
         TestHpp2PeakExtractorUsesIndependentNetThreshold();
+        TestHpp2PeakSelectorIgnoresNonAvgHighNoiseFlagsForBypass();
+        TestHpp2PeakSelectorBypassesAvgHighSelectedPeak();
     } catch (const std::exception& ex) {
         std::cerr << "[FAIL] StylusHpp2PipelineTest: " << ex.what() << "\n";
         return 1;

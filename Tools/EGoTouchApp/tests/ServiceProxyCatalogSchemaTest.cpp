@@ -382,7 +382,10 @@ void TestOfflineLiveApplyRequiresServiceConnection() {
     App::ServiceProxy proxy;
     proxy.SetConfigDraftValue("service.auto_mode", false);
 
-    Require(!proxy.ApplyConfigStoreGlobally(), "offline live-applicable change should require Service connection");
+    Require(!proxy.IsConfigAdjustmentAllowed(), "offline config adjustment should be disabled");
+    Require(proxy.GetConfigDraftStore().getOr<bool>("service.auto_mode", false),
+            "offline SetConfigDraftValue should not overwrite fallback draft");
+    Require(!proxy.ApplyConfigStoreGlobally(), "offline live-applicable change should require Service config sync");
     const auto result = proxy.GetLastApplyConfigResult();
     Require(result.status == App::ApplyConfigStatus::LiveApplyFailed, "offline live-applicable change should report LiveApplyFailed");
     Require(!result.liveApplied, "offline live-applicable change should not set liveApplied");
@@ -390,25 +393,28 @@ void TestOfflineLiveApplyRequiresServiceConnection() {
     Require(!result.persistAttempted && !result.persisted, "offline path should not call Service persist");
     RequireDraftState(proxy,
                       "service.auto_mode",
-                      App::ConfigDraftApplyState::Pending,
+                      App::ConfigDraftApplyState::Clean,
                       App::ConfigDraftPersistState::NotAttempted,
-                      true);
+                      false);
 }
 
 void TestOfflineRestartRequiredChangeRequiresServiceConnection() {
     App::ServiceProxy proxy;
     proxy.SetConfigDraftValue("service.mode", std::string("touch_only"));
 
-    Require(!proxy.ApplyConfigStoreGlobally(), "offline restart-required change should require Service connection");
+    Require(!proxy.IsConfigAdjustmentAllowed(), "offline config adjustment should be disabled");
+    Require(proxy.GetConfigDraftStore().getOr<std::string>("service.mode", "") == "full",
+            "offline SetConfigDraftValue should not overwrite fallback service.mode");
+    Require(!proxy.ApplyConfigStoreGlobally(), "offline restart-required change should require Service config sync");
     const auto result = proxy.GetLastApplyConfigResult();
     Require(result.status == App::ApplyConfigStatus::LiveApplyFailed, "offline restart-required change should report LiveApplyFailed");
     Require(!result.liveApplied, "restart-required-only change should not report liveApplied");
     Require(!result.restartRequired, "offline restart-required change should not be staged locally");
     RequireDraftState(proxy,
                       "service.mode",
-                      App::ConfigDraftApplyState::Pending,
+                      App::ConfigDraftApplyState::Clean,
                       App::ConfigDraftPersistState::NotAttempted,
-                      true);
+                      false);
 }
 
 void TestCatalogNotReadyBlocksSnapshotApplyAndConnectedPatch() {
@@ -422,6 +428,7 @@ void TestCatalogNotReadyBlocksSnapshotApplyAndConnectedPatch() {
         MakePersistConfigV3Response(1, 0),
         MakeSnapshotBytes(10, 55));
 
+    Require(!proxy.IsConfigAdjustmentAllowed(), "catalog-not-ready path should keep config adjustment disabled");
     Require(!proxy.ApplyConfigStoreGlobally(), "connected apply should fail while catalog is not ready");
     Require(proxy.GetConfigV3ApplyRequestCountForTest() == 0,
             "catalog-not-ready path should not send a v3 patch even when snapshot bytes are available");
@@ -437,9 +444,9 @@ void TestCatalogNotReadyBlocksSnapshotApplyAndConnectedPatch() {
             "catalog-not-ready connected apply should report LiveApplyFailed");
     RequireDraftState(proxy,
                       "service.auto_mode",
-                      App::ConfigDraftApplyState::Pending,
+                      App::ConfigDraftApplyState::Clean,
                       App::ConfigDraftPersistState::NotAttempted,
-                      true);
+                      false);
 }
 
 void TestCatalogFailureAfterBaselineBlocksPatchPersist() {
@@ -478,12 +485,13 @@ void TestCatalogFailureAfterBaselineBlocksPatchPersist() {
                       true);
 }
 
-void TestConnectedV3SnapshotFetchFailurePreservesDirtyDraft() {
+void TestConnectedV3SnapshotFetchFailureBlocksEditingBeforeDirtyDraft() {
     App::ServiceProxy proxy;
     ApplyCatalog(proxy);
     proxy.SetConfigDraftValue("service.auto_mode", false);
     proxy.SetConfigV3IpcTestResponses(true, Ipc::IpcResponse{}, Ipc::IpcResponse{});
 
+    Require(!proxy.IsConfigAdjustmentAllowed(), "snapshot-missing config adjustment should stay disabled");
     Require(!proxy.ApplyConfigStoreGlobally(), "connected apply without v3 snapshot baseline should fail fast");
     Require(proxy.GetConfigV3ApplyRequestCountForTest() == 0,
             "connected baseline failure should not send a v3 patch with unknown base version");
@@ -495,9 +503,9 @@ void TestConnectedV3SnapshotFetchFailurePreservesDirtyDraft() {
     Require(!result.liveApplied && !result.restartRequired,
             "connected v3 snapshot fetch failure should not report applied state");
     const auto state = proxy.GetConfigDraftPathState("service.auto_mode");
-    Require(state.dirty, "connected v3 snapshot fetch failure should preserve dirty draft");
-    Require(state.applyState == App::ConfigDraftApplyState::Pending,
-            "connected v3 snapshot fetch failure should keep pending draft state");
+    Require(!state.dirty, "snapshot-missing SetConfigDraftValue should not create dirty draft");
+    Require(state.applyState == App::ConfigDraftApplyState::Clean,
+            "snapshot-missing draft state should remain clean");
     Require(state.persistState == App::ConfigDraftPersistState::NotAttempted,
             "connected v3 snapshot fetch failure should not mark persist attempted");
 }
@@ -529,6 +537,12 @@ void TestV3SnapshotPayloadWritesConfigStore() {
 void TestV3SnapshotPreservesDirtyPath() {
     App::ServiceProxy proxy;
     ApplyCatalog(proxy);
+    Config::ConfigV3SnapshotPayload baseline{};
+    baseline.schemaVersion = 10;
+    baseline.snapshotVersion = 20;
+    baseline.entries.push_back({Config::ConfigKeyId::SvcMode, std::string("touch_only")});
+    const auto baselineBytes = Config::serializeConfigV3Snapshot(baseline);
+    Require(proxy.ApplyConfigV3SnapshotBytesForTest(baselineBytes.data(), baselineBytes.size()), "baseline v3 snapshot should apply");
     proxy.SetConfigDraftValue("service.mode", std::string("full"));
 
     Config::ConfigV3SnapshotPayload snapshot{};
@@ -547,6 +561,31 @@ void TestV3SnapshotPreservesDirtyPath() {
     const auto state = proxy.GetConfigDraftPathState("service.mode");
     Require(state.dirty, "dirty draft should remain dirty after snapshot refresh");
     Require(state.hasServiceSnapshot, "dirty draft state should record service snapshot availability");
+}
+
+void TestV3SnapshotOverwriteClearsDirtyDraft() {
+    App::ServiceProxy proxy;
+    ApplyCatalog(proxy);
+    Config::ConfigV3SnapshotPayload baseline{};
+    baseline.schemaVersion = 10;
+    baseline.snapshotVersion = 25;
+    baseline.entries.push_back({Config::ConfigKeyId::SvcMode, std::string("touch_only")});
+    const auto baselineBytes = Config::serializeConfigV3Snapshot(baseline);
+    Require(proxy.ApplyConfigV3SnapshotBytesForTest(baselineBytes.data(), baselineBytes.size()), "baseline v3 snapshot should apply");
+    proxy.SetConfigDraftValue("service.mode", std::string("full"));
+    Require(proxy.GetConfigDraftPathState("service.mode").dirty, "service.mode should be dirty before forced sync");
+
+    Config::ConfigV3SnapshotPayload syncSnapshot{};
+    syncSnapshot.schemaVersion = 10;
+    syncSnapshot.snapshotVersion = 26;
+    syncSnapshot.entries.push_back({Config::ConfigKeyId::SvcMode, std::string("touch_only")});
+    const auto syncBytes = Config::serializeConfigV3Snapshot(syncSnapshot);
+    Require(proxy.ApplyConfigV3SnapshotBytesForTest(syncBytes.data(), syncBytes.size(), true), "forced v3 snapshot should apply");
+    Require(proxy.GetConfigDraftStore().getOr<std::string>("service.mode", "") == "touch_only",
+            "forced v3 snapshot should overwrite dirty draft with Service value");
+    Require(!proxy.GetConfigDraftPathState("service.mode").dirty,
+            "forced v3 snapshot should clear dirty state");
+    Require(!proxy.IsSrvModeFull(), "forced v3 snapshot should sync desired mode mirror from Service value");
 }
 
 void TestV3SnapshotSkipsUnknownKeyId() {
@@ -619,9 +658,10 @@ int main() {
         TestOfflineRestartRequiredChangeRequiresServiceConnection();
         TestCatalogNotReadyBlocksSnapshotApplyAndConnectedPatch();
         TestCatalogFailureAfterBaselineBlocksPatchPersist();
-        TestConnectedV3SnapshotFetchFailurePreservesDirtyDraft();
+        TestConnectedV3SnapshotFetchFailureBlocksEditingBeforeDirtyDraft();
         TestV3SnapshotPayloadWritesConfigStore();
         TestV3SnapshotPreservesDirtyPath();
+        TestV3SnapshotOverwriteClearsDirtyDraft();
         TestV3SnapshotSkipsUnknownKeyId();
         TestV3SnapshotSkipsUnmappedNumericEnum();
         TestInvalidV3PayloadDoesNotClearSchemaOrStore();

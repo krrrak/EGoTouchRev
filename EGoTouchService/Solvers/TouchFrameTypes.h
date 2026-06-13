@@ -156,6 +156,8 @@ private:
 };
 
 inline constexpr size_t kMaxTouchContacts = 20;
+inline constexpr size_t kMaxTouchZoneBoxes = 20;
+inline constexpr size_t kMaxPalmDebugBoxes = 20;
 
 struct TouchPacket {
     bool valid = false;
@@ -182,6 +184,36 @@ struct MacroZone {
     int maxC = 0;
 };
 
+#if EGOTOUCH_DIAG
+struct TouchDebugRect {
+    int minR = 39;
+    int maxR = 0;
+    int minC = 59;
+    int maxC = 0;
+};
+
+struct TouchZoneDebugBox {
+    uint8_t zoneId = 0;
+    uint8_t zoneIndex = 0;
+    uint16_t reserved = 0;
+    TouchDebugRect bbox{};
+    int area = 0;
+    int signalSum = 0;
+};
+
+struct TouchPalmDebugBox {
+    int id = 0;
+    TouchDebugRect bbox{};
+    TouchDebugRect expandedBbox{};
+    int age = 0;
+    int missed = 0;
+    int lastMatchedZoneIndex = -1;
+    int anchorPeakCount = 0;
+    int signalSum = 0;
+    bool matchedPalmThisFrame = false;
+};
+#endif
+
 struct TouchOutputState {
     FixedVector<TouchContact, kMaxTouchContacts> contacts;
     std::array<TouchPacket, 2> touchPackets{};
@@ -192,6 +224,8 @@ struct TouchDebugFrame {
     std::vector<TouchPeak> peaks;
     std::array<uint8_t, 2400> touchZones{};
     std::array<uint8_t, 2400> peakZones{};
+    FixedVector<TouchZoneDebugBox, kMaxTouchZoneBoxes> zoneBoxes;
+    FixedVector<TouchPalmDebugBox, kMaxPalmDebugBoxes> palmBoxes;
 };
 #endif
 

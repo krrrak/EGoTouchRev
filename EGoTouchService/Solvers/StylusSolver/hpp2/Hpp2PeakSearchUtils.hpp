@@ -157,8 +157,10 @@ struct Hpp2PeakSearchUtils {
         static constexpr int kAvgMediumFlag = 0x04;     // TSACore candidate +0x1a.
         static constexpr int kCompositeFlag = 0x08;     // TSACore candidate +0x02.
         unit.noiseProp = 0;
+        unit.avgHighAbnormal = false;
         if (unit.avgBaseline > 300) {
             unit.noiseProp |= kAvgHighFlag;
+            unit.avgHighAbnormal = true;
         }
         if (unit.avgBaseline > 200) {
             unit.noiseProp |= kAvgMediumFlag;

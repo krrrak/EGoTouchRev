@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include "FrameLayout.h"
+#include "SolverBuildConfig.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -22,8 +23,9 @@ constexpr const wchar_t* kSharedFrameName = L"Global\\EGoTouchSharedFrame";
 constexpr const wchar_t* kFrameReadyEventName = L"Global\\EGoTouchFrameReady";
 
 // Stable shared-memory ABI contract for Phase 0.
-constexpr uint32_t kSharedFrameAbiVersion = 5;
-constexpr uint32_t kSharedFrameAbiCapabilities = 0;
+constexpr uint32_t kSharedFrameAbiVersion = 6;
+constexpr uint32_t kSharedFrameAbiCapabilityTouchBoxes = 1u << 0;
+constexpr uint32_t kSharedFrameAbiCapabilities = kSharedFrameAbiCapabilityTouchBoxes;
 constexpr uint32_t kSharedFrameAbiReserved = 0;
 
 struct SharedFrameAbiHeader {
@@ -62,6 +64,38 @@ struct SharedTouchPacket {
     uint8_t reportId = 0x01;
     uint8_t length   = 0x20;
     uint8_t bytes[32]{};
+};
+
+constexpr int kMaxSharedTouchZoneBoxes = 20;
+constexpr int kMaxSharedPalmBoxes = 20;
+
+struct SharedTouchRect {
+    int16_t minR = 39;
+    int16_t maxR = 0;
+    int16_t minC = 59;
+    int16_t maxC = 0;
+};
+
+struct SharedTouchZoneBox {
+    uint8_t zoneId = 0;
+    uint8_t zoneIndex = 0;
+    uint16_t reserved = 0;
+    SharedTouchRect bbox{};
+    int32_t area = 0;
+    int32_t signalSum = 0;
+};
+
+struct SharedPalmBox {
+    int32_t id = 0;
+    SharedTouchRect bbox{};
+    SharedTouchRect expandedBbox{};
+    int32_t age = 0;
+    int32_t missed = 0;
+    int32_t lastMatchedZoneIndex = -1;
+    int32_t anchorPeakCount = 0;
+    int32_t signalSum = 0;
+    uint8_t matchedPalmThisFrame = 0;
+    uint8_t reserved[3]{};
 };
 
 // Flat stylus solve point
@@ -266,6 +300,11 @@ struct SharedFrameData {
     bool     masterSuffixValid = false;
     bool     slaveSuffixValid  = false;
     bool     masterWasRead = true;
+
+    uint8_t zoneBoxCount = 0;
+    SharedTouchZoneBox zoneBoxes[kMaxSharedTouchZoneBoxes]{};
+    uint8_t palmBoxCount = 0;
+    SharedPalmBox palmBoxes[kMaxSharedPalmBoxes]{};
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -381,6 +420,38 @@ inline void PopulateSharedFrameDataFromSolverFrame(SharedFrameData& dst,
         dst.peaks[i].c = src.touch.debug.peaks[i].c;
         dst.peaks[i].z = src.touch.debug.peaks[i].z;
         dst.peaks[i].id = src.touch.debug.peaks[i].id;
+    }
+
+    const int zoneBoxCount = std::min(static_cast<int>(src.touch.debug.zoneBoxes.size()), kMaxSharedTouchZoneBoxes);
+    dst.zoneBoxCount = static_cast<uint8_t>(zoneBoxCount);
+    for (int i = 0; i < zoneBoxCount; ++i) {
+        const auto& srcBox = src.touch.debug.zoneBoxes[static_cast<size_t>(i)];
+        auto& dstBox = dst.zoneBoxes[i];
+        dstBox.zoneId = srcBox.zoneId;
+        dstBox.zoneIndex = srcBox.zoneIndex;
+        dstBox.reserved = srcBox.reserved;
+        dstBox.bbox = {static_cast<int16_t>(srcBox.bbox.minR), static_cast<int16_t>(srcBox.bbox.maxR),
+                       static_cast<int16_t>(srcBox.bbox.minC), static_cast<int16_t>(srcBox.bbox.maxC)};
+        dstBox.area = srcBox.area;
+        dstBox.signalSum = srcBox.signalSum;
+    }
+
+    const int palmBoxCount = std::min(static_cast<int>(src.touch.debug.palmBoxes.size()), kMaxSharedPalmBoxes);
+    dst.palmBoxCount = static_cast<uint8_t>(palmBoxCount);
+    for (int i = 0; i < palmBoxCount; ++i) {
+        const auto& srcBox = src.touch.debug.palmBoxes[static_cast<size_t>(i)];
+        auto& dstBox = dst.palmBoxes[i];
+        dstBox.id = srcBox.id;
+        dstBox.bbox = {static_cast<int16_t>(srcBox.bbox.minR), static_cast<int16_t>(srcBox.bbox.maxR),
+                       static_cast<int16_t>(srcBox.bbox.minC), static_cast<int16_t>(srcBox.bbox.maxC)};
+        dstBox.expandedBbox = {static_cast<int16_t>(srcBox.expandedBbox.minR), static_cast<int16_t>(srcBox.expandedBbox.maxR),
+                               static_cast<int16_t>(srcBox.expandedBbox.minC), static_cast<int16_t>(srcBox.expandedBbox.maxC)};
+        dstBox.age = srcBox.age;
+        dstBox.missed = srcBox.missed;
+        dstBox.lastMatchedZoneIndex = srcBox.lastMatchedZoneIndex;
+        dstBox.anchorPeakCount = srcBox.anchorPeakCount;
+        dstBox.signalSum = srcBox.signalSum;
+        dstBox.matchedPalmThisFrame = srcBox.matchedPalmThisFrame ? 1 : 0;
     }
 #endif
 
@@ -573,6 +644,38 @@ inline void PopulateSolverFrameFromSharedFrameData(HeatmapFrame& out,
     out.touch.debug.peaks.resize(src.peakCount);
     for (int i = 0; i < src.peakCount; ++i) {
         out.touch.debug.peaks[static_cast<size_t>(i)] = {src.peaks[i].r, src.peaks[i].c, src.peaks[i].z, src.peaks[i].id};
+    }
+
+    const int zoneBoxCount = std::min(static_cast<int>(src.zoneBoxCount), kMaxSharedTouchZoneBoxes);
+    out.touch.debug.zoneBoxes.clear();
+    out.touch.debug.zoneBoxes.resize(static_cast<size_t>(zoneBoxCount));
+    for (int i = 0; i < zoneBoxCount; ++i) {
+        const auto& srcBox = src.zoneBoxes[i];
+        auto& dstBox = out.touch.debug.zoneBoxes[static_cast<size_t>(i)];
+        dstBox.zoneId = srcBox.zoneId;
+        dstBox.zoneIndex = srcBox.zoneIndex;
+        dstBox.reserved = srcBox.reserved;
+        dstBox.bbox = {srcBox.bbox.minR, srcBox.bbox.maxR, srcBox.bbox.minC, srcBox.bbox.maxC};
+        dstBox.area = srcBox.area;
+        dstBox.signalSum = srcBox.signalSum;
+    }
+
+    const int palmBoxCount = std::min(static_cast<int>(src.palmBoxCount), kMaxSharedPalmBoxes);
+    out.touch.debug.palmBoxes.clear();
+    out.touch.debug.palmBoxes.resize(static_cast<size_t>(palmBoxCount));
+    for (int i = 0; i < palmBoxCount; ++i) {
+        const auto& srcBox = src.palmBoxes[i];
+        auto& dstBox = out.touch.debug.palmBoxes[static_cast<size_t>(i)];
+        dstBox.id = srcBox.id;
+        dstBox.bbox = {srcBox.bbox.minR, srcBox.bbox.maxR, srcBox.bbox.minC, srcBox.bbox.maxC};
+        dstBox.expandedBbox = {srcBox.expandedBbox.minR, srcBox.expandedBbox.maxR,
+                               srcBox.expandedBbox.minC, srcBox.expandedBbox.maxC};
+        dstBox.age = srcBox.age;
+        dstBox.missed = srcBox.missed;
+        dstBox.lastMatchedZoneIndex = srcBox.lastMatchedZoneIndex;
+        dstBox.anchorPeakCount = srcBox.anchorPeakCount;
+        dstBox.signalSum = srcBox.signalSum;
+        dstBox.matchedPalmThisFrame = srcBox.matchedPalmThisFrame != 0;
     }
 #endif
 

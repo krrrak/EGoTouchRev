@@ -177,10 +177,9 @@ private:
     }
 
     static bool IsSelectedPeakAbnormal(const PeakUnit& unit) {
-        // TSACore GetRealPeak checks selected-unit abnormal flag bytes after
-        // UpdatePeaksWithUnit.  HPP2 line mode exposes the comparable state as
-        // noiseProp bits from UpdatePeakNoiseFlags.
-        return unit.noiseProp != 0;
+        // TSACore GetRealPeak checks only the selected candidate avg-high
+        // abnormal flag (candidate +0x18), not every rank/noise flag.
+        return unit.avgHighAbnormal;
     }
 
     static void PublishSelectedPeaks(HeatmapFrame& frame, const PeakUnit* dim1, const PeakUnit* dim2) {

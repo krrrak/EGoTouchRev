@@ -8,13 +8,13 @@ namespace Solvers { namespace Touch {
 
 class StylusTouchSuppressor {
 public:
-    bool  m_stylusSuppressGlobalEnabled = true;
-    bool  m_stylusSuppressLocalEnabled = true;
+    bool  m_stylusSuppressGlobalEnabled = false;
+    bool  m_stylusSuppressLocalEnabled = false;
     float m_stylusSuppressLocalDistance = 2.5f;
     int   m_stylusSuppressPenPeakThreshold = 1500;
     int   m_stylusSuppressTouchSignalKeep = 6000;
     int   m_stylusSuppressTouchAreaKeep = 12;
-    bool  m_stylusAftEnabled = true;
+    bool  m_stylusAftEnabled = false;
     int   m_stylusAftDebounceFrames = 3;
     int   m_stylusAftWeakSignalThreshold = 240;
     float m_stylusAftWeakSizeThresholdMm = 1.2f;
