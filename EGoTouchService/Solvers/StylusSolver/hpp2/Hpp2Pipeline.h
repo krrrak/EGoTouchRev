@@ -13,6 +13,7 @@
 #include "SolverTypes.h"
 #include "StylusSolver/AsaTypes.hpp"
 
+#include <array>
 #include <cstdint>
 
 namespace Solvers::Stylus::Hpp2 {
@@ -51,6 +52,7 @@ public:
     uint16_t m_chargerNoisePeakProtectRadius = 2;     // TSAPrmt: IndexValidation peak-neighbor exclusion radius.
     uint16_t m_chargerNoiseMinRawSample = 50;         // TSAPrmt: IndexValidation ignores raw samples below 0x32.
     uint16_t m_peakSignalFloor = 250;                 // TSACore SearchPeak: g_asaStatic.field_0x4a local peak floor.
+    uint16_t m_peakNetSignalFloor = 250;              // TSACore SearchPeak: g_asaStatic.field_0x4c accepted net-signal floor.
     int m_peakSearchNeighborDist = 2;                 // TSACore SearchPeak: +/-2 local-neighbor peak check.
     int m_peakMinWidth = 2;                           // TSAPrmt/SearchPeakBoundary: minimum accepted peak width.
     int m_peakMaxWidth = 20;                          // TSAPrmt/SearchPeakBoundary: maximum reasonable peak width.
@@ -59,6 +61,9 @@ public:
     uint16_t m_pressureDeltaNormal = 0x400;
     uint16_t m_pressureDeltaTight = 0x40;
     bool m_useTightPressureDelta = false;
+    std::array<uint8_t, 2> m_cmnRangeSumEnabled{};
+    std::array<int, 2> m_cmnRangeStart{};
+    std::array<int, 2> m_cmnRangeEnd{};
 
     bool Process(HeatmapFrame& frame) {
         auto& runtime = frame.stylus.runtime.SelectHpp2();
@@ -161,6 +166,7 @@ private:
         settings.chargerNoisePeakProtectRadius = m_chargerNoisePeakProtectRadius;
         settings.chargerNoiseMinRawSample = m_chargerNoiseMinRawSample;
         settings.peakSignalFloor = m_peakSignalFloor;
+        settings.peakNetSignalFloor = m_peakNetSignalFloor;
         settings.peakSearchNeighborDist = m_peakSearchNeighborDist;
         settings.peakMinWidth = m_peakMinWidth;
         settings.peakMaxWidth = m_peakMaxWidth;
@@ -169,6 +175,9 @@ private:
         settings.pressureDeltaNormal = m_pressureDeltaNormal;
         settings.pressureDeltaTight = m_pressureDeltaTight;
         settings.useTightPressureDelta = m_useTightPressureDelta;
+        settings.cmnRangeSumEnabled = m_cmnRangeSumEnabled;
+        settings.cmnRangeStart = m_cmnRangeStart;
+        settings.cmnRangeEnd = m_cmnRangeEnd;
         return settings;
     }
 };

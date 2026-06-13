@@ -87,36 +87,46 @@ struct Hpp2PeakSearchUtils {
         unit.width = right - left + 1;
     }
 
-    static void UpdatePeakPrpt(const std::array<uint16_t, kMaxSamples>& line,
+    static void UpdatePeakPrpt(const std::array<uint16_t, kMaxSamples>& searchProfile,
+                               const std::array<uint16_t, kMaxSamples>& signalProfile,
+                               const std::array<uint16_t, kMaxSamples>* averageProfile,
                                int offset,
                                int length,
                                PeakUnit& unit) {
-        uint32_t regionSum = 0;
+        uint32_t searchRegionSum = 0;
+        uint32_t signalRegionSum = 0;
+        uint32_t averageProfileSum = 0;
         uint16_t baselineMin = 0xffff;
+        uint8_t regionWidth = 0;
         for (int i = unit.leftBoundary; i <= unit.rightBoundary; ++i) {
-            const uint16_t sample = line[static_cast<std::size_t>(offset + i)];
-            regionSum += sample;
-            baselineMin = std::min(baselineMin, sample);
+            const std::size_t sampleIndex = static_cast<std::size_t>(offset + i);
+            const uint16_t searchSample = searchProfile[sampleIndex];
+            ++regionWidth;
+            searchRegionSum += searchSample;
+            signalRegionSum += signalProfile[sampleIndex];
+            baselineMin = std::min(baselineMin, searchSample);
+            if (averageProfile != nullptr) {
+                averageProfileSum += (*averageProfile)[sampleIndex];
+            }
         }
 
         uint32_t threeNeighborSum = 0;
-        const int neighborStart = std::max(0, unit.index - 1);
-        const int neighborEnd = std::min(length - 1, unit.index + 1);
+        const int neighborStart = unit.index == 0 ? 0 : std::max(0, unit.index - 1);
+        const int neighborEnd = unit.index == length - 1 ? length - 1 : std::min(length - 1, unit.index + 1);
         for (int i = neighborStart; i <= neighborEnd; ++i) {
-            threeNeighborSum += line[static_cast<std::size_t>(offset + i)];
+            threeNeighborSum += searchProfile[static_cast<std::size_t>(offset + i)];
         }
 
-        // TSACore UpdatePeakPrpt carries pSignalProfile/pAverageProfile-derived
-        // values into UpdatePeakNoisePrpt.  HPP2 line mode keeps the observable
-        // equivalents here: bounded region sum, 3-neighbor sum, and the local
-        // average-baseline approximation used by the current CMN-subtracted path.
-        const uint16_t peakSample = line[static_cast<std::size_t>(offset + unit.index)];
-        const uint16_t avgBaseline = baselineMin;
-        const uint16_t peakSignal = peakSample > avgBaseline ? static_cast<uint16_t>(peakSample - avgBaseline) : 1;
-        const uint32_t net = regionSum - static_cast<uint32_t>(unit.width) * avgBaseline;
-        unit.signalRegionSum = regionSum;
-        unit.threeNeighborSum = static_cast<int>(std::min<uint32_t>(threeNeighborSum, 0x7fffffffu));
-        unit.avgBaseline = avgBaseline;
+        const uint16_t peakSample = searchProfile[static_cast<std::size_t>(offset + unit.index)];
+        uint16_t peakSignal = peakSample > baselineMin ? static_cast<uint16_t>(peakSample - baselineMin) : 0;
+        if (peakSignal == 0) {
+            peakSignal = 1;
+        }
+        const uint32_t net = searchRegionSum - static_cast<uint32_t>(unit.width) * baselineMin;
+        const uint32_t averageMean = regionWidth == 0 ? 0 : averageProfileSum / regionWidth;
+        unit.signalRegionSum = signalRegionSum;
+        unit.threeNeighborSum = static_cast<int>(std::min<uint32_t>(threeNeighborSum, 0xffffu));
+        unit.avgBaseline = static_cast<uint16_t>(std::min<uint32_t>(averageMean, 0xffffu));
         unit.peakSignal = peakSignal;
         unit.netSignal = static_cast<uint16_t>(std::min<uint32_t>(net, 0xffffu));
     }
@@ -139,23 +149,29 @@ struct Hpp2PeakSearchUtils {
     }
 
     static void UpdatePeakNoiseFlags(const Settings& settings, PeakUnit& unit) {
-        // Not TSACore UpdatePeakNoisePrpt (0x6babddff).  The original computes
-        // GetSignalUnstableLevel(threeNeighborSum, historyAvgSignal,
-        // otherDimHistoryAvgSignal), last-output coordinate distance, and an SS
-        // matrix recheck condition.  Those inputs are cross-frame/HPP3-grid
-        // history artifacts; HPP2 line mode currently only needs the local
-        // width-based noise flags below.
+        // HPP2 group 0/1 does not feed non-zero historyAvgSignal or last-output
+        // coordinates into TSACore UpdatePeakNoisePrpt, but UpdatePeakPrpt's local
+        // average/signal gates are still consumed by UpdatePeaksRank.
+        static constexpr int kAvgHighFlag = 0x01;       // TSACore candidate +0x18.
+        static constexpr int kSignalRegionFlag = 0x02;  // TSACore candidate +0x19.
+        static constexpr int kAvgMediumFlag = 0x04;     // TSACore candidate +0x1a.
+        static constexpr int kCompositeFlag = 0x08;     // TSACore candidate +0x02.
         unit.noiseProp = 0;
-        if (unit.width < settings.peakMinWidth) {
-            unit.noiseProp |= 0x01;
+        if (unit.avgBaseline > 300) {
+            unit.noiseProp |= kAvgHighFlag;
         }
-        if (unit.width > settings.peakMaxWidth) {
-            unit.noiseProp |= 0x02;
+        if (unit.avgBaseline > 200) {
+            unit.noiseProp |= kAvgMediumFlag;
         }
-        const uint32_t baselineAdjustedRegion =
-            unit.signalRegionSum - static_cast<uint32_t>(unit.width) * unit.avgBaseline;
-        if (unit.peakSignal > 1000 && baselineAdjustedRegion > static_cast<uint32_t>(unit.peakSignal) * 3u) {
-            unit.noiseProp |= 0x04;
+        if (unit.signalRegionSum > 1000 && unit.netSignal < unit.signalRegionSum) {
+            unit.noiseProp |= kSignalRegionFlag;
+        }
+        if ((unit.noiseProp & (kAvgHighFlag | kSignalRegionFlag)) != 0 ||
+            (unit.peakSignal > 1000 && static_cast<uint32_t>(unit.peakSignal) * 3u < unit.netSignal)) {
+            unit.noiseProp |= kCompositeFlag;
+        }
+        if (unit.width < settings.peakMinWidth || unit.width > settings.peakMaxWidth) {
+            unit.noiseProp |= kCompositeFlag;
         }
     }
 
@@ -172,8 +188,8 @@ struct Hpp2PeakSearchUtils {
             unit.valid = true;
             unit.index = i;
             SearchPeakBoundary(line, offset, length, i, unit);
-            UpdatePeakPrpt(line, offset, length, unit);
-            if (unit.netSignal < settings.peakSignalFloor || unit.width < settings.peakMinWidth || unit.width > settings.peakMaxWidth) {
+            UpdatePeakPrpt(line, line, nullptr, offset, length, unit);
+            if (unit.netSignal < settings.peakNetSignalFloor || unit.width < settings.peakMinWidth || unit.width > settings.peakMaxWidth) {
                 continue;
             }
             if (!peak.valid || unit.peakSignal > peak.signal) {

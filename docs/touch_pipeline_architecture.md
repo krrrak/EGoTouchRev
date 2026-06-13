@@ -280,15 +280,9 @@ flowchart LR
 | **fingerScore** | prominence ≥ threshold (+0.45) + sharpness ≥ threshold (+0.35) + zone=FingerLikely (+0.20) |
 | **palmScore** | zone.palmScore × 0.45 + flatPalmShape (+0.45) + inPalmZone & !strongFinger (+0.15) |
 
-##### 3.3.3 Palm Shadow 机制
+##### 3.3.3 跨帧 Palm Shadow
 
-```mermaid
-flowchart LR
-    PL2["PalmLikely/PalmCandidate<br/>zone"] --> SEED["SeedPalmShadow<br/>膨胀半径 = palmShadowRadius"]
-    SEED --> AGE["m_palmShadowAge[cell]<br/>= holdFrames (12帧)"]
-    AGE --> DECAY["每帧衰减 age--"]
-    DECAY --> APPLY["后续帧：zone 与 shadow 重叠<br/>→ 强制 PalmLikely"]
-```
+跨帧 `Palm Shadow` 机制已移除。当前 palm/finger 分类只使用当前帧的 `MacroZone` 特征和 `PeakEvaluation` 结果；不会再维护 `m_palmShadowAge`，也不会因历史 palm 区域与当前 zone 重叠而强制 `PalmLikely`。
 
 ---
 

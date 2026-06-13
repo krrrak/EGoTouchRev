@@ -75,7 +75,11 @@ void TouchPipeline::GenerateContacts(HeatmapFrame& frame) {
 
     // ── Phase 4: Candidate Classification ───────────────────────────
     m_touchClassifier.Process(frame, macroZones, peaks);
-    const auto peakEvaluations = m_touchClassifier.GetPeakEvaluations();
+    m_palmBoxSuppressor.Process(macroZones,
+                                m_touchClassifier.GetZoneFeatures(),
+                                peaks,
+                                m_touchClassifier.GetPeakEvaluations());
+    const auto peakEvaluations = m_palmBoxSuppressor.GetEvaluations();
 
 #if EGOTOUCH_DIAG
     // Diagnostic segmentation remains separate from contact generation.
@@ -408,6 +412,36 @@ void TouchPipeline::registerBindings(Config::ConfigBinder& binder) {
                 static_cast<int32_t>(3), ConfigRange{0, 16},
                 "Finger-in-palm max expansion radius");
 
+    binder.bind("touch.palm_box.enabled",
+                &Touch::PalmBoxSuppressor::m_enabled, m_palmBoxSuppressor,
+                true, {}, "Enable palm bounding-box suppression");
+    binder.bind("touch.palm_box.expand_rows",
+                &Touch::PalmBoxSuppressor::m_expandRows, m_palmBoxSuppressor,
+                static_cast<int32_t>(1), ConfigRange{0, 10},
+                "Palm box row expansion margin");
+    binder.bind("touch.palm_box.expand_cols",
+                &Touch::PalmBoxSuppressor::m_expandCols, m_palmBoxSuppressor,
+                static_cast<int32_t>(1), ConfigRange{0, 10},
+                "Palm box column expansion margin");
+    binder.bind("touch.palm_box.match_center_distance",
+                &Touch::PalmBoxSuppressor::m_matchCenterDistance, m_palmBoxSuppressor,
+                6.0f, ConfigRange{0.0, 30.0},
+                "Palm box track center-distance gate");
+    binder.bind("touch.palm_box.match_iou_threshold",
+                &Touch::PalmBoxSuppressor::m_matchIoUThreshold, m_palmBoxSuppressor,
+                0.10f, ConfigRange{0.0, 1.0},
+                "Palm box track IoU gate");
+    binder.bind("touch.palm_box.palm_likely_only",
+                &Touch::PalmBoxSuppressor::m_palmLikelyOnly, m_palmBoxSuppressor,
+                true, {}, "Only PalmLikely zones create palm boxes");
+    binder.bind("touch.palm_box.keep_until_no_peak_domain_inside",
+                &Touch::PalmBoxSuppressor::m_keepUntilNoPeakDomainInside, m_palmBoxSuppressor,
+                true, {}, "Keep palm boxes while peak domains remain inside");
+    binder.bind("touch.palm_box.max_hold_frames",
+                &Touch::PalmBoxSuppressor::m_maxHoldFrames, m_palmBoxSuppressor,
+                static_cast<int32_t>(0), ConfigRange{0, 300},
+                "Palm box maximum unmatched hold frames; 0 disables timeout");
+
     binder.bind("touch.zone_contact.threshold_scale_numer",
                 &Touch::ZoneExpander::m_tholdScaleNumer, m_contactExtractor.m_zoneExp,
                 static_cast<int32_t>(0x40), ConfigRange{0, 255},
@@ -607,6 +641,15 @@ void TouchPipeline::applyConfig(const Config::ConfigStore& store) {
     m_touchClassifier.m_palmAwareExpansionEnabled = store.getOr<bool>("touch.classifier.palm_aware_expansion_enabled", true);
     m_touchClassifier.m_fingerInPalmThresholdRatio = store.getOr<float>("touch.classifier.finger_in_palm_threshold_ratio", 0.70f);
     m_touchClassifier.m_fingerInPalmMaxRadius = store.getOr<int32_t>("touch.classifier.finger_in_palm_max_radius", 3);
+
+    m_palmBoxSuppressor.m_enabled = store.getOr<bool>("touch.palm_box.enabled", true);
+    m_palmBoxSuppressor.m_expandRows = store.getOr<int32_t>("touch.palm_box.expand_rows", 1);
+    m_palmBoxSuppressor.m_expandCols = store.getOr<int32_t>("touch.palm_box.expand_cols", 1);
+    m_palmBoxSuppressor.m_matchCenterDistance = store.getOr<float>("touch.palm_box.match_center_distance", 6.0f);
+    m_palmBoxSuppressor.m_matchIoUThreshold = store.getOr<float>("touch.palm_box.match_iou_threshold", 0.10f);
+    m_palmBoxSuppressor.m_palmLikelyOnly = store.getOr<bool>("touch.palm_box.palm_likely_only", true);
+    m_palmBoxSuppressor.m_keepUntilNoPeakDomainInside = store.getOr<bool>("touch.palm_box.keep_until_no_peak_domain_inside", true);
+    m_palmBoxSuppressor.m_maxHoldFrames = store.getOr<int32_t>("touch.palm_box.max_hold_frames", 0);
 
     m_contactExtractor.m_zoneExp.m_tholdScaleNumer = store.getOr<int32_t>("touch.zone_contact.threshold_scale_numer", 0x40);
     m_contactExtractor.m_zoneExp.m_tholdScaleShift = store.getOr<int32_t>("touch.zone_contact.threshold_scale_shift", 7);

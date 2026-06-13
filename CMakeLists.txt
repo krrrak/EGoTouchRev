@@ -347,8 +347,8 @@ if (EGO_BUILD_TOOLS)
     # Link D3D11 for the ImGui DX11 backend
     target_compile_definitions(EGoTouchApp PRIVATE EGOTOUCH_DIAGNOSTICS)
     target_link_libraries(EGoTouchApp PRIVATE DVRCore IPCCore Device Solvers Host Common ImGuiCommon d3d11 d3dcompiler dwmapi setupapi)
-    if(MSVC)
-        target_link_options(EGoTouchApp PRIVATE "/MANIFESTUAC:level='requireAdministrator'")
+    if(MSVC OR (WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang"))
+        target_link_options(EGoTouchApp PRIVATE "LINKER:/MANIFESTUAC:level='requireAdministrator'")
     endif()
 endif()
 

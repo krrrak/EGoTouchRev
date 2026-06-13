@@ -1,4 +1,7 @@
 #include "StylusSolver/StylusPipeline.h"
+#include "StylusSolver/hpp2/Hpp2ChargerNoiseProcess.hpp"
+#include "StylusSolver/hpp2/Hpp2CmfProcess.hpp"
+#include "StylusSolver/hpp2/Hpp2LinePeakExtractor.hpp"
 
 #include <array>
 #include <cstdint>
@@ -290,6 +293,235 @@ void TestInitialDisconnectedHpp2HintSelectsHpp2Terminal() {
             "initial disconnected HPP2 hint should not emit output");
 }
 
+void FillCmfInput(Solvers::Stylus::Hpp2::Runtime& runtime) {
+    runtime.line.raw.fill(0);
+    const std::array<uint16_t, 5> dim1{{10, 20, 100, 20, 10}};
+    const std::array<uint16_t, 4> dim2{{7, 70, 7, 9}};
+    for (std::size_t i = 0; i < dim1.size(); ++i) {
+        runtime.line.raw[i] = dim1[i];
+    }
+    for (std::size_t i = 0; i < dim2.size(); ++i) {
+        runtime.line.raw[5 + i] = dim2[i];
+    }
+}
+
+Solvers::Stylus::Hpp2::Settings MakeCmfSettings() {
+    Solvers::Stylus::Hpp2::Settings settings{};
+    settings.sensorTxCount = 5;
+    settings.sensorRxCount = 4;
+    settings.cmfWindowRadius = 1;
+    return settings;
+}
+
+void TestHpp2CmfPublishesMaxAndHistoryHead() {
+    HeatmapFrame frame{};
+    Solvers::Stylus::Hpp2::Runtime runtime{};
+    Solvers::Stylus::Hpp2::State state{};
+    auto settings = MakeCmfSettings();
+    FillCmfInput(runtime);
+
+    Solvers::Stylus::Hpp2::Context ctx{frame, runtime, settings, state};
+    Solvers::Stylus::Hpp2::Hpp2CmfProcess{}.Process(ctx);
+
+    Require(runtime.line.cmnBaseline[0] == 10 && runtime.line.cmnBaseline[1] == 20 &&
+                runtime.line.cmnBaseline[2] == 20 && runtime.line.cmnBaseline[3] == 20 &&
+                runtime.line.cmnBaseline[4] == 10,
+            "CMF group0 baseline should match sliding min-max result");
+    Require(runtime.line.cmnSubtracted[2] == 80, "CMF group0 should subtract baseline from raw peak");
+    Require(state.m_cmnSum[0] == 80, "CMF group0 sum should be published");
+    Require(state.m_cmnMax[0] == 20, "CMF group0 max should be published");
+    Require(state.m_cmnMin[0] == 10, "CMF group0 min should be published");
+    Require(state.m_cmnSumHistory[0][0] == state.m_cmnSum[0], "CMF sum history head should match current sum");
+    Require(state.m_cmnMaxHistory[0][0] == state.m_cmnMax[0], "CMF max history head should match current max");
+    Require(state.m_cmnMinHistory[0][0] == state.m_cmnMin[0], "CMF min history head should match current min");
+    Require(state.m_cmnSum[1] == 28 && state.m_cmnMax[1] == 7 && state.m_cmnMin[1] == 7,
+            "CMF group1 statistics should use group-local length and offset");
+}
+
+void TestHpp2CmfRotatesHistory() {
+    HeatmapFrame frame{};
+    Solvers::Stylus::Hpp2::Runtime runtime{};
+    Solvers::Stylus::Hpp2::State state{};
+    auto settings = MakeCmfSettings();
+    FillCmfInput(runtime);
+
+    Solvers::Stylus::Hpp2::Context ctx{frame, runtime, settings, state};
+    Solvers::Stylus::Hpp2::Hpp2CmfProcess cmf;
+    cmf.Process(ctx);
+    const uint32_t firstSum = state.m_cmnSum[0];
+    const uint16_t firstMax = state.m_cmnMax[0];
+    const uint16_t firstMin = state.m_cmnMin[0];
+
+    runtime.line.raw.fill(50);
+    cmf.Process(ctx);
+
+    Require(state.m_cmnSumHistory[0][0] == 250, "CMF latest sum should be at history head");
+    Require(state.m_cmnMaxHistory[0][0] == 50, "CMF latest max should be at history head");
+    Require(state.m_cmnMinHistory[0][0] == 50, "CMF latest min should be at history head");
+    Require(state.m_cmnSumHistory[0][1] == firstSum, "CMF previous sum should rotate to history slot 1");
+    Require(state.m_cmnMaxHistory[0][1] == firstMax, "CMF previous max should rotate to history slot 1");
+    Require(state.m_cmnMinHistory[0][1] == firstMin, "CMF previous min should rotate to history slot 1");
+}
+
+void TestHpp2CmfRangeGateDisabledByDefault() {
+    HeatmapFrame frame{};
+    Solvers::Stylus::Hpp2::Runtime runtime{};
+    Solvers::Stylus::Hpp2::State state{};
+    auto settings = MakeCmfSettings();
+    settings.cmnRangeStart[0] = 0;
+    settings.cmnRangeEnd[0] = 4;
+    FillCmfInput(runtime);
+
+    Solvers::Stylus::Hpp2::Context ctx{frame, runtime, settings, state};
+    Solvers::Stylus::Hpp2::Hpp2CmfProcess{}.Process(ctx);
+
+    Require(state.m_cmnRangeSumHistory[0][0] == 0,
+            "CMF range sum should stay zero when groupParam gate is disabled");
+}
+
+void TestHpp2CmfRangeGateSumsSubtractedLine() {
+    HeatmapFrame frame{};
+    Solvers::Stylus::Hpp2::Runtime runtime{};
+    Solvers::Stylus::Hpp2::State state{};
+    auto settings = MakeCmfSettings();
+    settings.cmnRangeSumEnabled[0] = 1;
+    settings.cmnRangeStart[0] = 1;
+    settings.cmnRangeEnd[0] = 3;
+    settings.cmnRangeSumEnabled[1] = 1;
+    settings.cmnRangeStart[1] = 1;
+    settings.cmnRangeEnd[1] = 3;
+    FillCmfInput(runtime);
+
+    Solvers::Stylus::Hpp2::Context ctx{frame, runtime, settings, state};
+    Solvers::Stylus::Hpp2::Hpp2CmfProcess{}.Process(ctx);
+
+    Require(state.m_cmnRangeSumHistory[0][0] == 80,
+            "CMF group0 range sum should accumulate subtracted line values");
+    Require(state.m_cmnRangeSumHistory[1][0] == 65,
+            "CMF group1 range sum should use group-local range with group offset");
+}
+
+Solvers::Stylus::Hpp2::Settings MakeChargerNoiseSettings() {
+    Solvers::Stylus::Hpp2::Settings settings{};
+    settings.sensorTxCount = 7;
+    settings.sensorRxCount = 4;
+    settings.chargerNoisePeakProtectRadius = 1;
+    settings.chargerNoiseClearFloor = 1;
+    settings.chargerNoiseRatioThreshold = 100;
+    settings.chargerNoiseMinRawSample = 50;
+    return settings;
+}
+
+void PrepareChargerNoiseInput(Solvers::Stylus::Hpp2::Runtime& runtime,
+                              Solvers::Stylus::Hpp2::State& state,
+                              std::size_t freqIdx,
+                              int noisyIndex) {
+    runtime.line.raw.fill(10);
+    runtime.line.cmnSubtracted.fill(0);
+    runtime.line.raw[static_cast<std::size_t>(noisyIndex)] = 1000;
+    state.m_rawHistory[freqIdx][0].fill(10);
+}
+
+void TestHpp2ChargerNoiseProtectsPreviousBoundary() {
+    HeatmapFrame frame{};
+    Solvers::Stylus::Hpp2::Runtime runtime{};
+    Solvers::Stylus::Hpp2::State state{};
+    auto settings = MakeChargerNoiseSettings();
+    state.m_curFreqIdx = 0;
+    state.m_f1FrameCnt = 2;
+    state.m_prevPeakDim1ByFreq[0] = 2;
+    state.m_prevPeakBoundaryDim1ByFreq[0] = Solvers::Stylus::Hpp2::PeakBoundary{1, 3, true};
+    PrepareChargerNoiseInput(runtime, state, 0, 4);
+
+    Solvers::Stylus::Hpp2::Context ctx{frame, runtime, settings, state};
+    Solvers::Stylus::Hpp2::Hpp2ChargerNoiseProcess{}.Process(ctx);
+
+    Require(state.m_noiseSum[0] == 0,
+            "previous boundary plus radius should protect sample outside previous center radius");
+}
+
+void TestHpp2ChargerNoiseLeavesOutsideBoundaryCandidate() {
+    HeatmapFrame frame{};
+    Solvers::Stylus::Hpp2::Runtime runtime{};
+    Solvers::Stylus::Hpp2::State state{};
+    auto settings = MakeChargerNoiseSettings();
+    state.m_curFreqIdx = 0;
+    state.m_f1FrameCnt = 2;
+    state.m_prevPeakDim1ByFreq[0] = 2;
+    state.m_prevPeakBoundaryDim1ByFreq[0] = Solvers::Stylus::Hpp2::PeakBoundary{1, 3, true};
+    PrepareChargerNoiseInput(runtime, state, 0, 5);
+
+    Solvers::Stylus::Hpp2::Context ctx{frame, runtime, settings, state};
+    Solvers::Stylus::Hpp2::Hpp2ChargerNoiseProcess{}.Process(ctx);
+
+    Require(state.m_noiseSum[0] == 1000,
+            "sample outside previous boundary plus radius should remain charger-noise candidate");
+}
+
+void TestHpp2ChargerNoisePreviousBoundaryIsFrequencyLocal() {
+    HeatmapFrame frame{};
+    Solvers::Stylus::Hpp2::Runtime runtime{};
+    Solvers::Stylus::Hpp2::State state{};
+    auto settings = MakeChargerNoiseSettings();
+    state.m_curFreqIdx = 1;
+    state.m_f2FrameCnt = 2;
+    state.m_prevPeakDim1ByFreq[0] = 2;
+    state.m_prevPeakBoundaryDim1ByFreq[0] = Solvers::Stylus::Hpp2::PeakBoundary{1, 3, true};
+    PrepareChargerNoiseInput(runtime, state, 1, 4);
+
+    Solvers::Stylus::Hpp2::Context ctx{frame, runtime, settings, state};
+    Solvers::Stylus::Hpp2::Hpp2ChargerNoiseProcess{}.Process(ctx);
+
+    Require(state.m_noiseSum[1] == 1000,
+            "F1 previous boundary should not protect an F2 charger-noise frame");
+}
+
+Solvers::Stylus::Hpp2::Settings MakePeakExtractorSettings() {
+    Solvers::Stylus::Hpp2::Settings settings{};
+    settings.sensorTxCount = 5;
+    settings.sensorRxCount = 3;
+    settings.peakSignalFloor = 100;
+    settings.peakNetSignalFloor = 200;
+    settings.peakMinWidth = 1;
+    settings.peakMaxWidth = 10;
+    return settings;
+}
+
+void FillLowNetPeak(Solvers::Stylus::Hpp2::Runtime& runtime) {
+    runtime.line.cmnSubtracted.fill(0);
+    runtime.line.cmnBaseline.fill(0);
+    runtime.line.cmnSubtracted[0] = 290;
+    runtime.line.cmnSubtracted[1] = 300;
+    runtime.line.cmnSubtracted[2] = 301;
+    runtime.line.cmnSubtracted[3] = 300;
+    runtime.line.cmnSubtracted[4] = 290;
+}
+
+void TestHpp2PeakExtractorUsesIndependentNetThreshold() {
+    HeatmapFrame frame{};
+    Solvers::Stylus::Hpp2::Runtime runtime{};
+    Solvers::Stylus::Hpp2::State state{};
+    auto settings = MakePeakExtractorSettings();
+    FillLowNetPeak(runtime);
+
+    Solvers::Stylus::Hpp2::Context ctx{frame, runtime, settings, state};
+    Solvers::Stylus::Hpp2::Hpp2LinePeakExtractor{}.Process(ctx);
+
+    Require(state.m_peakCountDim1 == 0,
+            "TX1 peak extractor should reject candidates below the independent net-signal threshold");
+
+    settings.peakNetSignalFloor = 20;
+    state.m_peakTableDim1 = {};
+    state.m_peakCountDim1 = 0;
+    Solvers::Stylus::Hpp2::Context acceptedCtx{frame, runtime, settings, state};
+    Solvers::Stylus::Hpp2::Hpp2LinePeakExtractor{}.Process(acceptedCtx);
+
+    Require(state.m_peakCountDim1 == 1,
+            "TX1 peak extractor should keep local peaks when only the net-signal threshold is lowered");
+    Require(state.m_peakTableDim1[0].peakSignal == 11,
+            "UpdatePeakPrpt should compute peak signal from search-profile peak minus region minimum");
+}
+
 } // namespace
 
 int main() {
@@ -308,6 +540,14 @@ int main() {
         TestInitialDisconnectedAutoSessionStaysProtocolNeutral();
         TestFreshAutoSessionDoesNotInheritPreviousTerminalProtocol();
         TestInitialDisconnectedHpp2HintSelectsHpp2Terminal();
+        TestHpp2CmfPublishesMaxAndHistoryHead();
+        TestHpp2CmfRotatesHistory();
+        TestHpp2CmfRangeGateDisabledByDefault();
+        TestHpp2CmfRangeGateSumsSubtractedLine();
+        TestHpp2ChargerNoiseProtectsPreviousBoundary();
+        TestHpp2ChargerNoiseLeavesOutsideBoundaryCandidate();
+        TestHpp2ChargerNoisePreviousBoundaryIsFrequencyLocal();
+        TestHpp2PeakExtractorUsesIndependentNetThreshold();
     } catch (const std::exception& ex) {
         std::cerr << "[FAIL] StylusHpp2PipelineTest: " << ex.what() << "\n";
         return 1;

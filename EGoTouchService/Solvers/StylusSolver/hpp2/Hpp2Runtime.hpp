@@ -25,6 +25,7 @@ struct LineProfile {
 
 static constexpr int kMaxSamples = LineProfile::kMaxSamples;
 static constexpr int kHistorySize = LineProfile::kHistorySize;
+static constexpr int kCmnHistorySize = 10;
 static constexpr int kNumRawHistoryFrames = 10;
 static constexpr uint16_t kFreqF1 = 0x00b0;
 static constexpr uint16_t kFreqF2 = 0x00fc;
@@ -55,6 +56,12 @@ struct Peak {
     bool valid = false;
 };
 
+struct PeakBoundary {
+    int left = -1;
+    int right = -1;
+    bool valid = false;
+};
+
 using PeakTable = std::array<PeakUnit, kMaxPeaksPerDim>;
 
 struct Settings {
@@ -74,6 +81,7 @@ struct Settings {
     uint16_t chargerNoisePeakProtectRadius = 2;
     uint16_t chargerNoiseMinRawSample = 50;
     uint16_t peakSignalFloor = 250;
+    uint16_t peakNetSignalFloor = 250;
     int peakSearchNeighborDist = 2;
     int peakMinWidth = 2;
     int peakMaxWidth = 20;
@@ -82,6 +90,9 @@ struct Settings {
     uint16_t pressureDeltaNormal = 0x400;
     uint16_t pressureDeltaTight = 0x40;
     bool useTightPressureDelta = false;
+    std::array<uint8_t, 2> cmnRangeSumEnabled{};
+    std::array<int, 2> cmnRangeStart{};
+    std::array<int, 2> cmnRangeEnd{};
 
     int SampleCount() const {
         return std::clamp(sensorTxCount + sensorRxCount, 0, kMaxSamples);
@@ -142,7 +153,12 @@ struct State {
     uint16_t m_energyRatioF1 = 100;
     uint16_t m_energyRatioF2 = 100;
     std::array<uint32_t, 2> m_cmnSum{};
+    std::array<uint16_t, 2> m_cmnMax{};
     std::array<uint16_t, 2> m_cmnMin{{0xffff, 0xffff}};
+    std::array<std::array<uint32_t, kCmnHistorySize>, 2> m_cmnSumHistory{};
+    std::array<std::array<uint16_t, kCmnHistorySize>, 2> m_cmnMaxHistory{};
+    std::array<std::array<uint16_t, kCmnHistorySize>, 2> m_cmnMinHistory{};
+    std::array<std::array<uint32_t, kCmnHistorySize>, 2> m_cmnRangeSumHistory{};
     uint16_t m_prevPressure = 0;
     bool m_edgeSignalTooLowLatched = false;
     uint8_t m_buttonReleaseCnt = 0;
@@ -151,6 +167,8 @@ struct State {
     bool m_freqNoiseLatchF2 = false;
     std::array<uint8_t, 2> m_prevPeakDim1ByFreq{{kInvalidPeak, kInvalidPeak}};
     std::array<uint8_t, 2> m_prevPeakDim2ByFreq{{kInvalidPeak, kInvalidPeak}};
+    std::array<PeakBoundary, 2> m_prevPeakBoundaryDim1ByFreq{};
+    std::array<PeakBoundary, 2> m_prevPeakBoundaryDim2ByFreq{};
     PeakTable m_peakTableDim1{};
     PeakTable m_peakTableDim2{};
     int m_peakCountDim1 = 0;
@@ -178,6 +196,8 @@ struct State {
         m_energyRatioF2 = 100;
         m_prevPeakDim1ByFreq.fill(kInvalidPeak);
         m_prevPeakDim2ByFreq.fill(kInvalidPeak);
+        m_prevPeakBoundaryDim1ByFreq.fill(PeakBoundary{});
+        m_prevPeakBoundaryDim2ByFreq.fill(PeakBoundary{});
         m_peakTableDim1 = {};
         m_peakTableDim2 = {};
         m_peakCountDim1 = 0;
@@ -185,7 +205,12 @@ struct State {
         m_bypassCounter = 0;
         m_prevBypassed = false;
         m_cmnSum.fill(0);
+        m_cmnMax.fill(0);
         m_cmnMin.fill(0xffff);
+        m_cmnSumHistory = {};
+        m_cmnMaxHistory = {};
+        m_cmnMinHistory = {};
+        m_cmnRangeSumHistory = {};
     }
 };
 

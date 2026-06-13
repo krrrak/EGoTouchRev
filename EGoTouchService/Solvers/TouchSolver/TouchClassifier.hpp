@@ -44,16 +44,11 @@ public:
     float m_fingerInPalmThresholdRatio = 0.70f;
     int   m_fingerInPalmMaxRadius = 3;
     bool  m_palmLikelyAllowContact = false;
-    bool  m_palmShadowEnabled = true;
-    int   m_palmShadowRadius = 2;
-    int   m_palmShadowHoldFrames = 12;
-    float m_palmShadowSeedScore = 0.55f;
 
     inline void Process(const HeatmapFrame& frame,
                         const std::vector<MacroZone>& macroZones,
                         std::span<const Peak> peaks) {
         AnalyzeZones(frame, macroZones);
-        UpdatePalmShadow(macroZones);
         EvaluatePeaks(frame, peaks, m_zoneFeatures);
     }
 
@@ -96,7 +91,6 @@ private:
 
     std::vector<MacroZoneFeature> m_zoneFeatures;
     std::vector<PeakEvaluation> m_peakEvaluations;
-    std::array<uint8_t, kGridSize> m_palmShadowAge{};
 
     inline MacroZoneFeature BuildFeature(const HeatmapFrame& frame,
                                          const MacroZone& zone,
@@ -183,80 +177,6 @@ private:
         return feature;
     }
 
-    inline void UpdatePalmShadow(const std::vector<MacroZone>& macroZones) {
-        if (!m_palmShadowEnabled) {
-            m_palmShadowAge.fill(0);
-            return;
-        }
-
-        DecayPalmShadow();
-        if (!m_enabled || !m_analyzerEnabled || m_zoneFeatures.empty()) return;
-
-        SeedPalmShadow(macroZones);
-        ApplyPalmShadowToZones(macroZones);
-    }
-
-    inline void DecayPalmShadow() {
-        for (auto& age : m_palmShadowAge) {
-            if (age > 0) --age;
-        }
-    }
-
-    inline void SeedPalmShadow(const std::vector<MacroZone>& macroZones) {
-        const int holdFrames = std::clamp(m_palmShadowHoldFrames, 0, 255);
-        if (holdFrames <= 0) return;
-
-        const int radius = std::max(0, m_palmShadowRadius);
-        const size_t count = std::min(macroZones.size(), m_zoneFeatures.size());
-        for (size_t i = 0; i < count; ++i) {
-            const auto& feature = m_zoneFeatures[i];
-            const bool seed = feature.palmClass == PalmClass::PalmLikely ||
-                              (feature.palmClass == PalmClass::PalmCandidate &&
-                               feature.palmScore >= m_palmShadowSeedScore);
-            if (!seed) continue;
-            for (int idx : macroZones[i].pixels) {
-                DilatePalmShadowCell(idx, radius, static_cast<uint8_t>(holdFrames));
-            }
-        }
-    }
-
-    inline void DilatePalmShadowCell(int idx, int radius, uint8_t holdFrames) {
-        if (idx < 0 || idx >= kGridSize) return;
-        const int row = idx / kCols;
-        const int col = idx % kCols;
-        const int rowMin = std::max(0, row - radius);
-        const int rowMax = std::min(kRows - 1, row + radius);
-        const int colMin = std::max(0, col - radius);
-        const int colMax = std::min(kCols - 1, col + radius);
-
-        for (int r = rowMin; r <= rowMax; ++r) {
-            for (int c = colMin; c <= colMax; ++c) {
-                auto& age = m_palmShadowAge[static_cast<size_t>(r * kCols + c)];
-                age = std::max(age, holdFrames);
-            }
-        }
-    }
-
-    inline void ApplyPalmShadowToZones(const std::vector<MacroZone>& macroZones) {
-        const size_t count = std::min(macroZones.size(), m_zoneFeatures.size());
-        for (size_t i = 0; i < count; ++i) {
-            bool shadowTouch = false;
-            for (int idx : macroZones[i].pixels) {
-                if (idx < 0 || idx >= kGridSize) continue;
-                if (m_palmShadowAge[static_cast<size_t>(idx)] > 0) {
-                    shadowTouch = true;
-                    break;
-                }
-            }
-            if (!shadowTouch) continue;
-
-            auto& feature = m_zoneFeatures[i];
-            feature.reasonFlags |= PalmReasonShadowTouch;
-            feature.palmClass = PalmClass::PalmLikely;
-            feature.palmScore = std::max(feature.palmScore, 0.80f);
-        }
-    }
-
     inline PeakEvaluation EvaluatePeak(const HeatmapFrame& frame,
                                        const Peak& peak,
                                        const std::vector<MacroZoneFeature>& zoneFeatures) const {
@@ -274,7 +194,6 @@ private:
 
         const bool inPalmZone = eval.zonePalmClass == PalmClass::PalmCandidate ||
                                 eval.zonePalmClass == PalmClass::PalmLikely;
-        const bool shadowTouch = zone && ((zone->reasonFlags & PalmReasonShadowTouch) != 0);
         const bool strongFingerShape = peak.z >= 1 &&
                                        eval.prominence >= static_cast<float>(m_fingerProminence) &&
                                        eval.sharpness >= m_fingerSharpness;
@@ -292,17 +211,6 @@ private:
         if (flatPalmShape) palmScore += 0.45f;
         if (inPalmZone && !strongFingerShape) palmScore += 0.15f;
         eval.palmScore = std::clamp(palmScore, 0.0f, 1.0f);
-
-        if (shadowTouch) {
-            eval.palmClass = PalmClass::PalmLikely;
-            eval.palmScore = std::max(eval.palmScore, 0.80f);
-            eval.allowContact = false;
-            eval.palmEvidenceOnly = true;
-            eval.evalFlags |= PalmReasonShadowTouch;
-            if (strongFingerShape) eval.evalFlags |= PalmReasonStrongSharpPeakPresent;
-            if (flatPalmShape) eval.evalFlags |= PalmReasonFlatSignalShape;
-            return eval;
-        }
 
         if (strongFingerShape && eval.fingerScore + m_ambiguousMargin >= eval.palmScore) {
             eval.palmClass = PalmClass::FingerLikely;

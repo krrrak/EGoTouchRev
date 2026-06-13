@@ -64,24 +64,17 @@ private:
 
     static void UpdatePeaksRank(PeakTable& table, int count, bool dim1) {
         (void)dim1;
-        // TSACore UpdatePeaksRank @ 0x6bab7c91 rank-source mapping:
-        //   TSACore offset | PeakUnit field       | mapping
-        //   +0x20          | age                      | exact: age > 0x14 adds +1.
-        //   peak signal    | peakSignal               | exact: (peakSignal * 10) / strongestSignal.
-        //   +0x80          | candidateCoor            | approximate: coordinate metric gate.
-        //   +0x22          | noiseProp != 0           | proxy: merged unavailable rank flag byte.
-        //   +0x38          | noiseProp != 0           | proxy: merged unavailable rank flag byte.
-        //   +0x39          | noiseProp != 0           | proxy: merged unavailable rank flag byte.
-        //   +0x3a          | noiseProp != 0           | proxy: merged unavailable rank flag byte.
-        // HPP2 line-mode does not keep the independent TSACore rank flag bytes in
-        // PeakUnit; all unavailable flags are intentionally collapsed into the
-        // observable local noiseProp proxy.  No cross-frame previous selected peak
-        // distance participates in TSACore's rank at this site.
+        static constexpr int kAvgHighFlag = 0x01;
+        static constexpr int kSignalRegionFlag = 0x02;
+        static constexpr int kAvgMediumFlag = 0x04;
+        static constexpr int kCompositeFlag = 0x08;
         uint16_t strongestSignal = 0;
+        int strongestSlot = -1;
         for (int i = 0; i < count; ++i) {
             const auto& unit = table[static_cast<std::size_t>(i)];
-            if (unit.valid) {
-                strongestSignal = std::max(strongestSignal, unit.peakSignal);
+            if (unit.valid && strongestSignal <= unit.peakSignal) {
+                strongestSignal = unit.peakSignal;
+                strongestSlot = i;
             }
         }
 
@@ -95,14 +88,26 @@ private:
             }
 
             uint32_t rank = 0;
+            if (i == strongestSlot && (unit.noiseProp & kCompositeFlag) == 0) {
+                ++rank;
+            }
             if (unit.age > 0x14) {
+                ++rank;
+            }
+            if ((unit.noiseProp & kCompositeFlag) == 0) {
                 ++rank;
             }
             if (strongestSignal != 0) {
                 rank += (static_cast<uint32_t>(unit.peakSignal) * 10u) / strongestSignal;
             }
-            if (unit.noiseProp != 0) {
-                rank += 4u;
+            if ((unit.noiseProp & kAvgMediumFlag) == 0) {
+                ++rank;
+            }
+            if ((unit.noiseProp & kAvgHighFlag) == 0) {
+                ++rank;
+            }
+            if ((unit.noiseProp & kSignalRegionFlag) == 0) {
+                ++rank;
             }
             if (unit.candidateCoor < 0) {
                 rank += 0x14u;
@@ -138,12 +143,19 @@ private:
         auto& hpp2 = ctx.runtime;
         const uint8_t selectedIndex = static_cast<uint8_t>(selected->index);
         const std::size_t freqIdx = static_cast<std::size_t>(ctx.state.m_curFreqIdx);
+        const PeakBoundary selectedBoundary{
+            selected->leftBoundary,
+            selected->rightBoundary,
+            selected->leftBoundary >= 0 && selected->rightBoundary >= selected->leftBoundary,
+        };
         if (dim1) {
             hpp2.selectedPeakDim1 = selectedIndex;
             ctx.state.m_prevPeakDim1ByFreq[freqIdx] = selectedIndex;
+            ctx.state.m_prevPeakBoundaryDim1ByFreq[freqIdx] = selectedBoundary;
         } else {
             hpp2.selectedPeakDim2 = selectedIndex;
             ctx.state.m_prevPeakDim2ByFreq[freqIdx] = selectedIndex;
+            ctx.state.m_prevPeakBoundaryDim2ByFreq[freqIdx] = selectedBoundary;
         }
         return selected;
     }

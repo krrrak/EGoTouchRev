@@ -62,13 +62,13 @@ private:
             unit.valid = true;
             unit.index = i;
             Hpp2PeakSearchUtils::SearchPeakBoundary(line, offset, length, i, unit);
-            Hpp2PeakSearchUtils::UpdatePeakPrpt(line, offset, length, unit);
+            Hpp2PeakSearchUtils::UpdatePeakPrpt(line, ctx.runtime.line.cmnBaseline, nullptr, offset, length, unit);
             unit.candidateCoor = Hpp2PeakSearchUtils::GetPeakPos(groupId, line, offset, length, unit);
             Hpp2PeakSearchUtils::UpdatePeakNoiseFlags(ctx.settings, unit);
             unit.onEdge = unit.candidateCoor < Asa::kCoorUnit ||
                 unit.candidateCoor > (length - 1) * Asa::kCoorUnit;
 
-            if (unit.netSignal < ctx.settings.peakSignalFloor || unit.width < ctx.settings.peakMinWidth || unit.width > ctx.settings.peakMaxWidth) {
+            if (unit.netSignal < ctx.settings.peakNetSignalFloor || unit.width < ctx.settings.peakMinWidth || unit.width > ctx.settings.peakMaxWidth) {
                 continue;
             }
             InsertPeakUnit(unit, table, count);
@@ -82,15 +82,24 @@ private:
                                int& count) {
         int slot = count < kMaxPeaksPerDim ? count : -1;
         if (slot < 0) {
-            uint16_t weakest = table[0].peakSignal;
-            slot = 0;
+            int largestRegionSlot = 0;
             for (int i = 1; i < kMaxPeaksPerDim; ++i) {
-                if (table[static_cast<std::size_t>(i)].peakSignal < weakest) {
+                if (table[static_cast<std::size_t>(i)].netSignal >= table[static_cast<std::size_t>(largestRegionSlot)].netSignal) {
+                    largestRegionSlot = i;
+                }
+            }
+
+            uint16_t weakest = 0xffffu;
+            for (int i = 0; i < kMaxPeaksPerDim; ++i) {
+                if (i == largestRegionSlot) {
+                    continue;
+                }
+                if (table[static_cast<std::size_t>(i)].peakSignal <= weakest) {
                     weakest = table[static_cast<std::size_t>(i)].peakSignal;
                     slot = i;
                 }
             }
-            if (unit.peakSignal <= weakest) {
+            if (slot < 0 || unit.peakSignal <= weakest) {
                 return;
             }
         } else {

@@ -105,6 +105,14 @@ enum class ConfigKeyId : uint16_t {
     TouchGestureLongPressFrames   = 0x0151,
     TouchGestureReleasePendingFrames = 0x0152,
     TouchGestureBypassStateMachine = 0x0153,
+    TouchPalmBoxEnabled           = 0x0154,
+    TouchPalmBoxExpandRows        = 0x0155,
+    TouchPalmBoxExpandCols        = 0x0156,
+    TouchPalmBoxMatchCenterDistance = 0x0157,
+    TouchPalmBoxMatchIouThreshold = 0x0158,
+    TouchPalmBoxPalmLikelyOnly    = 0x0159,
+    TouchPalmBoxKeepUntilNoPeakDomainInside = 0x015A,
+    TouchPalmBoxMaxHoldFrames     = 0x015B,
 
     // ── Stylus: reserved legacy HPP2 config key range (0x0200-0x022F) ──
 

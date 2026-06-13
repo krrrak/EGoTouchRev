@@ -110,14 +110,17 @@ private:
         if (IsProtectedPeakIndex(ctx, index, ctx.settings.sensorTxCount, currentDim2.valid ? currentDim2.index : kInvalidPeak)) {
             return true;
         }
-        // TSACore anchors this range against asaPrePrpt. The rebuild keeps the
-        // closest observable equivalent: previous selected HPP2 line peaks for
-        // the same frequency, avoiding cross-frequency F1/F2 contamination.
         const std::size_t freqIdx = static_cast<std::size_t>(ctx.state.m_curFreqIdx);
         if (IsProtectedPeakIndex(ctx, index, 0, ctx.state.m_prevPeakDim1ByFreq[freqIdx])) {
             return true;
         }
         if (IsProtectedPeakIndex(ctx, index, ctx.settings.sensorTxCount, ctx.state.m_prevPeakDim2ByFreq[freqIdx])) {
+            return true;
+        }
+        if (IsProtectedPeakBoundary(ctx, index, 0, ctx.state.m_prevPeakBoundaryDim1ByFreq[freqIdx])) {
+            return true;
+        }
+        if (IsProtectedPeakBoundary(ctx, index, ctx.settings.sensorTxCount, ctx.state.m_prevPeakBoundaryDim2ByFreq[freqIdx])) {
             return true;
         }
         return false;
@@ -135,6 +138,21 @@ private:
         const int delta = localIndex - localPeak;
         const int radius = static_cast<int>(ctx.settings.chargerNoisePeakProtectRadius);
         return delta >= -radius && delta <= radius;
+    }
+
+    static bool IsProtectedPeakBoundary(const Context& ctx, int globalIndex, int offset, const PeakBoundary& boundary) {
+        if (!boundary.valid || boundary.left < 0 || boundary.right < boundary.left) {
+            return false;
+        }
+        const int localIndex = globalIndex - offset;
+        const int length = offset == 0 ? ctx.settings.sensorTxCount : ctx.settings.sensorRxCount;
+        if (localIndex < 0 || localIndex >= length) {
+            return false;
+        }
+        const int radius = static_cast<int>(ctx.settings.chargerNoisePeakProtectRadius);
+        const int protectedLeft = std::max(0, boundary.left - radius);
+        const int protectedRight = std::min(length - 1, boundary.right + radius);
+        return localIndex >= protectedLeft && localIndex <= protectedRight;
     }
 
     static int CurrentFreqFrameCount(const State& state) {

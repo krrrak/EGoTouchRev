@@ -12,6 +12,7 @@
 #include <cstring>
 #include <cstdint>
 #include <exception>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -425,12 +426,12 @@ void ServiceProxy::InitConfigSchema() {
 Config::ConfigSchemaSnapshot BuildServiceProxyConfigSchemaSnapshotForTest() {
     Config::ConfigBinder binder;
     ServiceSchemaState serviceSchemaState;
-    Solvers::TouchPipeline touchPipeline;
-    Solvers::StylusPipeline stylusPipeline;
+    auto touchPipeline = std::make_unique<Solvers::TouchPipeline>();
+    auto stylusPipeline = std::make_unique<Solvers::StylusPipeline>();
 
     RegisterServiceConfigSchemaBindings(binder, serviceSchemaState);
-    touchPipeline.registerBindings(binder);
-    stylusPipeline.registerBindings(binder);
+    touchPipeline->registerBindings(binder);
+    stylusPipeline->registerBindings(binder);
     Config::registerRuntimeKeyMappings(binder);
 
     Config::ConfigStore defaults;

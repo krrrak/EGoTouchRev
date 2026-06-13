@@ -20,6 +20,7 @@
 #include "MacroZoneDetector.hpp"
 #include "PeakDetector.hpp"
 #include "TouchClassifier.hpp"
+#include "PalmBoxSuppressor.hpp"
 
 // ── Phase 4: Contact Extraction & Post-Processing ──
 #include "ContactExtractor.hpp"
@@ -87,6 +88,7 @@ public:
     Touch::MacroZoneDetector         m_macroZoneDet;
     Touch::PeakDetector              m_peakDet;
     Touch::TouchClassifier           m_touchClassifier;
+    Touch::PalmBoxSuppressor         m_palmBoxSuppressor;
     Touch::ContactExtractor          m_contactExtractor;
     Touch::EdgeCompensator           m_edgeComp;
     Touch::EdgeRejector              m_edgeReject;
