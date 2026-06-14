@@ -87,14 +87,7 @@ private:
     // Auto-capture mode: 0=disabled, 1=on peak appear, 2=on touch drop (contact disappears)
     int m_autoCaptureMode = 0;
 
-    // AFE control
-    int m_afeIdleParam = 0;
-    int m_afeCalibrationParam = 0;
-    int m_afeClearStatusParam = 1;
-    int m_afeForceFreqIdx = 0;
-    int m_afeForceScanRateIdx = 0;
-    bool m_scanRateIs240Hz = false;
-    std::string m_lastAfeActionStatus = "No command sent";
+
 
     // Playback UI
     std::filesystem::path m_dvrImportDirectory{"C:/ProgramData/EGoTouchRev/exports"};

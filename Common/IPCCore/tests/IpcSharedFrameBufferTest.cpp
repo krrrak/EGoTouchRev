@@ -39,6 +39,85 @@ bool IsSkippableWindowsGlobalObjectError(DWORD error) noexcept {
            error == ERROR_ALREADY_EXISTS;
 }
 
+void VerifyPreserveMasterTouchVisualization() {
+    Ipc::SharedFrameData cached{};
+    cached.masterWasRead = true;
+    cached.timestamp = 0x1111;
+    cached.workerState = 1;
+    cached.rawDataLength = static_cast<uint16_t>(Frame::kTotalFrameSize);
+    cached.rawData[0] = 0xA1;
+    cached.rawData[Frame::kMasterFrameSize - 1] = 0xA2;
+    cached.rawData[Frame::kSlaveHeaderOffset] = 0xA3;
+    cached.heatmapMatrix[3][4] = 321;
+    cached.masterSuffixValid = true;
+    cached.masterSuffix.words[0] = 0x1234;
+    cached.touchZones[2][3] = 5;
+    cached.peakZones[4][5] = 6;
+    cached.peakCount = 1;
+    cached.peaks[0].r = 7;
+    cached.peaks[0].c = 8;
+    cached.peaks[0].z = 900;
+    cached.peaks[0].id = 9;
+    cached.contactCount = 1;
+    cached.contacts[0].id = 42;
+    cached.contacts[0].x = 12.5f;
+    cached.touchPackets[0].valid = true;
+    cached.touchPackets[0].bytes[0] = 0x5A;
+    cached.zoneBoxCount = 1;
+    cached.zoneBoxes[0].zoneId = 3;
+    cached.zoneBoxes[0].zoneIndex = 2;
+    cached.zoneBoxes[0].bbox = {4, 8, 10, 15};
+    cached.palmBoxCount = 1;
+    cached.palmBoxes[0].id = 7;
+    cached.palmBoxes[0].bbox = {5, 9, 11, 16};
+    cached.palmBoxes[0].expandedBbox = {4, 10, 10, 17};
+
+    Ipc::SharedFrameData current{};
+    current.masterWasRead = false;
+    current.timestamp = 0x2222;
+    current.workerState = 11;
+    current.rawDataLength = static_cast<uint16_t>(Frame::kTotalFrameSize);
+    current.rawData[0] = 0xB1;
+    current.rawData[Frame::kMasterFrameSize - 1] = 0xB2;
+    current.rawData[Frame::kSlaveHeaderOffset] = 0xB3;
+    current.slaveSuffixValid = true;
+    current.slaveSuffix.words[0] = 0xABCD;
+    current.stylusPressure = 55;
+    current.stylusPoint.valid = true;
+    current.stylusPoint.x = 100.0f;
+    current.stylusRawGrid.tx1.valid = true;
+    current.stylusRawGrid.tx1.grid[0][0] = 222;
+
+    Ipc::PreserveMasterTouchVisualizationFromCachedFrame(current, cached);
+
+    Require(!current.masterWasRead, "preserve helper keeps skipped-master identity");
+    Require(current.timestamp == 0x2222 && current.workerState == 11,
+            "preserve helper keeps live runtime identity");
+    Require(current.stylusPressure == 55 && current.stylusPoint.valid && current.stylusRawGrid.tx1.grid[0][0] == 222,
+            "preserve helper keeps live stylus fields");
+    Require(current.slaveSuffixValid && current.slaveSuffix.words[0] == 0xABCD,
+            "preserve helper keeps live slave suffix");
+    Require(current.rawData[0] == 0xA1 && current.rawData[Frame::kMasterFrameSize - 1] == 0xA2,
+            "preserve helper copies cached master raw bytes");
+    Require(current.rawData[Frame::kSlaveHeaderOffset] == 0xB3,
+            "preserve helper keeps live slave raw bytes");
+    Require(current.heatmapMatrix[3][4] == 321, "preserve helper copies cached heatmap");
+    Require(current.masterSuffixValid && current.masterSuffix.words[0] == 0x1234,
+            "preserve helper copies cached master suffix");
+    Require(current.touchZones[2][3] == 5 && current.peakZones[4][5] == 6,
+            "preserve helper copies cached touch zone maps");
+    Require(current.peakCount == 1 && current.peaks[0].z == 900 && current.peaks[0].id == 9,
+            "preserve helper copies cached peaks");
+    Require(current.contactCount == 1 && current.contacts[0].id == 42 && current.contacts[0].x == 12.5f,
+            "preserve helper copies cached contacts");
+    Require(current.touchPackets[0].valid && current.touchPackets[0].bytes[0] == 0x5A,
+            "preserve helper copies cached touch packets");
+    Require(current.zoneBoxCount == 1 && current.zoneBoxes[0].zoneId == 3 && current.zoneBoxes[0].bbox.maxR == 8,
+            "preserve helper copies cached zone boxes");
+    Require(current.palmBoxCount == 1 && current.palmBoxes[0].id == 7 && current.palmBoxes[0].expandedBbox.maxC == 17,
+            "preserve helper copies cached palm boxes");
+}
+
 void VerifySolverDebugBoxesRoundTrip() {
     Solvers::HeatmapFrame solverIn{};
 
@@ -89,6 +168,7 @@ void VerifySolverDebugBoxesRoundTrip() {
 int main() {
     using namespace Ipc;
 
+    VerifyPreserveMasterTouchVisualization();
     VerifySolverDebugBoxesRoundTrip();
 
     SharedFrameWriter writer;

@@ -836,20 +836,25 @@ void DeviceRuntime::OnStreaming() {
     // 3. Stylus pipeline — reads rawPtr, writes frame.stylus
     m_stylusPipeline.Process(touchFrame);
 
-    // 4. Touch pipeline — reads frame, writes contacts/packets
-    if (m_masterParserOnly.load(std::memory_order_relaxed)) {
-      m_touchPipeline.ProcessMasterParserOnly(touchFrame);
-    } else {
-      dispatchTouch = m_touchPipeline.Process(touchFrame);
-    }
+    // 4. Touch pipeline — reads frame, writes contacts/packets.
+    // Skipped-master frames carry fresh stylus/slave data only; do not feed
+    // them into touch modules, otherwise BaselineTracker treats the missing
+    // master as invalid input and clears cross-frame finger visualization state.
+    if (touchFrame.masterWasRead) {
+      if (m_masterParserOnly.load(std::memory_order_relaxed)) {
+        m_touchPipeline.ProcessMasterParserOnly(touchFrame);
+      } else {
+        dispatchTouch = m_touchPipeline.Process(touchFrame);
+      }
 
-    // Serialized re-check: if parser-only was enabled between pipeline
-    // processing and this check, suppress touch dispatch. The lock
-    // guarantees that SetMasterParserOnlyMode's FlushTouchAllUp()
-    // either hasn't happened yet (touch→all-up = correct HID order)
-    // or already happened (dispatch suppressed = correct).
-    if (dispatchTouch && m_masterParserOnly.load(std::memory_order_relaxed)) {
-      dispatchTouch = false;
+      // Serialized re-check: if parser-only was enabled between pipeline
+      // processing and this check, suppress touch dispatch. The lock
+      // guarantees that SetMasterParserOnlyMode's FlushTouchAllUp()
+      // either hasn't happened yet (touch→all-up = correct HID order)
+      // or already happened (dispatch suppressed = correct).
+      if (dispatchTouch && m_masterParserOnly.load(std::memory_order_relaxed)) {
+        dispatchTouch = false;
+      }
     }
   }
 

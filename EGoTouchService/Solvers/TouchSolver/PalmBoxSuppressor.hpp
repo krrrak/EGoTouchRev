@@ -391,6 +391,21 @@ private:
         return false;
     }
 
+    inline bool PeakTouchesLivePalmBox(const Peak& peak) const {
+        for (const auto& track : m_tracks) {
+            if (ContainsPoint(track.expandedBbox, peak.r, peak.c)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static inline void SuppressEvaluation(PeakEvaluation& eval) {
+        eval.allowContact = false;
+        eval.palmEvidenceOnly = true;
+        eval.evalFlags |= PalmReasonPalmBoxSuppressed;
+    }
+
     inline void SuppressTouchingZones(const std::vector<MacroZone>& macroZones,
                                       std::span<const Peak> peaks) {
         const int zoneCount = std::min(static_cast<int>(macroZones.size()), kMaxPalmBoxes);
@@ -404,13 +419,14 @@ private:
 
         const int peakCount = std::min(static_cast<int>(peaks.size()), static_cast<int>(m_adjustedEvaluations.size()));
         for (int pi = 0; pi < peakCount; ++pi) {
-            const int zoneIndex = peaks[static_cast<size_t>(pi)].macroZoneIndex;
-            if (zoneIndex < 0 || zoneIndex >= zoneCount) continue;
-            if (suppressedZones[static_cast<size_t>(zoneIndex)] == 0) continue;
-            auto& eval = m_adjustedEvaluations[static_cast<size_t>(pi)];
-            eval.allowContact = false;
-            eval.palmEvidenceOnly = true;
-            eval.evalFlags |= PalmReasonPalmBoxSuppressed;
+            const auto& peak = peaks[static_cast<size_t>(pi)];
+            bool suppressed = PeakTouchesLivePalmBox(peak);
+            const int zoneIndex = peak.macroZoneIndex;
+            if (!suppressed && zoneIndex >= 0 && zoneIndex < zoneCount) {
+                suppressed = suppressedZones[static_cast<size_t>(zoneIndex)] != 0;
+            }
+            if (!suppressed) continue;
+            SuppressEvaluation(m_adjustedEvaluations[static_cast<size_t>(pi)]);
         }
     }
 };

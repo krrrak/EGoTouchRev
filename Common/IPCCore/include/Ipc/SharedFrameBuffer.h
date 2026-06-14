@@ -354,6 +354,28 @@ inline void CopySharedFrameData(SharedFrameData& dst, const SharedFrameData& src
     std::memcpy(&dst, &src, sizeof(SharedFrameData));
 }
 
+inline void PreserveMasterTouchVisualizationFromCachedFrame(SharedFrameData& dst,
+                                                            const SharedFrameData& cached) noexcept {
+    std::memcpy(dst.heatmapMatrix, cached.heatmapMatrix, sizeof(dst.heatmapMatrix));
+    if (dst.rawDataLength >= Frame::kMasterFrameSize && cached.rawDataLength >= Frame::kMasterFrameSize) {
+        std::memcpy(dst.rawData, cached.rawData, Frame::kMasterFrameSize);
+    }
+
+    std::memcpy(dst.touchZones, cached.touchZones, sizeof(dst.touchZones));
+    std::memcpy(dst.peakZones, cached.peakZones, sizeof(dst.peakZones));
+    dst.peakCount = cached.peakCount;
+    std::memcpy(dst.peaks, cached.peaks, sizeof(dst.peaks));
+    dst.contactCount = cached.contactCount;
+    std::memcpy(dst.contacts, cached.contacts, sizeof(dst.contacts));
+    std::memcpy(dst.touchPackets, cached.touchPackets, sizeof(dst.touchPackets));
+    dst.masterSuffix = cached.masterSuffix;
+    dst.masterSuffixValid = cached.masterSuffixValid;
+    dst.zoneBoxCount = cached.zoneBoxCount;
+    std::memcpy(dst.zoneBoxes, cached.zoneBoxes, sizeof(dst.zoneBoxes));
+    dst.palmBoxCount = cached.palmBoxCount;
+    std::memcpy(dst.palmBoxes, cached.palmBoxes, sizeof(dst.palmBoxes));
+}
+
 template <typename StylusType>
 inline void PopulateLegacyStylusPacketForSharedFrame(SharedStylusPacket& dst,
                                                      const StylusType& stylus) {

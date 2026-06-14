@@ -62,7 +62,11 @@ struct ServiceHost::Impl {
     uint32_t m_debugSchemaHash = 0;
     std::mutex m_debugFrameMutex;
     Solvers::HeatmapFrame m_latestDebugFrame;
+    Solvers::HeatmapFrame m_latestMasterTouchFrame;
+    Ipc::SharedFrameData m_latestMasterSharedFrame{};
     bool m_hasLatestDebugFrame = false;
+    bool m_hasLatestMasterTouchFrame = false;
+    bool m_hasLatestMasterSharedFrame = false;
 #endif
 
 };
@@ -108,6 +112,17 @@ std::size_t Utf8TruncatedLength(std::string_view text, std::size_t capacity) noe
 }
 
 #if EGOTOUCH_SERVICE_ENABLE_IPC
+void PreserveMasterTouchDebugState(Solvers::HeatmapFrame& dst,
+                                   const Solvers::HeatmapFrame& cached) {
+    std::memcpy(dst.heatmapMatrix, cached.heatmapMatrix, sizeof(dst.heatmapMatrix));
+    dst.masterSuffix = cached.masterSuffix;
+    dst.masterSuffixValid = cached.masterSuffixValid;
+    dst.touch.output = cached.touch.output;
+#if EGOTOUCH_DIAG
+    dst.touch.debug = cached.touch.debug;
+#endif
+}
+
 Ipc::IpcStatusCode ToIpcStatus(ServiceRuntimeStatusCode status) noexcept {
     return static_cast<Ipc::IpcStatusCode>(static_cast<uint8_t>(status));
 }
@@ -620,7 +635,11 @@ void ServiceHost::StopIpcSubsystem() {
     {
         std::lock_guard<std::mutex> lk(m_impl->m_debugFrameMutex);
         m_impl->m_hasLatestDebugFrame = false;
+        m_impl->m_hasLatestMasterTouchFrame = false;
+        m_impl->m_hasLatestMasterSharedFrame = false;
         m_impl->m_latestDebugFrame = Solvers::HeatmapFrame{};
+        m_impl->m_latestMasterTouchFrame = Solvers::HeatmapFrame{};
+        m_impl->m_latestMasterSharedFrame = Ipc::SharedFrameData{};
     }
     m_impl->m_debugMode = false;
 
@@ -989,13 +1008,31 @@ void ServiceHost::HandleIpcEnterDebugMode(Ipc::IpcResponse& resp) {
     if (m_impl->m_frameWriter.IsOpen()) {
         m_deviceRuntime->SetFramePushCallback(
             [this](const Solvers::HeatmapFrame& f) {
-                {
-                    std::lock_guard<std::mutex> lk(m_impl->m_debugFrameMutex);
-                    m_impl->m_latestDebugFrame = f;
-                    m_impl->m_hasLatestDebugFrame = true;
-                }
                 Ipc::SharedFrameData sharedFrame{};
                 Ipc::PopulateSharedFrameDataFromSolverFrame(sharedFrame, f);
+
+                Solvers::HeatmapFrame debugFrame = f;
+                {
+                    std::lock_guard<std::mutex> lk(m_impl->m_debugFrameMutex);
+                    if (f.masterWasRead) {
+                        m_impl->m_latestMasterTouchFrame = f;
+                        m_impl->m_latestMasterSharedFrame = sharedFrame;
+                        m_impl->m_hasLatestMasterTouchFrame = true;
+                        m_impl->m_hasLatestMasterSharedFrame = true;
+                    } else {
+                        if (m_impl->m_hasLatestMasterTouchFrame) {
+                            PreserveMasterTouchDebugState(debugFrame, m_impl->m_latestMasterTouchFrame);
+                        }
+                        if (m_impl->m_hasLatestMasterSharedFrame) {
+                            Ipc::PreserveMasterTouchVisualizationFromCachedFrame(
+                                sharedFrame,
+                                m_impl->m_latestMasterSharedFrame);
+                        }
+                    }
+                    m_impl->m_latestDebugFrame = debugFrame;
+                    m_impl->m_hasLatestDebugFrame = true;
+                }
+
                 const RuntimeSnapshot runtime = m_deviceRuntime->GetSnapshot();
                 sharedFrame.workerState = static_cast<int8_t>(runtime.state);
                 sharedFrame.streaming = runtime.state == workerState::streaming;
@@ -1027,7 +1064,11 @@ void ServiceHost::HandleIpcExitDebugMode(Ipc::IpcResponse& resp) {
     {
         std::lock_guard<std::mutex> lk(m_impl->m_debugFrameMutex);
         m_impl->m_hasLatestDebugFrame = false;
+        m_impl->m_hasLatestMasterTouchFrame = false;
+        m_impl->m_hasLatestMasterSharedFrame = false;
         m_impl->m_latestDebugFrame = Solvers::HeatmapFrame{};
+        m_impl->m_latestMasterTouchFrame = Solvers::HeatmapFrame{};
+        m_impl->m_latestMasterSharedFrame = Ipc::SharedFrameData{};
     }
     m_impl->m_debugMode = false;
 #endif

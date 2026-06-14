@@ -107,6 +107,46 @@ void TestExpandedPalmBoxSuppressesTouchingZone() {
     Require(frame.touch.output.contacts.empty(), "suppressed finger peak should not emit contact");
 }
 
+void TestPalmSourceZoneAllowedPeakIsSuppressed() {
+    ZoneFixture fixture;
+    const int palmZone = fixture.AddRect(10, 15, 10, 15);
+
+    std::vector<Solvers::Touch::MacroZoneFeature> features{
+        MakeFeature(palmZone, Solvers::Touch::PalmClass::PalmLikely)
+    };
+    std::vector<Solvers::Touch::Peak> peaks{
+        MakePeak(12, 12, palmZone, 1),
+        MakePeak(14, 14, palmZone, 2)
+    };
+    std::vector<Solvers::Touch::PeakEvaluation> evals{
+        MakeEval(false),
+        MakeEval(true)
+    };
+    evals[0].palmClass = Solvers::Touch::PalmClass::PalmLikely;
+    evals[0].zonePalmClass = Solvers::Touch::PalmClass::PalmLikely;
+    evals[0].palmEvidenceOnly = true;
+    evals[1].palmClass = Solvers::Touch::PalmClass::FingerLikely;
+    evals[1].zonePalmClass = Solvers::Touch::PalmClass::PalmLikely;
+
+    Solvers::Touch::PalmBoxSuppressor suppressor;
+    suppressor.m_expandRows = 9;
+    suppressor.m_expandCols = 10;
+    suppressor.Process(fixture.zones, features, peaks, evals);
+    const auto adjusted = suppressor.GetEvaluations();
+
+    Require(suppressor.GetPalmBoxes().size() == 1, "palm zone should create one palm box");
+    Require(!adjusted[1].allowContact, "allowed peak inside palm source zone should be suppressed");
+    Require((adjusted[1].evalFlags & Solvers::Touch::PalmReasonPalmBoxSuppressed) != 0,
+            "same-zone suppressed peak should carry palm box reason flag");
+
+    Solvers::HeatmapFrame frame{};
+    FillFrameForPeaks(frame, peaks);
+    Solvers::Touch::ZoneExpander expander;
+    expander.m_dilateErode = false;
+    expander.Process(frame, peaks, 100, adjusted);
+    Require(frame.touch.output.contacts.empty(), "same-zone suppressed peak should not emit contact");
+}
+
 void TestDistantZoneIsNotSuppressed() {
     ZoneFixture fixture;
     const int palmZone = fixture.AddRect(10, 15, 10, 15);
@@ -251,6 +291,7 @@ void TestMultiplePalmBoxesRemainIndependent() {
 int main() {
     try {
         TestExpandedPalmBoxSuppressesTouchingZone();
+        TestPalmSourceZoneAllowedPeakIsSuppressed();
         TestDistantZoneIsNotSuppressed();
         TestPalmBoxIdStaysStableAcrossSmallMotion();
         TestPalmBoxStaysWhilePeakDomainInside();
