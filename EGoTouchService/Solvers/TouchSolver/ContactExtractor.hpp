@@ -1,7 +1,6 @@
 #pragma once
 
 #include "SolverTypes.h"
-#include "MSType.hpp"
 #include "ZoneExpander.hpp"
 #include <algorithm>
 #include <array>
@@ -143,10 +142,26 @@ public:
     ZoneExpander m_zoneExp;
     TouchSizeCalculator m_touchSize;
 
+    // ── 统一签名入口：从 frame.touch.runtime 读取参数，结果写回 runtime ──
+    inline void ProcessDiagnostics(HeatmapFrame& frame) {
+        const auto& rt = frame.touch.runtime;
+        if (rt.macroZones) {
+            ProcessDiagnostics(frame, *rt.macroZones, rt.peaks);
+        }
+    }
+
     inline void ProcessDiagnostics(const HeatmapFrame& frame,
                                    const std::vector<MacroZone>& macroZones,
                                    std::span<const Peak> peaks) {
         m_microZoneSeg.Process(frame, macroZones, peaks);
+    }
+
+    // ── 统一签名入口 ──
+    inline void Process(HeatmapFrame& frame) {
+        const auto& rt = frame.touch.runtime;
+        Process(frame, rt.peaks, rt.peakThreshold, rt.peakEvaluations);
+        frame.touch.runtime.edgeInfos = GetEdgeInfos();
+        frame.touch.runtime.edgeBounds = &m_zoneExp.m_edgeBounds;
     }
 
     inline void Process(HeatmapFrame& frame,

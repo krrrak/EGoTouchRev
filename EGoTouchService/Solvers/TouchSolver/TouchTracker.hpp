@@ -2,11 +2,11 @@
 
 #include "SolverTypes.h"
 #include "GhostSuppressor.hpp"
+#include "StylusTouchSuppressor.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <limits>
-#include <vector>
 
 namespace Solvers { namespace Touch {
 
@@ -138,9 +138,9 @@ private:
     inline int AllocateId(const TrackState* reservedNextTracks, int reservedCount) const;
     inline StylusNoiseEvidence BuildStylusNoiseEvidence(const HeatmapFrame& frame,
                                                         int recheckThreshold) const;
-    inline bool IsStrongTouchCandidate(const TouchContact& touch) const;
-    inline bool ResolveStylusAftContext(const HeatmapFrame& frame, float& outX, float& outY);
-    inline bool ShouldStylusAftSuppress(const TouchContact& touch, int touchAge, float stylusX, float stylusY, int& outHoldFrames) const;
+    inline bool IsStrongTouchCandidate(const TouchContact& touch, const StylusTouchSuppressor* ss) const;
+    inline bool ResolveStylusAftContext(const HeatmapFrame& frame, float& outX, float& outY, const StylusTouchSuppressor* ss);
+    inline bool ShouldStylusAftSuppress(const TouchContact& touch, int touchAge, float stylusX, float stylusY, int& outHoldFrames, const StylusTouchSuppressor* ss) const;
     inline void SolveAssignment(const float* cost, int n, int m, int* rowToCol) const;
 };
 
@@ -569,18 +569,26 @@ inline TouchTracker::StylusNoiseEvidence TouchTracker::BuildStylusNoiseEvidence(
     return evidence;
 }
 
-inline bool TouchTracker::IsStrongTouchCandidate(const TouchContact& touch) const {
-    return (touch.signalSum >= m_stylusSuppressTouchSignalKeep) &&
-           (touch.area >= m_stylusSuppressTouchAreaKeep);
+inline bool TouchTracker::IsStrongTouchCandidate(const TouchContact& touch, const StylusTouchSuppressor* ss) const {
+    const int keepSignal = ss ? ss->m_stylusSuppressTouchSignalKeep : m_stylusSuppressTouchSignalKeep;
+    const int keepArea = ss ? ss->m_stylusSuppressTouchAreaKeep : m_stylusSuppressTouchAreaKeep;
+    return (touch.signalSum >= keepSignal) &&
+           (touch.area >= keepArea);
 }
 
-inline bool TouchTracker::ResolveStylusAftContext(const HeatmapFrame& frame, float& outX, float& outY) {
-    if (!m_stylusAftEnabled) return false;
+inline bool TouchTracker::ResolveStylusAftContext(const HeatmapFrame& frame, float& outX, float& outY, const StylusTouchSuppressor* ss) {
+    const bool globalEnabled = ss ? ss->m_stylusSuppressGlobalEnabled : m_stylusSuppressGlobalEnabled;
+    const bool aftEnabled = ss ? ss->m_stylusAftEnabled : m_stylusAftEnabled;
+    if (!globalEnabled || !aftEnabled) {
+        m_stylusFramesSinceActive = 1000000;
+        return false;
+    }
     const auto& interop = frame.stylus.interop;
+    const int penPeakThold = ss ? ss->m_stylusSuppressPenPeakThreshold : m_stylusSuppressPenPeakThreshold;
     const int baseThreshold =
         (interop.recheckThreshold > 0)
             ? static_cast<int>(interop.recheckThreshold)
-            : m_stylusSuppressPenPeakThreshold;
+            : penPeakThold;
     const int multiThreshold =
         (interop.recheckThresholdMulti > 0)
             ? static_cast<int>(interop.recheckThresholdMulti)
@@ -596,7 +604,8 @@ inline bool TouchTracker::ResolveStylusAftContext(const HeatmapFrame& frame, flo
     } else if (m_stylusFramesSinceActive < 1000000) {
         m_stylusFramesSinceActive += 1;
     }
-    if (m_stylusFramesSinceActive > m_stylusAftRecentFrames) return false;
+    const int aftRecentFrames = m_stylusAftRecentFrames;
+    if (m_stylusFramesSinceActive > aftRecentFrames) return false;
     outX = m_lastStylusX;
     outY = m_lastStylusY;
     return true;
@@ -606,20 +615,28 @@ inline bool TouchTracker::ShouldStylusAftSuppress(const TouchContact& touch,
                                                   int touchAge,
                                                   float stylusX,
                                                   float stylusY,
-                                                  int& outHoldFrames) const {
+                                                  int& outHoldFrames,
+                                                  const StylusTouchSuppressor* ss) const {
     outHoldFrames = 0;
-    if (!m_stylusAftEnabled) return false;
-    if (DistanceSq(touch.x, touch.y, stylusX, stylusY) > m_stylusAftRadius * m_stylusAftRadius) return false;
-    if (IsStrongTouchCandidate(touch)) return false;
+    const bool globalEnabled = ss ? ss->m_stylusSuppressGlobalEnabled : m_stylusSuppressGlobalEnabled;
+    const bool aftEnabled = ss ? ss->m_stylusAftEnabled : m_stylusAftEnabled;
+    if (!globalEnabled || !aftEnabled) return false;
+    const float aftRadius = m_stylusAftRadius;
+    if (DistanceSq(touch.x, touch.y, stylusX, stylusY) > aftRadius * aftRadius) return false;
+    if (IsStrongTouchCandidate(touch, ss)) return false;
     const bool palm = (touch.area >= m_stylusAftPalmAreaThreshold) || (touch.sizeMm >= m_stylusAftPalmSizeThresholdMm);
-    const bool weak = (touch.signalSum < m_stylusAftWeakSignalThreshold) && (touch.sizeMm < m_stylusAftWeakSizeThresholdMm);
-    const bool young = (touchAge <= m_stylusAftDebounceFrames);
+    const int weakSignalThold = ss ? ss->m_stylusAftWeakSignalThreshold : m_stylusAftWeakSignalThreshold;
+    const float weakSizeThold = ss ? ss->m_stylusAftWeakSizeThresholdMm : m_stylusAftWeakSizeThresholdMm;
+    const bool weak = (touch.signalSum < weakSignalThold) && (touch.sizeMm < weakSizeThold);
+    const int debounceFrames = ss ? ss->m_stylusAftDebounceFrames : m_stylusAftDebounceFrames;
+    const bool young = (touchAge <= debounceFrames);
     if (palm) {
         outHoldFrames = m_stylusAftPalmSuppressFrames;
         return true;
     }
+    const int suppressFrames = ss ? ss->m_stylusAftSuppressFrames : m_stylusAftSuppressFrames;
     if (weak || young) {
-        outHoldFrames = m_stylusAftSuppressFrames;
+        outHoldFrames = suppressFrames;
         return true;
     }
     return false;
@@ -709,6 +726,17 @@ inline void TouchTracker::SolveAssignment(const float* cost, int n, int m, int* 
 }
 
 inline bool TouchTracker::Process(HeatmapFrame& frame) {
+    const auto* ss = frame.touch.runtime.stylusSuppress;
+    const bool globalEnabled = ss ? ss->m_stylusSuppressGlobalEnabled : m_stylusSuppressGlobalEnabled;
+    if (!globalEnabled) {
+        m_stylusFramesSinceActive = 1000000;
+        for (int i = 0; i < m_trackCount; ++i) {
+            m_tracks[i].stylusSuppressFrames = 0;
+        }
+        frame.stylus.interop.touchSuppressActive = false;
+        frame.stylus.interop.touchSuppressFrames = 0;
+    }
+
     if (!m_enabled) {
         int nextId = 1;
         for (auto& c : frame.touch.output.contacts) {
@@ -729,7 +757,7 @@ inline bool TouchTracker::Process(HeatmapFrame& frame) {
     constexpr int kRows = 40, kCols = 60;
     constexpr float kEdgeMargin = 2.0f;
     float stylusAftX = 0, stylusAftY = 0;
-    const bool stylusAftActive = ResolveStylusAftContext(frame, stylusAftX, stylusAftY);
+    const bool stylusAftActive = ResolveStylusAftContext(frame, stylusAftX, stylusAftY, ss);
     const bool gapRelinkActive = m_gapRelinkEnabled && (m_gapRelinkWindowFrames > 0);
 
     const int curCount = static_cast<int>(std::min(frame.touch.output.contacts.size(), static_cast<size_t>(kMaxTracks)));
@@ -886,7 +914,7 @@ inline bool TouchTracker::Process(HeatmapFrame& frame) {
                 t.stylusSuppressFrames -= 1;
             } else {
                 int hold = 0;
-                if (ShouldStylusAftSuppress(o, t.age, stylusAftX, stylusAftY, hold)) {
+                if (ShouldStylusAftSuppress(o, t.age, stylusAftX, stylusAftY, hold, ss)) {
                     aftSuppressed = true;
                     t.stylusSuppressFrames = std::max(0, hold - 1);
                 }
@@ -923,7 +951,7 @@ inline bool TouchTracker::Process(HeatmapFrame& frame) {
         t.downDebounceFrames = ComputeTouchDownDebounceFrames(o);
         if (stylusAftActive) {
             int hold = 0;
-            if (ShouldStylusAftSuppress(o, t.age, stylusAftX, stylusAftY, hold))
+            if (ShouldStylusAftSuppress(o, t.age, stylusAftX, stylusAftY, hold, ss))
                 t.stylusSuppressFrames = std::max(0, hold - 1);
         }
         m_nextIdSeed = (t.id % effectiveMaxTouches) + 1;

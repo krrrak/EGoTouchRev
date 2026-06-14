@@ -4,7 +4,6 @@
 // TSACore Peak_Process: detect local maxima, filter, sort, track IDs.
 
 #include "SolverTypes.h"
-#include "MSType.hpp"
 #include <array>
 #include <algorithm>
 #include <cstdint>
@@ -35,6 +34,14 @@ public:
     int  m_maxPeaks = 20;
     int  m_pressureDriftDebounceLimit = 3;
     int  m_macroZoneMinArea = 4;
+
+    // ── 统一签名入口：从 frame.touch.runtime 读取参数，结果写回 runtime ──
+    inline void Process(HeatmapFrame& frame) {
+        if (frame.touch.runtime.macroZones) {
+            Detect(frame, *frame.touch.runtime.macroZones);
+        }
+        frame.touch.runtime.peaks = GetPeaks();
+    }
 
     // ────────────────────────────────────────────────────────
     // Public entry — mirrors TSACore Peak_Process()

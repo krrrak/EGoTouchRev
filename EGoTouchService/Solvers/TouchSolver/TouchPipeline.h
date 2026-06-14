@@ -26,6 +26,7 @@
 #include "ContactExtractor.hpp"
 #include "EdgeCompensation.hpp"
 #include "StylusTouchSuppressor.hpp"
+#include "TouchDiagnosticCache.hpp"
 
 // ── Phase 5: Tracking & Coordinate Filtering ──
 #include "TouchTracker.hpp"
@@ -34,7 +35,6 @@
 // ── Phase 6: Gesture & Output ──
 #include "TouchGestureStateMachine.hpp"
 
-#include <mutex>
 #include <atomic>
 #include <string>
 #include <vector>
@@ -49,12 +49,7 @@ namespace Solvers {
 
 class TouchPipeline {
 public:
-    TouchPipeline() {
-        SyncStylusSuppressConfigFromTracker();
-#if EGOTOUCH_DIAG
-        m_diagPeaks.reserve(Touch::PeakDetector::kMaxStoredPeaks);
-#endif
-    }
+    TouchPipeline() {}
 
     /// Main entry: processes one frame through all 6 phases.
     bool Process(HeatmapFrame& frame);
@@ -105,20 +100,16 @@ private:
     void PostProcessContacts(HeatmapFrame& frame);
     void UpdateContactCaches(HeatmapFrame& frame);
     void ResetIdleOutputs(HeatmapFrame& frame);
-    void SyncStylusSuppressConfigFromTracker();
 
 #if EGOTOUCH_DIAG
     void UpdateDiagnosticCaches(HeatmapFrame& frame);
 #endif
 
 #if EGOTOUCH_DIAG
-    mutable std::mutex m_diagMtx;
-    std::vector<Touch::Peak> m_diagPeaks;
-    std::array<uint8_t, 2400> m_diagTouchZones{};
-    std::array<uint8_t, 2400> m_diagZoneEdge{};
-    std::array<uint8_t, 2400> m_diagTouchZonesPrev{};
-    std::array<uint8_t, 2400> m_diagZoneEdgePrev{};
+    Touch::DiagnosticCache m_diagCache;
 #endif
+
+    bool m_prevHasLiveTouchState = false;
 
     // UI-thread-safe cache
     std::atomic<int> m_cachedPeakCount{0};

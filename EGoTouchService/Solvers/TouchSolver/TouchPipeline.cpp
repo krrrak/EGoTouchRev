@@ -18,6 +18,7 @@ bool TouchPipeline::ProcessMasterParserOnly(HeatmapFrame& frame) {
 }
 
 bool TouchPipeline::Process(HeatmapFrame& frame) {
+    frame.touch.ResetRuntime();
     ReserveContactCapacity(frame);
 
     if (!ProcessFrameParser(frame)) return true;
@@ -27,7 +28,7 @@ bool TouchPipeline::Process(HeatmapFrame& frame) {
     PostProcessContacts(frame);
     UpdateContactCaches(frame);
 #if EGOTOUCH_DIAG
-    UpdateDiagnosticCaches(frame);
+    m_diagCache.Update(frame, m_palmBoxSuppressor, m_contactExtractor);
 #endif
     return ProcessTrackingAndGesture(frame);
 }
@@ -52,7 +53,7 @@ bool TouchPipeline::ProcessSignalConditioning(HeatmapFrame& frame) {
     const bool hasCurrentFinger = frame.masterWasRead &&
                                   frame.masterSuffixValid &&
                                   frame.masterSuffix.hasFinger();
-    const bool hasLiveTouchState = m_tracker.HasLiveTracks() || m_gesture.HasLiveState();
+    const bool hasLiveTouchState = m_prevHasLiveTouchState;
 
     // ── Phase 2: Signal Conditioning ────────────────────────────────
     m_baseline.Process(frame, hasCurrentFinger);
@@ -68,36 +69,27 @@ bool TouchPipeline::ProcessSignalConditioning(HeatmapFrame& frame) {
 void TouchPipeline::GenerateContacts(HeatmapFrame& frame) {
     // ── Phase 3: Candidate Generation ───────────────────────────────
     frame.touch.output.contacts.clear();
-    m_macroZoneDet.Process(frame, m_peakDet.m_threshold);
-    const auto& macroZones = m_macroZoneDet.GetMacroZones();
-    m_peakDet.Detect(frame, macroZones);
-    const auto peaks = m_peakDet.GetPeaks();
+    frame.touch.runtime.peakThreshold = m_peakDet.m_threshold;
+
+    m_macroZoneDet.Process(frame);
+    m_peakDet.Process(frame);
 
     // ── Phase 4: Candidate Classification ───────────────────────────
-    m_touchClassifier.Process(frame, macroZones, peaks);
-    m_palmBoxSuppressor.Process(macroZones,
-                                m_touchClassifier.GetZoneFeatures(),
-                                peaks,
-                                m_touchClassifier.GetPeakEvaluations());
-    const auto peakEvaluations = m_palmBoxSuppressor.GetEvaluations();
+    m_touchClassifier.Process(frame);
+    m_palmBoxSuppressor.Process(frame);
 
 #if EGOTOUCH_DIAG
     // Diagnostic segmentation remains separate from contact generation.
-    m_contactExtractor.ProcessDiagnostics(frame, macroZones, peaks);
+    m_contactExtractor.ProcessDiagnostics(frame);
 #endif
 
     // ── Phase 5: Contact Extraction ─────────────────────────────────
-    m_contactExtractor.m_zoneExp.m_palmAwareExpansionEnabled = m_touchClassifier.m_palmAwareExpansionEnabled;
-    m_contactExtractor.m_zoneExp.m_fingerInPalmThresholdRatio = m_touchClassifier.m_fingerInPalmThresholdRatio;
-    m_contactExtractor.m_zoneExp.m_fingerInPalmMaxRadius = m_touchClassifier.m_fingerInPalmMaxRadius;
-    m_contactExtractor.Process(frame, peaks, m_peakDet.m_threshold, peakEvaluations);
+    m_contactExtractor.Process(frame);
 }
 
 void TouchPipeline::PostProcessContacts(HeatmapFrame& frame) {
-    const auto& edgeInfos = m_contactExtractor.GetEdgeInfos();
-    const auto& edgeBounds = m_contactExtractor.GetEdgeBounds();
-    m_edgeComp.Process(frame.touch.output.contacts.span(), edgeInfos, edgeBounds);
-    m_edgeReject.Process(frame.touch.output.contacts.span(), edgeInfos, edgeBounds);
+    m_edgeComp.Process(frame);
+    m_edgeReject.Process(frame);
     m_stylusSuppress.Process(frame);
 }
 
@@ -110,86 +102,20 @@ void TouchPipeline::UpdateContactCaches(HeatmapFrame& frame) {
 bool TouchPipeline::ProcessTrackingAndGesture(HeatmapFrame& frame) {
     m_tracker.Process(frame);
     m_coordFilter.Process(frame);
-    return ProcessGestureOutput(frame);
+    const bool success = ProcessGestureOutput(frame);
+
+    // 缓存跨帧状态并消除反向状态查询
+    frame.touch.runtime.hasLiveTouchState = m_tracker.HasLiveTracks() || m_gesture.HasLiveState();
+    m_prevHasLiveTouchState = frame.touch.runtime.hasLiveTouchState;
+
+    return success;
 }
 
 bool TouchPipeline::ProcessGestureOutput(HeatmapFrame& frame) {
     return m_gesture.Process(frame);
 }
 
-#if EGOTOUCH_DIAG
-void TouchPipeline::UpdateDiagnosticCaches(HeatmapFrame& frame) {
-    const auto& macroZones = m_macroZoneDet.GetMacroZones();
-    const auto peaks = m_peakDet.GetPeaks();
 
-    // MacroZone → touchZones colormap and bbox cache for IPC visualization
-    frame.touch.debug.touchZones.fill(0);
-    frame.touch.debug.zoneBoxes.clear();
-    for (size_t i = 0; i < macroZones.size(); ++i) {
-        const auto& zone = macroZones[i];
-        const uint8_t colorId = static_cast<uint8_t>((i % 10) + 1);
-        for (int idx : zone.pixels) {
-            if (idx >= 0 && idx < 2400) {
-                frame.touch.debug.touchZones[idx] = colorId;
-            }
-        }
-
-        TouchZoneDebugBox box;
-        box.zoneId = colorId;
-        box.zoneIndex = static_cast<uint8_t>(std::min<size_t>(i, 255));
-        box.bbox = {zone.minR, zone.maxR, zone.minC, zone.maxC};
-        box.area = zone.area;
-        box.signalSum = zone.signalSum;
-        frame.touch.debug.zoneBoxes.push_back(box);
-    }
-
-    frame.touch.debug.palmBoxes.clear();
-    for (const auto& palmBox : m_palmBoxSuppressor.GetPalmBoxes()) {
-        TouchPalmDebugBox box;
-        box.id = palmBox.id;
-        box.bbox = {palmBox.bbox.minR, palmBox.bbox.maxR, palmBox.bbox.minC, palmBox.bbox.maxC};
-        box.expandedBbox = {palmBox.expandedBbox.minR, palmBox.expandedBbox.maxR,
-                            palmBox.expandedBbox.minC, palmBox.expandedBbox.maxC};
-        box.age = palmBox.age;
-        box.missed = palmBox.missed;
-        box.lastMatchedZoneIndex = palmBox.lastMatchedZoneIndex;
-        box.anchorPeakCount = palmBox.anchorPeakCount;
-        box.signalSum = palmBox.signalSum;
-        box.matchedPalmThisFrame = palmBox.matchedPalmThisFrame;
-        frame.touch.debug.palmBoxes.push_back(box);
-    }
-
-    frame.touch.debug.peakZones = m_contactExtractor.GetPeakZones();
-
-    if (frame.touch.debug.peaks.capacity() < peaks.size()) {
-        frame.touch.debug.peaks.reserve(peaks.size());
-    }
-    frame.touch.debug.peaks.clear();
-    for (const auto& pk : peaks) {
-        frame.touch.debug.peaks.push_back({pk.r, pk.c, pk.z, pk.id});
-    }
-
-    const auto& zoneEdge = m_contactExtractor.GetZoneEdge();
-    const bool touchZonesChanged = frame.touch.debug.touchZones != m_diagTouchZonesPrev;
-    const bool zoneEdgeChanged = zoneEdge != m_diagZoneEdgePrev;
-
-    {
-        std::lock_guard<std::mutex> lk(m_diagMtx);
-        if (m_diagPeaks.capacity() < peaks.size()) {
-            m_diagPeaks.reserve(peaks.size());
-        }
-        m_diagPeaks.assign(peaks.begin(), peaks.end());
-        if (touchZonesChanged) {
-            m_diagTouchZones = frame.touch.debug.touchZones;
-            m_diagTouchZonesPrev = frame.touch.debug.touchZones;
-        }
-        if (zoneEdgeChanged) {
-            m_diagZoneEdge = zoneEdge;
-            m_diagZoneEdgePrev = zoneEdge;
-        }
-    }
-}
-#endif
 
 void TouchPipeline::ResetIdleOutputs(HeatmapFrame& frame) {
     frame.touch.output.contacts.clear();
@@ -206,41 +132,18 @@ void TouchPipeline::ResetIdleOutputs(HeatmapFrame& frame) {
     frame.touch.debug.zoneBoxes.clear();
     frame.touch.debug.palmBoxes.clear();
 
-    {
-        std::lock_guard<std::mutex> lk(m_diagMtx);
-        m_diagPeaks.clear();
-        m_diagTouchZones.fill(0);
-        m_diagZoneEdge.fill(0);
-        m_diagTouchZonesPrev.fill(0);
-        m_diagZoneEdgePrev.fill(0);
-    }
+    m_diagCache.Reset(frame);
 #endif
 }
 
-void TouchPipeline::SyncStylusSuppressConfigFromTracker() {
-    m_stylusSuppress.m_stylusSuppressGlobalEnabled = m_tracker.m_stylusSuppressGlobalEnabled;
-    m_stylusSuppress.m_stylusSuppressLocalEnabled = m_tracker.m_stylusSuppressLocalEnabled;
-    m_stylusSuppress.m_stylusSuppressLocalDistance = m_tracker.m_stylusSuppressLocalDistance;
-    m_stylusSuppress.m_stylusSuppressPenPeakThreshold = m_tracker.m_stylusSuppressPenPeakThreshold;
-    m_stylusSuppress.m_stylusSuppressTouchSignalKeep = m_tracker.m_stylusSuppressTouchSignalKeep;
-    m_stylusSuppress.m_stylusSuppressTouchAreaKeep = m_tracker.m_stylusSuppressTouchAreaKeep;
-    m_stylusSuppress.m_stylusAftEnabled = m_tracker.m_stylusAftEnabled;
-    m_stylusSuppress.m_stylusAftDebounceFrames = m_tracker.m_stylusAftDebounceFrames;
-    m_stylusSuppress.m_stylusAftWeakSignalThreshold = m_tracker.m_stylusAftWeakSignalThreshold;
-    m_stylusSuppress.m_stylusAftWeakSizeThresholdMm = m_tracker.m_stylusAftWeakSizeThresholdMm;
-    m_stylusSuppress.m_stylusAftSuppressFrames = m_tracker.m_stylusAftSuppressFrames;
-    m_stylusSuppress.m_fallbackSizeMm = m_tracker.m_fallbackSizeMm;
-    m_stylusSuppress.m_sizeAreaScale = m_tracker.m_sizeAreaScale;
-    m_stylusSuppress.m_sizeSignalScale = m_tracker.m_sizeSignalScale;
-}
+
 
 // ══════════════════════════════════════════════════════════════════════
 // Thread-safe accessors
 // ══════════════════════════════════════════════════════════════════════
 std::vector<Touch::Peak> TouchPipeline::GetPeaks() const {
 #if EGOTOUCH_DIAG
-    std::lock_guard<std::mutex> lk(m_diagMtx);
-    return m_diagPeaks;
+    return m_diagCache.GetPeaks();
 #else
     return {};
 #endif
@@ -248,8 +151,7 @@ std::vector<Touch::Peak> TouchPipeline::GetPeaks() const {
 
 std::array<uint8_t, 2400> TouchPipeline::GetTouchZones() const {
 #if EGOTOUCH_DIAG
-    std::lock_guard<std::mutex> lk(m_diagMtx);
-    return m_diagTouchZones;
+    return m_diagCache.GetTouchZones();
 #else
     return {};
 #endif
@@ -257,8 +159,7 @@ std::array<uint8_t, 2400> TouchPipeline::GetTouchZones() const {
 
 std::array<uint8_t, 2400> TouchPipeline::GetZoneEdge() const {
 #if EGOTOUCH_DIAG
-    std::lock_guard<std::mutex> lk(m_diagMtx);
-    return m_diagZoneEdge;
+    return m_diagCache.GetZoneEdge();
 #else
     return {};
 #endif
@@ -429,14 +330,14 @@ void TouchPipeline::registerBindings(Config::ConfigBinder& binder) {
                 3.30f, ConfigRange{0.0, 10.0},
                 "Palm sharpness maximum");
     binder.bind("touch.classifier.palm_aware_expansion_enabled",
-                &Touch::TouchClassifier::m_palmAwareExpansionEnabled, m_touchClassifier,
+                &Touch::ZoneExpander::m_palmAwareExpansionEnabled, m_contactExtractor.m_zoneExp,
                 true, {}, "Enable palm-aware zone expansion");
     binder.bind("touch.classifier.finger_in_palm_threshold_ratio",
-                &Touch::TouchClassifier::m_fingerInPalmThresholdRatio, m_touchClassifier,
+                &Touch::ZoneExpander::m_fingerInPalmThresholdRatio, m_contactExtractor.m_zoneExp,
                 0.70f, ConfigRange{0.0, 1.0},
                 "Finger-in-palm threshold ratio");
     binder.bind("touch.classifier.finger_in_palm_max_radius",
-                &Touch::TouchClassifier::m_fingerInPalmMaxRadius, m_touchClassifier,
+                &Touch::ZoneExpander::m_fingerInPalmMaxRadius, m_contactExtractor.m_zoneExp,
                 static_cast<int32_t>(3), ConfigRange{0, 16},
                 "Finger-in-palm max expansion radius");
 
@@ -555,21 +456,21 @@ void TouchPipeline::registerBindings(Config::ConfigBinder& binder) {
                 true, {}, "Use Hungarian assignment for tracking");
 
     binder.bind("touch.stylus_suppress.global_enabled",
-                &Touch::TouchTracker::m_stylusSuppressGlobalEnabled, m_tracker,
+                &Touch::StylusTouchSuppressor::m_stylusSuppressGlobalEnabled, m_stylusSuppress,
                 true, {}, "Enable stylus touch suppression globally");
     binder.bind("touch.stylus_suppress.local_enabled",
-                &Touch::TouchTracker::m_stylusSuppressLocalEnabled, m_tracker,
+                &Touch::StylusTouchSuppressor::m_stylusSuppressLocalEnabled, m_stylusSuppress,
                 true, {}, "Enable local stylus touch suppression");
     binder.bind("touch.stylus_suppress.local_distance",
-                &Touch::TouchTracker::m_stylusSuppressLocalDistance, m_tracker,
+                &Touch::StylusTouchSuppressor::m_stylusSuppressLocalDistance, m_stylusSuppress,
                 2.5f, ConfigRange{0.0, 30.0},
                 "Local stylus suppression distance");
     binder.bind("touch.stylus_suppress.pen_peak_threshold",
-                &Touch::TouchTracker::m_stylusSuppressPenPeakThreshold, m_tracker,
+                &Touch::StylusTouchSuppressor::m_stylusSuppressPenPeakThreshold, m_stylusSuppress,
                 static_cast<int32_t>(1500), ConfigRange{0, 20000},
                 "Stylus suppression pen peak threshold");
     binder.bind("touch.stylus_suppress.aft_enabled",
-                &Touch::TouchTracker::m_stylusAftEnabled, m_tracker,
+                &Touch::StylusTouchSuppressor::m_stylusAftEnabled, m_stylusSuppress,
                 true, {}, "Enable after-stylus touch suppression");
     binder.bind("touch.stylus_suppress.aft_recent_frames",
                 &Touch::TouchTracker::m_stylusAftRecentFrames, m_tracker,
@@ -666,9 +567,9 @@ void TouchPipeline::applyConfig(const Config::ConfigStore& store) {
     m_touchClassifier.m_fingerProminence = store.getOr<int32_t>("touch.classifier.finger_prominence", 100);
     m_touchClassifier.m_fingerSharpness = store.getOr<float>("touch.classifier.finger_sharpness", 3.35f);
     m_touchClassifier.m_palmSharpnessMax = store.getOr<float>("touch.classifier.palm_sharpness_max", 3.30f);
-    m_touchClassifier.m_palmAwareExpansionEnabled = store.getOr<bool>("touch.classifier.palm_aware_expansion_enabled", true);
-    m_touchClassifier.m_fingerInPalmThresholdRatio = store.getOr<float>("touch.classifier.finger_in_palm_threshold_ratio", 0.70f);
-    m_touchClassifier.m_fingerInPalmMaxRadius = store.getOr<int32_t>("touch.classifier.finger_in_palm_max_radius", 3);
+    m_contactExtractor.m_zoneExp.m_palmAwareExpansionEnabled = store.getOr<bool>("touch.classifier.palm_aware_expansion_enabled", true);
+    m_contactExtractor.m_zoneExp.m_fingerInPalmThresholdRatio = store.getOr<float>("touch.classifier.finger_in_palm_threshold_ratio", 0.70f);
+    m_contactExtractor.m_zoneExp.m_fingerInPalmMaxRadius = store.getOr<int32_t>("touch.classifier.finger_in_palm_max_radius", 3);
 
     m_palmBoxSuppressor.m_enabled = store.getOr<bool>("touch.palm_box.enabled", true);
     m_palmBoxSuppressor.m_expandRows = store.getOr<int32_t>("touch.palm_box.expand_rows", 1);
@@ -708,14 +609,13 @@ void TouchPipeline::applyConfig(const Config::ConfigStore& store) {
     m_tracker.m_dynamicDebounceEnabled = store.getOr<bool>("touch.tracking.dynamic_debounce_enabled", true);
     m_tracker.m_useHungarian = store.getOr<bool>("touch.tracking.use_hungarian", true);
 
-    m_tracker.m_stylusSuppressGlobalEnabled = store.getOr<bool>("touch.stylus_suppress.global_enabled", true);
-    m_tracker.m_stylusSuppressLocalEnabled = store.getOr<bool>("touch.stylus_suppress.local_enabled", true);
-    m_tracker.m_stylusSuppressLocalDistance = store.getOr<float>("touch.stylus_suppress.local_distance", 2.5f);
-    m_tracker.m_stylusSuppressPenPeakThreshold = store.getOr<int32_t>("touch.stylus_suppress.pen_peak_threshold", 1500);
-    m_tracker.m_stylusAftEnabled = store.getOr<bool>("touch.stylus_suppress.aft_enabled", true);
+    m_stylusSuppress.m_stylusSuppressGlobalEnabled = store.getOr<bool>("touch.stylus_suppress.global_enabled", true);
+    m_stylusSuppress.m_stylusSuppressLocalEnabled = store.getOr<bool>("touch.stylus_suppress.local_enabled", true);
+    m_stylusSuppress.m_stylusSuppressLocalDistance = store.getOr<float>("touch.stylus_suppress.local_distance", 2.5f);
+    m_stylusSuppress.m_stylusSuppressPenPeakThreshold = store.getOr<int32_t>("touch.stylus_suppress.pen_peak_threshold", 1500);
+    m_stylusSuppress.m_stylusAftEnabled = store.getOr<bool>("touch.stylus_suppress.aft_enabled", true);
     m_tracker.m_stylusAftRecentFrames = store.getOr<int32_t>("touch.stylus_suppress.aft_recent_frames", 24);
     m_tracker.m_stylusAftRadius = store.getOr<float>("touch.stylus_suppress.aft_radius", 2.8f);
-    SyncStylusSuppressConfigFromTracker();
 
     m_coordFilter.m_enabled = store.getOr<bool>("touch.coord_filter.enabled", true);
     m_coordFilter.m_minCutoff = store.getOr<float>("touch.coord_filter.min_cutoff", 4.404f);

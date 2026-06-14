@@ -23,6 +23,12 @@ public:
         m_macroZones.reserve(20);
     }
 
+    // ── 统一签名入口：从 frame.touch.runtime 读取参数，结果写回 runtime ──
+    inline void Process(HeatmapFrame& frame) {
+        Process(frame, frame.touch.runtime.peakThreshold);
+        frame.touch.runtime.macroZones = &m_macroZones;
+    }
+
     inline void Process(const HeatmapFrame& frame, int threshold) {
         const uint32_t visitEpoch = NextVisitEpoch();
         const int16_t* const heatmap = &frame.heatmapMatrix[0][0];

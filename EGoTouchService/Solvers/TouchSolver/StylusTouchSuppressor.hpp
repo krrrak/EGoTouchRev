@@ -113,8 +113,17 @@ inline bool StylusTouchSuppressor::IsStrongTouchCandidate(const TouchContact& to
 
 inline bool StylusTouchSuppressor::Process(HeatmapFrame& frame) {
     auto& interop = frame.stylus.interop;
-    interop.recheckEnabled =
-        interop.recheckEnabled || m_stylusSuppressLocalEnabled || m_stylusAftEnabled;
+    const bool localEnabled = m_stylusSuppressGlobalEnabled && m_stylusSuppressLocalEnabled;
+    const bool aftEnabled = m_stylusSuppressGlobalEnabled && m_stylusAftEnabled;
+    if (!localEnabled && !aftEnabled) {
+        interop.recheckOverlap = false;
+        interop.touchNullLike = false;
+        interop.touchSuppressActive = false;
+        interop.touchSuppressFrames = 0;
+        return false;
+    }
+
+    interop.recheckEnabled = interop.recheckEnabled || localEnabled || aftEnabled;
     interop.recheckOverlap = false;
     const int baseThreshold =
         (interop.recheckThreshold > 0)
@@ -135,7 +144,7 @@ inline bool StylusTouchSuppressor::Process(HeatmapFrame& frame) {
     const StylusNoiseEvidence evidence =
         BuildStylusNoiseEvidence(frame, finalThreshold);
     interop.recheckPassed = interop.recheckPassed && evidence.stable;
-    if (!m_stylusSuppressLocalEnabled || !evidence.pointValid) return false;
+    if (!localEnabled || !evidence.pointValid) return false;
 
     const float radiusSq = m_stylusSuppressLocalDistance * m_stylusSuppressLocalDistance;
     const float overlapRadius = std::min(m_stylusSuppressLocalDistance, 1.25f);

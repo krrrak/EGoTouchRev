@@ -38,6 +38,15 @@ struct TrackerHarness {
     TouchTracker tracker;
     uint64_t timestamp = 0;
 
+    TrackerHarness() {
+        stylusSuppressor.m_stylusSuppressGlobalEnabled = true;
+        stylusSuppressor.m_stylusSuppressLocalEnabled = true;
+        stylusSuppressor.m_stylusAftEnabled = true;
+        tracker.m_stylusSuppressGlobalEnabled = true;
+        tracker.m_stylusSuppressLocalEnabled = true;
+        tracker.m_stylusAftEnabled = true;
+    }
+
     HeatmapFrame Run(std::initializer_list<ContactSpec> contacts, const StylusSpec& stylus) {
         HeatmapFrame frame;
         timestamp += 8;
@@ -169,6 +178,46 @@ void TestAftKeepsSuppressingRecentWeakTouchAfterStylusLeaves() {
     Require(!aftHold.touch.output.contacts[0].isReported, "AFT hold should continue suppressing weak touch");
 }
 
+void TestGlobalDisableBypassesLocalAndAftSuppression() {
+    TrackerHarness harness;
+    harness.stylusSuppressor.m_stylusSuppressGlobalEnabled = false;
+    harness.tracker.m_stylusSuppressGlobalEnabled = false;
+
+    const StylusSpec stylus = MakeStylusSpec(true, 12.5f, 7.75f, 180, 500, 2200, true);
+    const auto frame = harness.Run({
+        ContactSpec{12.5f, 7.75f, 3, 160, 0.8f}
+    }, stylus);
+
+    const auto visible = VisibleContacts(frame);
+    Require(frame.touch.output.contacts.size() == 1, "global-off contact should not be erased by local suppression");
+    Require(visible.size() == 1, "global-off contact should remain reported");
+    Require(!frame.stylus.interop.touchSuppressActive, "global-off should clear touch suppress active flag");
+    Require(frame.stylus.interop.touchSuppressFrames == 0, "global-off should clear suppress hold frames");
+}
+
+void TestGlobalDisableClearsExistingAftSuppressionHold() {
+    TrackerHarness harness;
+
+    harness.Run({}, MakeStylusSpec(true, 10.0f, 10.0f, 200, 640, 2400, true));
+    const auto aftFrame = harness.Run({
+        ContactSpec{10.2f, 10.1f, 4, 180, 0.9f}
+    }, StylusSpec{});
+    Require(aftFrame.touch.output.contacts.size() == 1, "AFT setup should create hidden tracked touch");
+    Require(!aftFrame.touch.output.contacts[0].isReported, "AFT setup touch should be hidden");
+
+    harness.stylusSuppressor.m_stylusSuppressGlobalEnabled = false;
+    harness.tracker.m_stylusSuppressGlobalEnabled = false;
+    const auto disabledFrame = harness.Run({
+        ContactSpec{10.3f, 10.0f, 4, 180, 0.9f}
+    }, StylusSpec{});
+
+    const auto visible = VisibleContacts(disabledFrame);
+    Require(disabledFrame.touch.output.contacts.size() == 1, "global-off AFT hold should keep the tracked touch");
+    Require(visible.size() == 1, "global-off should report the touch despite previous AFT hold");
+    Require(!disabledFrame.stylus.interop.touchSuppressActive, "global-off should clear active suppress state");
+    Require(disabledFrame.stylus.interop.touchSuppressFrames == 0, "global-off should clear previous suppress frames");
+}
+
 } // namespace
 
 int main() {
@@ -178,6 +227,8 @@ int main() {
         TestStrongTouchNearStylusIsPreserved();
         TestFarTouchIsNotMisSuppressed();
         TestAftKeepsSuppressingRecentWeakTouchAfterStylusLeaves();
+        TestGlobalDisableBypassesLocalAndAftSuppression();
+        TestGlobalDisableClearsExistingAftSuppressionHold();
         std::cout << "[TEST] TouchTracker stylus suppress tests passed.\n";
         return 0;
     } catch (const std::exception& ex) {

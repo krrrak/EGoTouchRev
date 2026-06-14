@@ -1,47 +1,15 @@
 #pragma once
 
+#include "SolverTypes.h"
 #include "TouchFrameTypes.h"
+#include "TouchSharedTypes.h"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <vector>
 
 namespace Solvers {
 
-// TSACore edge boundary indices (sensor grid limits)
-// TSACore EC boundary values (physical sensor edges in grid units).
-// These extend half a cell beyond the last grid node on each side.
-// E.g. a 40×60 grid has nodes at [0,39]×[0,59],
-// but the physical sensor edge is at [0,40]×[0,60].
-struct EdgeBounds {
-    float colMin = 0.0f;     // Left physical edge
-    float colMax = 60.0f;    // Right physical edge (kCols)
-    float rowMin = 0.0f;     // Top physical edge
-    float rowMax = 40.0f;    // Bottom physical edge (kRows)
-};
-
-// Per-zone edge info collected by TZ_UpdateEdgeInfo during BFS
-struct ZoneEdgeInfo {
-    int outerColSigSum = 0;
-    int innerColSigSum = 0;
-    int outerRowSigSum = 0;
-    int innerRowSigSum = 0;
-    int16_t outerColMax = 0;
-    int16_t innerColMax = 0;
-    int16_t outerRowMax = 0;
-    int16_t innerRowMax = 0;
-
-    uint8_t minCol = 255, maxCol = 0;
-    uint8_t minRow = 255, maxRow = 0;
-    uint8_t minRowOnOuterCol = 255, maxRowOnOuterCol = 0;
-    uint8_t colAtMinOuterRow = 0, colAtMaxOuterRow = 0;
-    uint8_t minColOnOuterRow = 255, maxColOnOuterRow = 0;
-    uint8_t rowAtMinOuterCol = 0, rowAtMaxOuterCol = 0;
-    uint8_t colEdgeWidth = 0;
-    uint8_t rowEdgeWidth = 0;
-
-    uint32_t edgeFlags = 0;
-};
+// EdgeBounds 和 ZoneEdgeInfo 已迁移到 TouchSharedTypes.h
 
 // BFS-level grid limits (node indices, not physical edges)
 static constexpr int kGridColMin = 0, kGridColMax = 59;
@@ -282,6 +250,14 @@ public:
         g_defaultECProfiles[3],
     };
 
+    // ── 统一签名入口：从 frame.touch.runtime 读取 edgeInfos/edgeBounds ──
+    inline void Process(HeatmapFrame& frame) {
+        const auto& rt = frame.touch.runtime;
+        if (rt.edgeBounds) {
+            Process(frame.touch.output.contacts.span(), rt.edgeInfos, *rt.edgeBounds);
+        }
+    }
+
     inline void Process(std::span<TouchContact> contacts,
                         std::span<const ZoneEdgeInfo> edgeInfos,
                         const EdgeBounds& bounds) {
@@ -405,6 +381,14 @@ public:
     bool m_enabled = true;
     int  m_moveInDelay = 2;
     int  m_edgeMargin = 2;
+
+    // ── 统一签名入口：从 frame.touch.runtime 读取 edgeInfos/edgeBounds ──
+    inline void Process(HeatmapFrame& frame) {
+        const auto& rt = frame.touch.runtime;
+        if (rt.edgeBounds) {
+            Process(frame.touch.output.contacts.span(), rt.edgeInfos, *rt.edgeBounds);
+        }
+    }
 
     inline void Process(std::span<TouchContact> contacts,
                         std::span<const ZoneEdgeInfo> edgeInfos,

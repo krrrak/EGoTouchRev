@@ -1,10 +1,8 @@
 #pragma once
 
 #include "SolverTypes.h"
-#include "MSType.hpp"
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -51,6 +49,16 @@ public:
         m_tracks.reserve(kMaxPalmBoxes);
         m_observations.reserve(kMaxPalmBoxes);
         m_adjustedEvaluations.reserve(100);
+    }
+
+    // ── 统一签名入口：从 frame.touch.runtime 读取参数，结果写回 runtime ──
+    inline void Process(HeatmapFrame& frame) {
+        const auto& rt = frame.touch.runtime;
+        if (rt.macroZones) {
+            Process(*rt.macroZones, rt.zoneFeatures, rt.peaks, rt.peakEvaluations);
+        }
+        // adjusted evaluations 覆盖 runtime 中的原始 evaluations
+        frame.touch.runtime.peakEvaluations = GetEvaluations();
     }
 
     inline void Process(const std::vector<MacroZone>& macroZones,

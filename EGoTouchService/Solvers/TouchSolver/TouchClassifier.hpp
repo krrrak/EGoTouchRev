@@ -1,10 +1,7 @@
 #pragma once
 
 #include "SolverTypes.h"
-#include "MSType.hpp"
 #include <algorithm>
-#include <array>
-#include <cstdint>
 #include <span>
 #include <vector>
 
@@ -44,6 +41,16 @@ public:
     float m_fingerInPalmThresholdRatio = 0.70f;
     int   m_fingerInPalmMaxRadius = 3;
     bool  m_palmLikelyAllowContact = false;
+
+    // ── 统一签名入口：从 frame.touch.runtime 读取参数，结果写回 runtime ──
+    inline void Process(HeatmapFrame& frame) {
+        const auto& rt = frame.touch.runtime;
+        if (rt.macroZones) {
+            Process(frame, *rt.macroZones, rt.peaks);
+        }
+        frame.touch.runtime.zoneFeatures = {m_zoneFeatures.data(), m_zoneFeatures.size()};
+        frame.touch.runtime.peakEvaluations = GetPeakEvaluations();
+    }
 
     inline void Process(const HeatmapFrame& frame,
                         const std::vector<MacroZone>& macroZones,
