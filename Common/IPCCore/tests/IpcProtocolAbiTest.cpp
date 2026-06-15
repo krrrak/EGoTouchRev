@@ -150,14 +150,20 @@ int main() {
             "PersistConfigV3ResponseWire counters default zero");
 
     PenIdentityStatusWire penIdentity{};
-    Require(sizeof(PenIdentityStatusWire) == 140, "PenIdentityStatusWire layout remains fixed");
+    Require(sizeof(PenIdentityStatusWire) == 400, "PenIdentityStatusWire layout remains fixed");
     Require(penIdentity.wireVersion == kIpcProtocolVersion, "PenIdentityStatusWire version defaults to protocol version");
     Require(penIdentity.flags == 0, "PenIdentityStatusWire flags default empty");
     Require(penIdentity.stylusId == 0, "PenIdentityStatusWire stylus id defaults zero");
     Require(penIdentity.penModuleModelId == 0, "PenIdentityStatusWire model id defaults zero");
-    Require(penIdentity.hardwareVersionUtf8Len == 0, "PenIdentityStatusWire UTF-8 length defaults zero");
-    Require(sizeof(penIdentity.hardwareVersionUtf8) == 128, "PenIdentityStatusWire UTF-8 buffer capacity remains 128 bytes");
-    Require(penIdentity.hardwareVersionUtf8[0] == '\0', "PenIdentityStatusWire UTF-8 buffer is zero-initialized");
+    Require(penIdentity.hardwareVersionUtf8Len == 0, "PenIdentityStatusWire hardware UTF-8 length defaults zero");
+    Require(penIdentity.serialNumberUtf8Len == 0, "PenIdentityStatusWire serial UTF-8 length defaults zero");
+    Require(penIdentity.firmwareVersionUtf8Len == 0, "PenIdentityStatusWire firmware UTF-8 length defaults zero");
+    Require(sizeof(penIdentity.hardwareVersionUtf8) == 128, "PenIdentityStatusWire hardware UTF-8 buffer capacity remains 128 bytes");
+    Require(sizeof(penIdentity.serialNumberUtf8) == 128, "PenIdentityStatusWire serial UTF-8 buffer capacity remains 128 bytes");
+    Require(sizeof(penIdentity.firmwareVersionUtf8) == 128, "PenIdentityStatusWire firmware UTF-8 buffer capacity remains 128 bytes");
+    Require(penIdentity.hardwareVersionUtf8[0] == '\0', "PenIdentityStatusWire hardware UTF-8 buffer is zero-initialized");
+    Require(penIdentity.serialNumberUtf8[0] == '\0', "PenIdentityStatusWire serial UTF-8 buffer is zero-initialized");
+    Require(penIdentity.firmwareVersionUtf8[0] == '\0', "PenIdentityStatusWire firmware UTF-8 buffer is zero-initialized");
 
     DebugFieldSchemaWire schema{};
     Require(schema.fieldId == 0, "DebugFieldSchemaWire field id is zero-initialized");

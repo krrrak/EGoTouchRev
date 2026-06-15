@@ -2,6 +2,3 @@
 	path = Common/imgui-docking
 	url = https://github.com/ocornut/imgui.git
 	branch = docking
-[submodule "Common/spdlog"]
-	path = Common/spdlog
-	url = https://github.com/gabime/spdlog.git

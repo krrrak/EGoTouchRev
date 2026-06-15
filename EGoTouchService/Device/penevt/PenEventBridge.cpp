@@ -105,24 +105,14 @@ std::optional<std::wstring> PenEventBridge::FindDevicePath() {
 //
 // Payload: 32-byte binary，由 type-3 解码器从 ASCII 十进制字符串转换而来
 
-bool PenEventBridge::SendScanMode(uint8_t freq1, uint8_t freq2, uint8_t mode) {
+bool PenEventBridge::SendScanMode(uint8_t, uint8_t, uint8_t) {
     if (!IsTransportOpen()) {
         LOG_WARN("PenEvent", __func__, "MCU", "Transport not open, cannot send SetScanMode.");
         return false;
     }
 
-    const auto payload = BuildScanModePayload(freq1, freq2, mode);
-    PenUsbPacketBuffer pkt{};
-    if (!BuildPenUsbPayloadCommandBuffer(PenUsbCommandId::InitParamSet, payload, pkt) ||
-        !SendRawPacket(pkt.view())) {
-        LOG_WARN("PenEvent", __func__, "MCU", "SetScanMode send failed.");
-        return false;
-    }
-
-    LOG_INFO("PenEvent", __func__, "MCU",
-             "SetScanMode sent: freq1=0x{:02X}, freq2=0x{:02X}, mode={} payloadLen={}",
-             freq1, freq2, mode, payload.size());
-    return true;
+    LOG_INFO("PenEvent", __func__, "MCU", "Sending factory 0x7D01 scan mode payload.");
+    return SendInitProtocolParams();
 }
 
 // ── 协议辅助 ───────────────────────────────────────────────────────────────
@@ -170,14 +160,47 @@ void PenEventBridge::ExecuteInitAction(PenUsbInitAction action) {
     }
 }
 
+bool PenEventBridge::SendQueryPenModule() {
+    const auto query = BuildPenUsbCommandBuffer(PenUsbCommandId::QueryPenModule);
+    if (!SendRawPacket(query.view())) {
+        LOG_WARN("PenEvent", __func__, "MCU", "Failed to send 0x0001 QueryPenModule.");
+        return false;
+    }
+
+    LOG_INFO("PenEvent", __func__, "MCU", "Sent 0x0001 QueryPenModule.");
+    return true;
+}
+
+bool PenEventBridge::SendQuerySerialNumber() {
+    const auto query = BuildPenUsbCommandBuffer(PenUsbCommandId::QueryPenSerialNo);
+    if (!SendRawPacket(query.view())) {
+        LOG_WARN("PenEvent", __func__, "MCU", "Failed to send 0x0101 QueryPenSerialNo.");
+        return false;
+    }
+
+    LOG_INFO("PenEvent", __func__, "MCU", "Sent 0x0101 QueryPenSerialNo.");
+    return true;
+}
+
 bool PenEventBridge::SendQueryHardwareVersion() {
-    const auto query = BuildPenUsbFixedSizeCommandBuffer(PenUsbCommandId::QueryHardwareVersion);
+    const auto query = BuildPenUsbCommandBuffer(PenUsbCommandId::QueryHardwareVersion);
     if (!SendRawPacket(query.view())) {
         LOG_WARN("PenEvent", __func__, "MCU", "Failed to send 0x0201 QueryHardwareVersion.");
         return false;
     }
 
     LOG_INFO("PenEvent", __func__, "MCU", "Sent 0x0201 QueryHardwareVersion.");
+    return true;
+}
+
+bool PenEventBridge::SendQueryFirmwareVersion() {
+    const auto query = BuildPenUsbCommandBuffer(PenUsbCommandId::QueryFirmwareVersion);
+    if (!SendRawPacket(query.view())) {
+        LOG_WARN("PenEvent", __func__, "MCU", "Failed to send 0x0301 QueryFirmwareVersion.");
+        return false;
+    }
+
+    LOG_INFO("PenEvent", __func__, "MCU", "Sent 0x0301 QueryFirmwareVersion.");
     return true;
 }
 
@@ -214,6 +237,33 @@ bool PenEventBridge::SendSecondMcuStatusQuery() {
     return true;
 }
 
+bool PenEventBridge::SendPairInfoSet(uint8_t value) {
+    if (!IsTransportOpen()) {
+        LOG_WARN("PenEvent", __func__, "MCU", "Transport not open, cannot send 0x7E01 PairInfoSet.");
+        return false;
+    }
+
+    PenUsbPacketBuffer pkt{};
+    pkt.bytes[0] = 0x07;
+    pkt.bytes[1] = 0x01;
+    pkt.bytes[2] = 0x02;
+    pkt.bytes[3] = 0x00;
+    pkt.bytes[4] = 0x01; // CMD_LO
+    pkt.bytes[5] = 0x7E; // CMD_HI
+    pkt.bytes[6] = 0x11;
+    pkt.bytes[7] = 0x01; // payload tag = 0x01 (Match-Info 专用 payload tag)
+    pkt.bytes[8] = value;
+    pkt.size = 9;
+
+    if (!SendRawPacket(pkt.view())) {
+        LOG_WARN("PenEvent", __func__, "MCU", "PairInfoSet send failed.");
+        return false;
+    }
+
+    LOG_INFO("PenEvent", __func__, "MCU", "Sent 0x7E01 PairInfoSet: value={}", value);
+    return true;
+}
+
 void PenEventBridge::AdvanceSessionFromEvent(uint8_t eventCode) {
     PenUsbInitAction action = PenUsbInitAction::None;
     {
@@ -227,7 +277,10 @@ void PenEventBridge::AdvanceSessionFromEvent(uint8_t eventCode) {
 // ── BtHidChannel hooks ────────────────────────────────────────────────────
 void PenEventBridge::OnConnected() {
     RunHandshake();
+    (void)SendQueryPenModule();
+    (void)SendQuerySerialNumber();
     (void)SendQueryHardwareVersion();
+    (void)SendQueryFirmwareVersion();
 }
 
 void PenEventBridge::OnPacketReceived(std::span<const uint8_t> packet) {
@@ -239,6 +292,9 @@ void PenEventBridge::OnPacketReceived(std::span<const uint8_t> packet) {
     }
 
     const uint8_t eventCode = parsed->eventCode;
+
+    LOG_INFO("PenEvent", __func__, "MCU", "Received event packet: code=0x{:02X} (Name={}) payloadLen={}",
+             eventCode, PenUsbEventNameFromRaw(eventCode), parsed->payload.size());
 
     int ackCode = GetAckCode(eventCode);
     if (ackCode >= 0) {
@@ -257,12 +313,12 @@ void PenEventBridge::OnPacketReceived(std::span<const uint8_t> packet) {
         if (!ev.payload.empty()) {
             switch (ev.code) {
             case PenUsbEventCode::PenModule: {
-                const uint8_t payloadLength = packet[7];
+                const auto payloadLength = static_cast<uint8_t>(parsed->payload.size());
                 auto modelId = TryParsePenModuleModelId(parsed->payload, payloadLength);
                 if (!modelId) {
                     LOG_WARN("PenEvent", __func__, "MCU",
-                             "PenModule ignored: invalid payloadLen={} available={}.",
-                             payloadLength, parsed->payload.size());
+                             "PenModule ignored: invalid payloadLen={}",
+                             parsed->payload.size());
                     break;
                 }
 
@@ -275,6 +331,17 @@ void PenEventBridge::OnPacketReceived(std::span<const uint8_t> packet) {
                 ev.semantic.penModuleProtocolHint = modelInfo.protocolHint;
                 break;
             }
+            case PenUsbEventCode::PenSerialNumber: {
+                auto serialNumber = DecodePenUsbUtf8Payload(parsed->payload);
+                ev.semantic.hasSerialNumber = !serialNumber.empty();
+                ev.semantic.serialNumber = std::move(serialNumber);
+                if (!ev.semantic.hasSerialNumber) {
+                    LOG_WARN("PenEvent", __func__, "MCU",
+                             "PenSerialNumber ignored: empty or invalid UTF-8 payloadLen={}",
+                             parsed->payload.size());
+                }
+                break;
+            }
             case PenUsbEventCode::PenHardwareVersion: {
                 auto hardwareVersion = DecodePenUsbUtf8Payload(parsed->payload);
                 ev.semantic.hasHardwareVersion = !hardwareVersion.empty();
@@ -282,6 +349,17 @@ void PenEventBridge::OnPacketReceived(std::span<const uint8_t> packet) {
                 if (!ev.semantic.hasHardwareVersion) {
                     LOG_WARN("PenEvent", __func__, "MCU",
                              "PenHardwareVersion ignored: empty or invalid UTF-8 payloadLen={}",
+                             parsed->payload.size());
+                }
+                break;
+            }
+            case PenUsbEventCode::UsbdSwVersion: {
+                auto firmwareVersion = DecodePenUsbUtf8Payload(parsed->payload);
+                ev.semantic.hasFirmwareVersion = !firmwareVersion.empty();
+                ev.semantic.firmwareVersion = std::move(firmwareVersion);
+                if (!ev.semantic.hasFirmwareVersion) {
+                    LOG_WARN("PenEvent", __func__, "MCU",
+                             "UsbdSwVersion ignored: empty or invalid UTF-8 payloadLen={}",
                              parsed->payload.size());
                 }
                 break;

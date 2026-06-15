@@ -16,7 +16,7 @@ using DeviceTests::Require;
 void TestValidFactoryEventFrameParses() {
     const std::array<uint8_t, 12> packet{
         0x00, 0x00, 0x07, 0x00,
-        0x01, 0x71, 0x00, 0x00,
+        0x01, 0x71, 0x00, 0x04,
         0x01, 0xAA, 0xBB, 0xCC,
     };
 
@@ -30,7 +30,7 @@ void TestValidFactoryEventFrameParses() {
 void TestMinimumFactoryEventFrameParses() {
     const std::array<uint8_t, 9> packet{
         0x00, 0x00, 0x07, 0x00,
-        0x01, 0x6F, 0x00, 0x00,
+        0x01, 0x6F, 0x00, 0x01,
         0xEE,
     };
 
@@ -51,14 +51,14 @@ void TestHardwareVersionEventFrameParses() {
     auto parsed = Himax::Pen::TryParsePenUsbEventFrame(packet);
     Require(parsed.has_value(), "hardware version frame should parse");
     Require(parsed->eventCode == 0x02, "hardware version event code should be 0x02");
-    Require(parsed->payload.size() == 6, "hardware version payload should start at packet[8]");
+    Require(parsed->payload.size() == 5, "hardware version payload length should come from packet[7]");
     Require(parsed->payload[0] == 'H', "hardware version payload[0] should preserve packet[8]");
 }
 
 void TestInvalidFactoryEventFramesAreRejected() {
-    const std::array<uint8_t, 8> shortPacket{
+    const std::array<uint8_t, 7> shortPacket{
         0x00, 0x00, 0x07, 0x00,
-        0x01, 0x71, 0x00, 0x00,
+        0x01, 0x71, 0x00,
     };
     Require(!Himax::Pen::TryParsePenUsbEventFrame(shortPacket).has_value(),
             "short packet should be rejected");
@@ -78,6 +78,14 @@ void TestInvalidFactoryEventFramesAreRejected() {
     };
     Require(!Himax::Pen::TryParsePenUsbEventFrame(wrongCommandLow).has_value(),
             "packet with wrong packet[4] command low byte should be rejected");
+
+    std::array<uint8_t, 9> truncatedPayload{
+        0x00, 0x00, 0x07, 0x00,
+        0x01, 0x71, 0x00, 0x02,
+        0x01,
+    };
+    Require(!Himax::Pen::TryParsePenUsbEventFrame(truncatedPayload).has_value(),
+            "packet whose payload length exceeds bytesRead should be rejected");
 
     std::array<uint8_t, 9> validBytesAtWrongOffsets{
         0x07, 0x01, 0x00, 0x00,
@@ -116,6 +124,8 @@ void TestEventCodeNames() {
     using Himax::Pen::PenUsbEventNameFromRaw;
     using Himax::Pen::ToString;
 
+    Require(PenUsbEventCodeFromRaw(0x01) == PenUsbEventCode::PenSerialNumber,
+            "0x01 should map to PenSerialNumber");
     Require(PenUsbEventCodeFromRaw(0x71) == PenUsbEventCode::PenConnStatus,
             "0x71 should map to PenConnStatus");
     Require(PenUsbEventCodeFromRaw(0x7B) == PenUsbEventCode::PenRepParam,
@@ -140,21 +150,21 @@ void TestEventCodeNames() {
 void TestCommandPacketBuilders() {
     using Himax::Pen::BuildPenUsbCommand;
     using Himax::Pen::BuildPenUsbEventAck;
-    using Himax::Pen::BuildPenUsbFixedSizeCommand;
     using Himax::Pen::BuildPenUsbPayloadCommand;
     using Himax::Pen::PenUsbCommandId;
 
+    Require(BuildPenUsbCommand(PenUsbCommandId::QueryPenModule) ==
+                std::vector<uint8_t>({0x07, 0x00, 0x02, 0x00, 0x01, 0x00, 0x11, 0x00}),
+            "0x0001 command packet should query pen module");
+    Require(BuildPenUsbCommand(PenUsbCommandId::QueryPenSerialNo) ==
+                std::vector<uint8_t>({0x07, 0x00, 0x02, 0x00, 0x01, 0x01, 0x11, 0x00}),
+            "0x0101 command packet should query pen serial number");
     Require(BuildPenUsbCommand(PenUsbCommandId::QueryHardwareVersion) ==
                 std::vector<uint8_t>({0x07, 0x00, 0x02, 0x00, 0x01, 0x02, 0x11, 0x00}),
             "0x0201 command packet should query pen hardware version");
-    const auto hardwareVersionQuery = BuildPenUsbFixedSizeCommand(PenUsbCommandId::QueryHardwareVersion);
-    Require(hardwareVersionQuery.size() == 0x40,
-            "hardware version fixed-size query should be padded to 64 bytes");
-    Require(std::vector<uint8_t>(hardwareVersionQuery.begin(), hardwareVersionQuery.begin() + 8) ==
-                std::vector<uint8_t>({0x07, 0x00, 0x02, 0x00, 0x01, 0x02, 0x11, 0x00}),
-            "hardware version fixed-size query should preserve the request header");
-    Require(hardwareVersionQuery[8] == 0x00 && hardwareVersionQuery[0x3F] == 0x00,
-            "hardware version fixed-size query should be zero padded after the header");
+    Require(BuildPenUsbCommand(PenUsbCommandId::QueryFirmwareVersion) ==
+                std::vector<uint8_t>({0x07, 0x00, 0x02, 0x00, 0x01, 0x03, 0x11, 0x00}),
+            "0x0301 command packet should query pen firmware version");
     Require(BuildPenUsbCommand(PenUsbCommandId::QueryPenStatus) ==
                 std::vector<uint8_t>({0x07, 0x00, 0x02, 0x00, 0x01, 0x71, 0x11, 0x00}),
             "0x7101 command packet should match factory bytes");

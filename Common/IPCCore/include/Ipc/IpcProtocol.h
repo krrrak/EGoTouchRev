@@ -55,6 +55,8 @@ enum class IpcCommand : uint8_t {
     TriggerQueryHardwareVersion = 66,
     TriggerQueryPenStatus = 67,
     TriggerQueryPenInfo = 68,
+    TriggerSendScanMode = 69,
+    TriggerSendPairInfoSet = 70,
 };
 
 constexpr bool IsLegacyConfigTombstoneCommand(IpcCommand command) noexcept {
@@ -91,6 +93,8 @@ constexpr bool IsSupportedIpcCommand(IpcCommand command) noexcept {
     case IpcCommand::TriggerQueryHardwareVersion:
     case IpcCommand::TriggerQueryPenStatus:
     case IpcCommand::TriggerQueryPenInfo:
+    case IpcCommand::TriggerSendScanMode:
+    case IpcCommand::TriggerSendPairInfoSet:
     case IpcCommand::GetDebugSchema:
     case IpcCommand::GetDebugSnapshot:
     case IpcCommand::SetPenPressureMode:
@@ -349,6 +353,8 @@ constexpr uint8_t kPenIdentityHasStylusId = 1u << 0;
 constexpr uint8_t kPenIdentityHasPenModuleModelId = 1u << 1;
 constexpr uint8_t kPenIdentityHasHardwareVersion = 1u << 2;
 constexpr uint8_t kPenIdentityConnected = 1u << 3;
+constexpr uint8_t kPenIdentityHasSerialNumber = 1u << 4;
+constexpr uint8_t kPenIdentityHasFirmwareVersion = 1u << 5;
 
 struct PenIdentityStatusWire {
     uint16_t wireVersion = kIpcProtocolVersion;
@@ -358,6 +364,10 @@ struct PenIdentityStatusWire {
     uint16_t hardwareVersionUtf8Len = 0;
     uint16_t _reserved0 = 0;
     char hardwareVersionUtf8[128]{};
+    uint16_t serialNumberUtf8Len = 0;
+    uint16_t firmwareVersionUtf8Len = 0;
+    char serialNumberUtf8[128]{};
+    char firmwareVersionUtf8[128]{};
 };
 
 struct IpcRequest {

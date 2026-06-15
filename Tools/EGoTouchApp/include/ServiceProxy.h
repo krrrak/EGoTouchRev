@@ -232,6 +232,8 @@ public:
     bool TriggerQueryHardwareVersion();
     bool TriggerQueryPenStatus();
     bool TriggerQueryPenInfo();
+    bool TriggerSendScanMode(uint8_t freq1, uint8_t freq2, uint8_t mode);
+    bool TriggerSendPairInfoSet(uint8_t value);
     PenBridgeStatus GetPenBridgeStatus() const {
 
         std::lock_guard<std::mutex> lk(m_penMutex);

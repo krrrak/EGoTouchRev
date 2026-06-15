@@ -178,8 +178,12 @@ std::string PenIdentitySummary(const PenIdentityStatus& pen) {
     summary += pen.hasStylusId ? std::to_string(static_cast<unsigned int>(pen.stylusId)) : "Unknown";
     summary += " | modelId=";
     summary += PenModuleModelText(pen);
+    summary += " | serial=";
+    summary += (pen.hasSerialNumber && !pen.serialNumber.empty()) ? pen.serialNumber : "Unknown";
     summary += " | hardwareVersion=";
     summary += (pen.hasHardwareVersion && !pen.hardwareVersion.empty()) ? pen.hardwareVersion : "Unknown";
+    summary += " | firmwareVersion=";
+    summary += (pen.hasFirmwareVersion && !pen.firmwareVersion.empty()) ? pen.firmwareVersion : "Unknown";
     return summary;
 }
 
@@ -1095,21 +1099,35 @@ void DiagnosticsWorkbench::DrawBtMcuPanel() {
         ImGui::TextDisabled("DISCONNECTED / UNKNOWN");
 
     if (pen.hasStylusId)
-        ImGui::Text("Current Stylus ID: %u (0x%02X)", pen.stylusId, pen.stylusId);
+        ImGui::Text("Current Stylus ID (via 0x73 PenTypeInfo): %u (0x%02X)", pen.stylusId, pen.stylusId);
     else
-        ImGui::TextDisabled("Current Stylus ID: Unknown");
+        ImGui::TextDisabled("Current Stylus ID (via 0x73 PenTypeInfo): Unknown");
 
     if (pen.hasPenModuleModelId) {
         const std::string modelText = PenModuleModelText(pen);
-        ImGui::Text("Pen Module Model ID: %s", modelText.c_str());
+        ImGui::Text("Pen Module Model ID (via 0x00 PenModule): %s", modelText.c_str());
     } else {
-        ImGui::TextDisabled("Pen Module Model ID: Unknown");
+        ImGui::TextDisabled("Pen Module Model ID (via 0x00 PenModule): Unknown");
     }
 
-    ImGui::TextUnformatted("Hardware Version:");
+    ImGui::TextUnformatted("Serial Number (via 0x01 PenSerialNo):");
+    ImGui::SameLine();
+    if (pen.hasSerialNumber && !pen.serialNumber.empty())
+        ImGui::TextUnformatted(pen.serialNumber.c_str());
+    else
+        ImGui::TextDisabled("Unknown");
+
+    ImGui::TextUnformatted("Hardware Version (via 0x02 PenHardwareVersion):");
     ImGui::SameLine();
     if (pen.hasHardwareVersion && !pen.hardwareVersion.empty())
         ImGui::TextUnformatted(pen.hardwareVersion.c_str());
+    else
+        ImGui::TextDisabled("Unknown");
+
+    ImGui::TextUnformatted("Firmware / SW Version (via 0x03 USBD_SW_VERSION):");
+    ImGui::SameLine();
+    if (pen.hasFirmwareVersion && !pen.firmwareVersion.empty())
+        ImGui::TextUnformatted(pen.firmwareVersion.c_str());
     else
         ImGui::TextDisabled("Unknown");
 
@@ -1127,12 +1145,26 @@ void DiagnosticsWorkbench::DrawBtMcuPanel() {
     if (ImGui::Button("Query Hardware Version (0x0201)", ImVec2(-1, 24))) {
         m_proxy->TriggerQueryHardwareVersion();
     }
-    if (ImGui::Button("Query Pen Status (0x7101)", ImVec2(-1, 24))) {
+    if (ImGui::Button("Query Pen Status (0x7101) [触发 0x73/0x00 获取]", ImVec2(-1, 24))) {
         m_proxy->TriggerQueryPenStatus();
     }
     if (ImGui::Button("Query MCU Status (0x7701)", ImVec2(-1, 24))) {
         m_proxy->TriggerQueryPenInfo();
     }
+
+    if (ImGui::Button("Send Factory Init Params (0x7D01)", ImVec2(-1, 24))) {
+        m_proxy->TriggerSendScanMode(0, 0, 0);
+    }
+
+    static int pairVal = 0;
+    ImGui::TextUnformatted("Pair Info Set (0x7E01) Value:");
+    ImGui::PushItemWidth(80.0f);
+    ImGui::InputInt("Value##PairInfo", &pairVal);
+    ImGui::PopItemWidth();
+    if (ImGui::Button("Send PairInfoSet (0x7E01)", ImVec2(-1, 24))) {
+        m_proxy->TriggerSendPairInfoSet(static_cast<uint8_t>(pairVal));
+    }
+
     if (!mcuQueryAllowed) {
         ImGui::EndDisabled();
     }

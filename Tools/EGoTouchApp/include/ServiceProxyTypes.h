@@ -27,8 +27,12 @@ struct PenIdentityStatus {
     uint8_t stylusId = 0;
     bool hasPenModuleModelId = false;
     uint32_t penModuleModelId = 0;
+    bool hasSerialNumber = false;
+    std::string serialNumber;
     bool hasHardwareVersion = false;
     std::string hardwareVersion;
+    bool hasFirmwareVersion = false;
+    std::string firmwareVersion;
 };
 
 enum class FrameSourceMode {

@@ -503,24 +503,28 @@ Offset  Size  Field         Type      说明
 | Req | paramLen | `0` |
 | Res | success | `true` |
 | Res | data | `PenIdentityStatusWire` |
-| Res | dataLen | `140` |
+| Res | dataLen | `400` |
 | Res | status (失败) | `InvalidState` (DeviceRuntime 未就绪) |
 
-**PenIdentityStatusWire** 布局 (140 bytes):
+**PenIdentityStatusWire** 布局 (400 bytes):
 
 ```
 Offset  Size  Field                   Type       说明
 ------  ----  -----                   ----       ----
 0       2     wireVersion             uint16_t   IPC 协议版本
-2       1     flags                   uint8_t    bit0=stylusId 有效, bit1=modelId 有效, bit2=hardwareVersion 有效, bit3=connected
+2       1     flags                   uint8_t    bit0=stylusId 有效, bit1=modelId 有效, bit2=hardwareVersion 有效, bit3=connected, bit4=serialNumber 有效, bit5=firmwareVersion 有效
 3       1     stylusId                uint8_t    PenTypeInfo payload[0]
 4       4     penModuleModelId        uint32_t   PenModule 小端 modelId
 8       2     hardwareVersionUtf8Len  uint16_t   UTF-8 字节长度, 不含 NUL
 10      2     _reserved0              uint16_t   保留
 12      128   hardwareVersionUtf8     char[128]  UTF-8 validated 字符串缓冲, 额外 NUL 仅供 C string 便利
+140     2     serialNumberUtf8Len     uint16_t   UTF-8 字节长度, 不含 NUL
+142     2     firmwareVersionUtf8Len   uint16_t   UTF-8 字节长度, 不含 NUL
+144     128   serialNumberUtf8        char[128]  UTF-8 validated 字符串缓冲
+272     128   firmwareVersionUtf8     char[128]  UTF-8 validated 字符串缓冲
 ```
 
-字符串约束：`hardwareVersionUtf8Len` 是字节数，不是字符数；服务端按 UTF-8 边界截断，不会截断到多字节字符中间。
+字符串约束：`hardwareVersionUtf8Len` / `serialNumberUtf8Len` / `firmwareVersionUtf8Len` 是字节数，不是字符数；服务端按 UTF-8 边界截断，不会截断到多字节字符中间。
 
 ---
 

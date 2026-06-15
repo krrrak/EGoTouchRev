@@ -95,8 +95,12 @@ void ClearPenIdentityState(RuntimePenState &state) noexcept {
   state.hasPenModuleModelId = false;
   state.penModuleModelId = 0;
   state.penModuleModel = Himax::Pen::PenModuleModel::Unknown;
+  state.hasSerialNumber = false;
+  state.serialNumber.clear();
   state.hasHardwareVersion = false;
   state.hardwareVersion.clear();
+  state.hasFirmwareVersion = false;
+  state.firmwareVersion.clear();
 }
 
 Solvers::StylusProtocolHint ResolveProtocolHintFromPenModule(
@@ -985,6 +989,22 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
     break;
   }
 
+  case EC::PenSerialNumber: {
+    if (!ev.semantic.hasSerialNumber) {
+      LOG_WARN("Runtime", __func__, "MCU",
+               "PenSerialNumber ignored because no valid serial semantic was present.");
+      break;
+    }
+
+    {
+      std::lock_guard<std::mutex> lk(m_penStateMu);
+      m_penState.hasSerialNumber = true;
+      m_penState.serialNumber = ev.semantic.serialNumber;
+    }
+
+    break;
+  }
+
   case EC::PenHardwareVersion: {
     if (!ev.semantic.hasHardwareVersion) {
       LOG_WARN("Runtime", __func__, "MCU",
@@ -996,6 +1016,22 @@ void DeviceRuntime::IngestPenEvent(const Himax::Pen::PenEvent &ev) {
       std::lock_guard<std::mutex> lk(m_penStateMu);
       m_penState.hasHardwareVersion = true;
       m_penState.hardwareVersion = ev.semantic.hardwareVersion;
+    }
+
+    break;
+  }
+
+  case EC::UsbdSwVersion: {
+    if (!ev.semantic.hasFirmwareVersion) {
+      LOG_WARN("Runtime", __func__, "MCU",
+               "UsbdSwVersion ignored because no valid firmware semantic was present.");
+      break;
+    }
+
+    {
+      std::lock_guard<std::mutex> lk(m_penStateMu);
+      m_penState.hasFirmwareVersion = true;
+      m_penState.firmwareVersion = ev.semantic.firmwareVersion;
     }
 
     break;

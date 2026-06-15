@@ -102,11 +102,11 @@ API Monitor 中已确认的 RX 前缀：
 | `byte[4]` | `0x01` | 原厂分发逻辑会校验 |
 | `byte[5]` | event/status ID | switch dispatch key |
 | `byte[6]` | `0x11` | 抓包确认 |
-| `byte[7]` | `0x01` | 抓包确认 |
+| `byte[7]` | payload length | `PenService.dll` 处理函数按该长度读取 `byte[8..]` |
 | `byte[8]` | first payload/status value | 大多数状态事件只使用该字节 |
-| `byte[9..]` | 后续 payload / padding | 语义仍需逐事件确认 |
+| `byte[9..]` | 后续 payload / padding | 有效长度由 `byte[7]` 决定 |
 
-当前 `TryParsePenUsbEventFrame()` 与原厂已确认校验保持一致：要求 `packet.size() >= 9`、`packet[2] == 0x07`、`packet[4] == 0x01`，并返回 `eventCode = packet[5]`、`payload = packet[8..]`。
+当前 `TryParsePenUsbEventFrame()` 与原厂已确认校验保持一致：要求 `packet.size() >= 8`、`packet[2] == 0x07`、`packet[4] == 0x01`，并返回 `eventCode = packet[5]`、按 `packet[7]` 截断后的 `payload = packet[8..8+len)`。
 
 ---
 
@@ -330,7 +330,7 @@ ServiceInterface[+0xA8]
 | 队列模型 | 原厂读线程 + `0x41` stride ring buffer；当前通道线程直接回调 | 架构不同，但不影响协议 |
 | `0x7B -> 0x7D01` 来源 | 原厂由 service callback 触发；当前由 init session 触发 | wire-compatible，可接受 |
 | RX 校验 | 当前只校验 `packet[2]` 与 `packet[4]` | 与已确认原厂校验一致；若要更保守可额外校验 `0x02/0x11/0x01` |
-| payload 暴露 | 当前把 `packet[8..]` 全部作为 payload，可能包含 padding | 对 payload0 类事件正确；多字节事件需逐项定义长度 |
+| payload 暴露 | 当前按 `packet[7]` 截断 `packet[8..]` | 与 `PenService.dll` 字符串/模块处理函数一致 |
 | 状态通知 | 原厂 `ThpNotifyBurst`；当前 callback + `SetEvent` | 项目语义等价 |
 
 ### 7.3 需要修正或补齐的 gap

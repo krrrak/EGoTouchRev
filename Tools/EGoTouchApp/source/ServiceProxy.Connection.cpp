@@ -210,5 +210,27 @@ bool ServiceProxy::TriggerQueryPenInfo() {
     return resp.success;
 }
 
+bool ServiceProxy::TriggerSendScanMode(uint8_t freq1, uint8_t freq2, uint8_t mode) {
+    if (!IsLiveControlAllowed()) return false;
+    Ipc::IpcRequest req{};
+    req.command = Ipc::IpcCommand::TriggerSendScanMode;
+    req.param[0] = freq1;
+    req.param[1] = freq2;
+    req.param[2] = mode;
+    req.paramLen = 3;
+    const auto resp = m_client.Send(req);
+    return resp.success;
+}
+
+bool ServiceProxy::TriggerSendPairInfoSet(uint8_t value) {
+    if (!IsLiveControlAllowed()) return false;
+    Ipc::IpcRequest req{};
+    req.command = Ipc::IpcCommand::TriggerSendPairInfoSet;
+    req.param[0] = value;
+    req.paramLen = 1;
+    const auto resp = m_client.Send(req);
+    return resp.success;
+}
+
 } // namespace App
 

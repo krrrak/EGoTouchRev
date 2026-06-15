@@ -42,10 +42,14 @@ public:
     /// 手动触发握手（0x7101 + 0x7701 + 0x7701），通常无需手动调用。
     void RunHandshake();
 
+    bool SendQueryPenModule();
+    bool SendQuerySerialNumber();
     bool SendQueryHardwareVersion();
+    bool SendQueryFirmwareVersion();
     bool SendQueryPenStatus();
     bool SendFirstMcuStatusQuery();
     bool SendSecondMcuStatusQuery();
+    bool SendPairInfoSet(uint8_t value);
 
 protected:
     std::optional<std::wstring> FindDevicePath() override;

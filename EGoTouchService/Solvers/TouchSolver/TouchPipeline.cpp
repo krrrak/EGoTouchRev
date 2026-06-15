@@ -265,7 +265,7 @@ void TouchPipeline::registerBindings(Config::ConfigBinder& binder) {
 
     binder.bind("touch.peak_detection.threshold",
                 &Touch::PeakDetector::m_threshold, m_peakDet,
-                static_cast<int32_t>(350), ConfigRange{0, 4095},
+                static_cast<int32_t>(280), ConfigRange{0, 4095},
                 "Peak detection threshold");
     binder.bind("touch.peak_detection.max_peaks",
                 &Touch::PeakDetector::m_maxPeaks, m_peakDet,
@@ -297,7 +297,7 @@ void TouchPipeline::registerBindings(Config::ConfigBinder& binder) {
                 "Close-peak saddle radius");
     binder.bind("touch.peak_detection.macro_zone_min_area",
                 &Touch::PeakDetector::m_macroZoneMinArea, m_peakDet,
-                static_cast<int32_t>(4), ConfigRange{1, 64},
+                static_cast<int32_t>(3), ConfigRange{1, 64},
                 "Minimum macro-zone area for peaks");
 
     binder.bind("touch.classifier.enabled",
@@ -548,7 +548,7 @@ void TouchPipeline::applyConfig(const Config::ConfigStore& store) {
     m_cmf.m_exclusionThreshold = store.getOr<int32_t>("touch.signal_cond.cmf_exclusion_threshold", 2000);
     m_cmf.m_maxCorrection = store.getOr<int32_t>("touch.signal_cond.cmf_max_correction", 2000);
 
-    m_peakDet.m_threshold = store.getOr<int32_t>("touch.peak_detection.threshold", 350);
+    m_peakDet.m_threshold = store.getOr<int32_t>("touch.peak_detection.threshold", 280);
     m_peakDet.m_maxPeaks = store.getOr<int32_t>("touch.peak_detection.max_peaks", 20);
     m_peakDet.m_localMaxRadius = store.getOr<int32_t>("touch.peak_detection.local_max_radius", 1);
     m_peakDet.m_edgeThresholdEnabled = store.getOr<bool>("touch.peak_detection.edge_threshold_enabled", true);
@@ -557,7 +557,7 @@ void TouchPipeline::applyConfig(const Config::ConfigStore& store) {
     m_peakDet.m_z1Filter = store.getOr<bool>("touch.peak_detection.z1_filter_enabled", true);
     m_peakDet.m_closePeakSaddleFilter = store.getOr<bool>("touch.peak_detection.close_peak_saddle_filter_enabled", true);
     m_peakDet.m_closePeakRadius = store.getOr<int32_t>("touch.peak_detection.close_peak_radius", 2);
-    m_peakDet.m_macroZoneMinArea = store.getOr<int32_t>("touch.peak_detection.macro_zone_min_area", 4);
+    m_peakDet.m_macroZoneMinArea = store.getOr<int32_t>("touch.peak_detection.macro_zone_min_area", 3);
 
     m_touchClassifier.m_enabled = store.getOr<bool>("touch.classifier.enabled", true);
     m_touchClassifier.m_analyzerEnabled = store.getOr<bool>("touch.classifier.analyzer_enabled", true);

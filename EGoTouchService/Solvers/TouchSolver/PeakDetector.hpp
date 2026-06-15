@@ -17,7 +17,7 @@ class PeakDetector {
 public:
     static constexpr int kMaxStoredPeaks = 100;
 
-    int  m_threshold = 350;
+    int  m_threshold = 280;
     int  m_sigTholdLimit = 1000;
     bool m_z8Filter = true;
     bool m_z1Filter = true;
@@ -33,7 +33,7 @@ public:
     float m_closePeakMinSaddleRatio = 0.08f;
     int  m_maxPeaks = 20;
     int  m_pressureDriftDebounceLimit = 3;
-    int  m_macroZoneMinArea = 4;
+    int  m_macroZoneMinArea = 3;
 
     // ── 统一签名入口：从 frame.touch.runtime 读取参数，结果写回 runtime ──
     inline void Process(HeatmapFrame& frame) {

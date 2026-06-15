@@ -248,15 +248,35 @@ void ServiceProxy::PollLoop() {
                     identity.stylusId = wire.stylusId;
                     identity.hasPenModuleModelId = (wire.flags & Ipc::kPenIdentityHasPenModuleModelId) != 0;
                     identity.penModuleModelId = wire.penModuleModelId;
+                    auto assignUtf8Field = [](bool& present,
+                                               std::string& target,
+                                               uint16_t textLenWire,
+                                               const auto& textBuffer) {
+                        const auto textLen = std::min<std::size_t>(
+                            textLenWire, sizeof(textBuffer));
+                        if (present && textLen > 0) {
+                            target.assign(textBuffer, textBuffer + textLen);
+                        } else {
+                            present = false;
+                            target.clear();
+                        }
+                    };
+
                     identity.hasHardwareVersion = (wire.flags & Ipc::kPenIdentityHasHardwareVersion) != 0;
-                    const auto textLen = std::min<std::size_t>(
-                        wire.hardwareVersionUtf8Len, sizeof(wire.hardwareVersionUtf8));
-                    if (identity.hasHardwareVersion && textLen > 0) {
-                        identity.hardwareVersion.assign(wire.hardwareVersionUtf8,
-                                                        wire.hardwareVersionUtf8 + textLen);
-                    } else {
-                        identity.hasHardwareVersion = false;
-                    }
+                    assignUtf8Field(identity.hasHardwareVersion,
+                                    identity.hardwareVersion,
+                                    wire.hardwareVersionUtf8Len,
+                                    wire.hardwareVersionUtf8);
+                    identity.hasSerialNumber = (wire.flags & Ipc::kPenIdentityHasSerialNumber) != 0;
+                    assignUtf8Field(identity.hasSerialNumber,
+                                    identity.serialNumber,
+                                    wire.serialNumberUtf8Len,
+                                    wire.serialNumberUtf8);
+                    identity.hasFirmwareVersion = (wire.flags & Ipc::kPenIdentityHasFirmwareVersion) != 0;
+                    assignUtf8Field(identity.hasFirmwareVersion,
+                                    identity.firmwareVersion,
+                                    wire.firmwareVersionUtf8Len,
+                                    wire.firmwareVersionUtf8);
 
                     std::lock_guard<std::mutex> lk(m_penMutex);
                     m_penIdentityStatus = std::move(identity);

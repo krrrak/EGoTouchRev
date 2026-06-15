@@ -1225,14 +1225,40 @@ void ServiceHost::HandleIpcGetPenIdentityStatus(Ipc::IpcResponse& resp) {
         wire.flags |= Ipc::kPenIdentityHasPenModuleModelId;
         wire.penModuleModelId = state.penModuleModelId;
     }
-    if (state.hasHardwareVersion && !state.hardwareVersion.empty()) {
-        constexpr std::size_t kMaxTextBytes = sizeof(wire.hardwareVersionUtf8) - 1;
-        const std::size_t textLen = Utf8TruncatedLength(state.hardwareVersion, kMaxTextBytes);
-        if (textLen > 0) {
-            wire.flags |= Ipc::kPenIdentityHasHardwareVersion;
-            wire.hardwareVersionUtf8Len = static_cast<uint16_t>(textLen);
-            std::memcpy(wire.hardwareVersionUtf8, state.hardwareVersion.data(), textLen);
+    auto copyUtf8Field = [&](const std::string& text,
+                              uint8_t flag,
+                              uint16_t& textLenWire,
+                              auto& textBuffer) {
+        if (text.empty()) {
+            return;
         }
+
+        const std::size_t maxTextBytes = sizeof(textBuffer) - 1;
+        const std::size_t textLen = Utf8TruncatedLength(text, maxTextBytes);
+        if (textLen > 0) {
+            wire.flags |= flag;
+            textLenWire = static_cast<uint16_t>(textLen);
+            std::memcpy(textBuffer, text.data(), textLen);
+        }
+    };
+
+    if (state.hasHardwareVersion) {
+        copyUtf8Field(state.hardwareVersion,
+                      Ipc::kPenIdentityHasHardwareVersion,
+                      wire.hardwareVersionUtf8Len,
+                      wire.hardwareVersionUtf8);
+    }
+    if (state.hasSerialNumber) {
+        copyUtf8Field(state.serialNumber,
+                      Ipc::kPenIdentityHasSerialNumber,
+                      wire.serialNumberUtf8Len,
+                      wire.serialNumberUtf8);
+    }
+    if (state.hasFirmwareVersion) {
+        copyUtf8Field(state.firmwareVersion,
+                      Ipc::kPenIdentityHasFirmwareVersion,
+                      wire.firmwareVersionUtf8Len,
+                      wire.firmwareVersionUtf8);
     }
 
     std::memcpy(resp.data, &wire, sizeof(wire));
@@ -1483,6 +1509,24 @@ Ipc::IpcResponse ServiceHost::HandleIpcCommand(const Ipc::IpcRequest& req) {
     case Ipc::IpcCommand::TriggerQueryPenInfo:
         if (m_impl->m_penEventBridge && m_impl->m_penEventBridge->IsRunning() &&
             m_impl->m_penEventBridge->SendFirstMcuStatusQuery()) {
+            Ipc::MarkSuccess(resp);
+        } else {
+            Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidState);
+        }
+        break;
+
+    case Ipc::IpcCommand::TriggerSendScanMode:
+        if (req.paramLen >= 3 && m_impl->m_penEventBridge && m_impl->m_penEventBridge->IsRunning() &&
+            m_impl->m_penEventBridge->SendScanMode(req.param[0], req.param[1], req.param[2])) {
+            Ipc::MarkSuccess(resp);
+        } else {
+            Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidState);
+        }
+        break;
+
+    case Ipc::IpcCommand::TriggerSendPairInfoSet:
+        if (req.paramLen >= 1 && m_impl->m_penEventBridge && m_impl->m_penEventBridge->IsRunning() &&
+            m_impl->m_penEventBridge->SendPairInfoSet(req.param[0])) {
             Ipc::MarkSuccess(resp);
         } else {
             Ipc::MarkFailure(resp, Ipc::IpcStatusCode::InvalidState);

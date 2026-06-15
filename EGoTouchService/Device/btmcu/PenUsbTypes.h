@@ -50,7 +50,10 @@ struct PenUsbPayloadBuffer {
 };
 
 enum class PenUsbCommandId : uint16_t {
+    QueryPenModule = 0x0001,
+    QueryPenSerialNo = 0x0101,
     QueryHardwareVersion = 0x0201,
+    QueryFirmwareVersion = 0x0301,
     QueryPenStatus = 0x7101,
     QueryPenInfo = 0x7701,
     InitParamSet = 0x7D01,
@@ -65,15 +68,22 @@ struct ParsedPenUsbEventFrame {
 
 inline std::optional<ParsedPenUsbEventFrame> TryParsePenUsbEventFrame(
         std::span<const uint8_t> packet) noexcept {
-    if (packet.size() < 9) {
+    if (packet.size() < kPenUsbHeaderSize) {
         return std::nullopt;
     }
     if (packet[2] != 0x07 || packet[4] != 0x01) {
         return std::nullopt;
     }
+
+    const std::size_t payloadLength = packet[7];
+    if (payloadLength > kPenUsbPayloadCapacity ||
+        packet.size() < kPenUsbHeaderSize + payloadLength) {
+        return std::nullopt;
+    }
+
     return ParsedPenUsbEventFrame{
         packet[5],
-        packet.subspan(8),
+        packet.subspan(kPenUsbHeaderSize, payloadLength),
     };
 }
 
@@ -99,6 +109,7 @@ constexpr int GetFactoryBtMcuAckCode(uint8_t eventCode) noexcept {
 
 enum class PenUsbEventCode : uint8_t {
     PenModule = 0x00,               // PenService PenModule / ModelId 上报
+    PenSerialNumber = 0x01,         // PenService serial number ASCII 上报
     PenHardwareVersion = 0x02,      // PenService 硬件版本 ASCII 上报
     UsbdSwVersion = 0x03,
     BatteryStatus = 0x08,
@@ -179,6 +190,7 @@ constexpr const char* ToString(PenCurrentMode mode) noexcept {
 constexpr PenUsbEventCode PenUsbEventCodeFromRaw(uint8_t code) noexcept {
     switch (code) {
     case 0x00: return PenUsbEventCode::PenModule;
+    case 0x01: return PenUsbEventCode::PenSerialNumber;
     case 0x02: return PenUsbEventCode::PenHardwareVersion;
     case 0x03: return PenUsbEventCode::UsbdSwVersion;
     case 0x08: return PenUsbEventCode::BatteryStatus;
@@ -213,6 +225,7 @@ constexpr PenUsbEventCode PenUsbEventCodeFromRaw(uint8_t code) noexcept {
 constexpr const char* ToString(PenUsbEventCode code) noexcept {
     switch (code) {
     case PenUsbEventCode::PenModule: return "PEN_MODULE";
+    case PenUsbEventCode::PenSerialNumber: return "PEN_SERIAL_NUMBER";
     case PenUsbEventCode::PenHardwareVersion: return "PEN_HARDWARE_VERSION";
     case PenUsbEventCode::UsbdSwVersion: return "USBD_SW_VERSION";
     case PenUsbEventCode::BatteryStatus: return "BATTERY_STATUS";
@@ -313,8 +326,14 @@ struct PenSemanticState {
     bool hasPenModuleProtocolHint = false;
     PenModuleProtocolHint penModuleProtocolHint = PenModuleProtocolHint::Auto;
 
+    bool hasSerialNumber = false;
+    std::string serialNumber;
+
     bool hasHardwareVersion = false;
     std::string hardwareVersion;
+
+    bool hasFirmwareVersion = false;
+    std::string firmwareVersion;
 
     bool hasCurrentMode = false;
     PenCurrentMode currentMode = PenCurrentMode::Unknown;

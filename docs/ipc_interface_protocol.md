@@ -165,14 +165,18 @@ struct IpcResponse {
 
 ### 6.4 `GetPenIdentityStatus`
 
-返回固定 140 字节 `PenIdentityStatusWire`：
+返回固定 400 字节 `PenIdentityStatusWire`：
 
 - `wireVersion`
-- `flags`：bit0=`stylusId` 有效，bit1=`penModuleModelId` 有效，bit2=`hardwareVersionUtf8` 有效，bit3=`connected`
+- `flags`：bit0=`stylusId` 有效，bit1=`penModuleModelId` 有效，bit2=`hardwareVersionUtf8` 有效，bit3=`connected`，bit4=`serialNumberUtf8` 有效，bit5=`firmwareVersionUtf8` 有效
 - `stylusId`：`PenTypeInfo payload[0]`
 - `penModuleModelId`：`PenModule` 小端 modelId
 - `hardwareVersionUtf8Len`：UTF-8 字节长度，不含 NUL
+- `serialNumberUtf8Len`：UTF-8 字节长度，不含 NUL
+- `firmwareVersionUtf8Len`：UTF-8 字节长度，不含 NUL
 - `hardwareVersionUtf8[128]`：UTF-8 validated 字符串，服务端按字符边界安全截断
+- `serialNumberUtf8[128]`：UTF-8 validated 字符串，服务端按字符边界安全截断
+- `firmwareVersionUtf8[128]`：UTF-8 validated 字符串，服务端按字符边界安全截断
 
 ### 6.5 `GetDebugSchema` / `GetDebugSnapshot`
 
